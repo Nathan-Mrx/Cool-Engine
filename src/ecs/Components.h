@@ -20,3 +20,10 @@ struct CameraComponent {
     float Yaw = 0.0f;
     float Pitch = 0.0f;
 };
+
+struct TagComponent {
+    std::string Tag;
+
+    TagComponent() = default;
+    TagComponent(const std::string& tag) : Tag(tag) {}
+};

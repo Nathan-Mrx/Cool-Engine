@@ -64,13 +64,14 @@ Application::Application(const std::string& name, int width, int height) {
     // 7. On charge notre Shader compilé !
     m_Shader = std::make_unique<Shader>("shaders/default.vert", "shaders/default.frag");
 
-    // --- INITIALISATION ECS ---
+    // Dans le constructeur Application::Application
     m_TriangleEntity = m_Registry.create();
-    m_CameraEntity = m_Registry.create();
-
-    // On attache les composants à nos entités
+    m_Registry.emplace<TagComponent>(m_TriangleEntity, "Red Triangle");
     m_Registry.emplace<TransformComponent>(m_TriangleEntity);
     m_Registry.emplace<ColorComponent>(m_TriangleEntity, glm::vec3(0.8f, 0.2f, 0.3f));
+
+    m_CameraEntity = m_Registry.create();
+    m_Registry.emplace<TagComponent>(m_CameraEntity, "Main Camera");
     m_Registry.emplace<CameraComponent>(m_CameraEntity);
 }
 
@@ -178,6 +179,37 @@ void Application::Run() {
 
         auto& camComp = m_Registry.get<CameraComponent>(m_CameraEntity);
         ImGui::DragFloat3("Cam Position", &camComp.Position[0], 0.1f);
+        ImGui::End();
+
+        // --- FENÊTRE : SCENE HIERARCHY ---
+        ImGui::Begin("Scene Hierarchy");
+
+        m_Registry.view<TagComponent>().each([&](auto entity, auto& tag) {
+            // On crée un label cliquable pour chaque entité
+            ImGuiTreeNodeFlags flags = ((m_SelectedContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
+            flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
+
+            bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, tag.Tag.c_str());
+
+            // Si on clique sur le nom, on sélectionne l'entité
+            if (ImGui::IsItemClicked()) {
+                m_SelectedContext = entity;
+            }
+
+            if (opened) {
+                ImGui::TreePop();
+            }
+        });
+
+        // Clic droit dans le vide de la fenêtre pour créer une nouvelle entité (Style Godot)
+        if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+            if (ImGui::MenuItem("Create Empty Entity")) {
+                auto e = m_Registry.create();
+                m_Registry.emplace<TagComponent>(e, "Empty Entity");
+            }
+            ImGui::EndPopup();
+        }
+
         ImGui::End();
 
         ImGui::End(); // Fin du DockSpaceParent

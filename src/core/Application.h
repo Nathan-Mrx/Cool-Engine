@@ -50,4 +50,6 @@ private:
     bool m_ViewportHovered = false;
 
     glm::vec2 m_LastMousePosition = { 0.0f, 0.0f };
+
+    entt::entity m_SelectedContext = entt::null; // L'entité actuellement sélectionnée
 };
