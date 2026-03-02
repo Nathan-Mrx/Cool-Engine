@@ -9,6 +9,8 @@ find_package(glad CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(NFD CONFIG REQUIRED)
 
 # Lister tous les fichiers sources du moteur
 set(SOURCES
@@ -30,7 +32,14 @@ add_executable(GameEngine ${SOURCES})
 target_include_directories(GameEngine PRIVATE src)
 
 # Lier les bibliothèques
-target_link_libraries(GameEngine PRIVATE glfw glad::glad glm::glm EnTT::EnTT imgui::imgui)
+target_link_libraries(GameEngine PRIVATE
+        glfw
+        glad::glad
+        glm::glm
+        EnTT::EnTT
+        imgui::imgui
+        nlohmann_json::nlohmann_json
+        nfd::nfd)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
 add_custom_command(TARGET GameEngine POST_BUILD

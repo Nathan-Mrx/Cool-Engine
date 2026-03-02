@@ -7,6 +7,7 @@
 #include <imgui_impl_opengl3.h>
 #include <imgui_internal.h> // Requis pour GImGui
 #include <iostream>
+#include <nfd.hpp>
 
 #include "project/Project.h"
 
@@ -105,6 +106,8 @@ Application::Application(const std::string& name, int width, int height) {
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     glfwSwapInterval(1); // VSync
 
+    NFD::Init();
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -194,6 +197,7 @@ Application::Application(const std::string& name, int width, int height) {
 
 Application::~Application() {
     Shutdown();
+    NFD::Quit();
 }
 
 void Application::Run() {
@@ -274,58 +278,89 @@ void Application::Run() {
         }
 
         if (Project::GetActive() == nullptr) {
-        // ==========================================
-        // ÉCRAN D'ACCUEIL : COOL ENGINE HUB
-        // ==========================================
-        ImGui::Begin("Cool Engine - Hub", nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize);
+            // ==========================================
+            // ÉCRAN D'ACCUEIL : COOL ENGINE HUB
+            // ==========================================
 
-        ImGui::Text("Welcome to Cool Engine");
-        ImGui::Separator();
+            // 1. Centrage absolu de la fenêtre
+            ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+            ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(700, 450), ImGuiCond_Once); // Taille fixe et généreuse
 
-        static char pathBuffer[256] = "/home/nathan/Documents/MyCoolGame"; // Chemin par défaut
-        ImGui::InputText("Project Path", pathBuffer, sizeof(pathBuffer));
+            // Fenêtre sans barre de titre, ni redimensionnement, ni déplacement
+            ImGuiWindowFlags hubFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
+                                        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                        ImGuiWindowFlags_NoTitleBar;
 
-        // Bouton pour CRÉER un projet
-        if (ImGui::Button("Create New Project", ImVec2(150, 0))) {
-            std::filesystem::path newProjPath = pathBuffer;
+            ImGui::Begin("Cool Engine - Hub", nullptr, hubFlags);
 
-            // Création de l'arborescence physique sur le disque
-            if (!std::filesystem::exists(newProjPath)) {
-                std::filesystem::create_directories(newProjPath);
-            }
-            std::filesystem::create_directories(newProjPath / "Assets");
-            std::filesystem::create_directories(newProjPath / "Scenes");
+            // --- HEADER STYLÉ ---
+            ImGui::SetWindowFontScale(1.5f); // Pseudo-grand titre
+            ImGui::Text("COOL ENGINE");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::TextDisabled("Project Hub");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 10)); // Espacement
 
-            // Création de la configuration en mémoire
-            auto newProj = Project::New();
-            newProj->GetConfig().ProjectDirectory = newProjPath;
-            newProj->GetConfig().AssetDirectory = newProjPath / "Assets";
-            newProj->GetConfig().Name = newProjPath.filename().string();
+            // --- MISE EN PAGE : 2 COLONNES ---
+            ImGui::Columns(2, "HubColumns", false); // false = pas de bordure visible
+            ImGui::SetColumnWidth(0, 450); // La colonne de gauche prend plus de place
 
-            // Sauvegarde du fichier .ceproj
-            std::filesystem::path ceprojFile = newProjPath / (newProj->GetConfig().Name + ".ceproj");
-            Project::SaveActive(ceprojFile);
-        }
+            // Colonne Gauche : Récents
+            ImGui::Text("Recent Projects");
+            ImGui::Dummy(ImVec2(0, 10));
+            ImGui::TextDisabled("No recent projects found...");
+            // (Plus tard, tu pourras charger un petit fichier JSON global pour lister l'historique ici)
 
-        ImGui::SameLine();
+            ImGui::NextColumn();
 
-        // Bouton pour OUVRIR un projet
-        if (ImGui::Button("Open .ceproj", ImVec2(150, 0))) {
-            std::filesystem::path openPath = pathBuffer;
-            // Si l'utilisateur a tapé le dossier, on cherche le fichier .ceproj à l'intérieur
-            if (std::filesystem::is_directory(openPath)) {
-                for (const auto& entry : std::filesystem::directory_iterator(openPath)) {
-                    if (entry.path().extension() == ".ceproj") {
-                        Project::Load(entry.path());
-                        break;
-                    }
+            // Colonne Droite : Boutons d'action
+            ImGui::Dummy(ImVec2(0, 50)); // On pousse les boutons vers le milieu
+
+            // --- BOUTON : OPEN PROJECT ---
+            if (ImGui::Button("Open Project...", ImVec2(-1, 50))) { // -1 prend toute la largeur dispo
+                nfdchar_t* outPath = nullptr;
+                // On filtre pour ne proposer que l'extension de ton moteur
+                nfdfilteritem_t filterItem[1] = { { "Cool Engine Project", "ceproj" } };
+
+                nfdresult_t result = NFD::OpenDialog(outPath, filterItem, 1, nullptr);
+                if (result == NFD_OKAY) {
+                    Project::Load(outPath);
+                    NFD::FreePath(outPath); // Libération mémoire requise par NFD
+                } else if (result == NFD_ERROR) {
+                    std::cerr << "Error opening file dialog: " << NFD::GetError() << std::endl;
                 }
-            } else if (openPath.extension() == ".ceproj") {
-                Project::Load(openPath);
             }
-        }
 
-        ImGui::End();
+            ImGui::Dummy(ImVec2(0, 10));
+
+            // --- BOUTON : NEW PROJECT ---
+            if (ImGui::Button("New Project...", ImVec2(-1, 50))) {
+                nfdchar_t* outPath = nullptr;
+
+                // On demande à l'utilisateur de choisir un DOSSIER vide
+                nfdresult_t result = NFD::PickFolder(outPath, nullptr);
+                if (result == NFD_OKAY) {
+                    std::filesystem::path newProjPath = outPath;
+                    NFD::FreePath(outPath);
+
+                    // Logique de création de l'arborescence
+                    if (!std::filesystem::exists(newProjPath)) std::filesystem::create_directories(newProjPath);
+                    std::filesystem::create_directories(newProjPath / "Assets");
+                    std::filesystem::create_directories(newProjPath / "Scenes");
+
+                    auto newProj = Project::New();
+                    newProj->GetConfig().ProjectDirectory = newProjPath;
+                    newProj->GetConfig().AssetDirectory = newProjPath / "Assets";
+                    newProj->GetConfig().Name = newProjPath.filename().string();
+
+                    std::filesystem::path ceprojFile = newProjPath / (newProj->GetConfig().Name + ".ceproj");
+                    Project::SaveActive(ceprojFile);
+                }
+            }
+
+            ImGui::Columns(1); // Fin des colonnes
+            ImGui::End();
         }
         else
         {
