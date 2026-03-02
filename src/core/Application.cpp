@@ -169,16 +169,88 @@ void Application::Run() {
         ImGui::Image((ImTextureID)(uint64_t)textureID, viewportSize, ImVec2{0, 1}, ImVec2{1, 0});
         ImGui::End();
 
-        // --- FENÊTRE : INSPECTOR / SETTINGS ---
+        // --- FENÊTRE : INSPECTOR (DÉTAILS) ---
         ImGui::Begin("Inspector");
-        ImGui::Text("FPS: %.1f", 1.0f / m_DeltaTime);
-        ImGui::Separator();
 
-        auto& triangleColor = m_Registry.get<ColorComponent>(m_TriangleEntity);
-        ImGui::ColorEdit3("Entity Color", &triangleColor.Color[0]);
+        if (m_SelectedContext != entt::null)
+        {
+            // --- 1. COMPOSANT : TAG (Toujours présent pour l'identification) ---
+            if (m_Registry.all_of<TagComponent>(m_SelectedContext))
+            {
+                auto& tag = m_Registry.get<TagComponent>(m_SelectedContext).Tag;
 
-        auto& camComp = m_Registry.get<CameraComponent>(m_CameraEntity);
-        ImGui::DragFloat3("Cam Position", &camComp.Position[0], 0.1f);
+                char buffer[256];
+                memset(buffer, 0, sizeof(buffer));
+                strncpy(buffer, tag.c_str(), sizeof(buffer));
+
+                if (ImGui::InputText("##Tag", buffer, sizeof(buffer))) {
+                    tag = std::string(buffer);
+                }
+            }
+
+            ImGui::Separator();
+
+            // --- 2. COMPOSANT : TRANSFORM ---
+            if (m_Registry.all_of<TransformComponent>(m_SelectedContext))
+            {
+                if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    auto& tc = m_Registry.get<TransformComponent>(m_SelectedContext);
+                    ImGui::DragFloat3("Position", &tc.Position[0], 0.1f);
+                    ImGui::DragFloat3("Scale", &tc.Scale[0], 0.1f);
+                    // On pourra ajouter la rotation ici plus tard !
+                }
+            }
+
+            // --- 3. COMPOSANT : COLOR (Spécifique au rendu) ---
+            if (m_Registry.all_of<ColorComponent>(m_SelectedContext))
+            {
+                if (ImGui::CollapsingHeader("Material / Color", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    auto& cc = m_Registry.get<ColorComponent>(m_SelectedContext);
+                    ImGui::ColorEdit3("Albedo", &cc.Color[0]);
+                }
+            }
+
+            // --- 4. COMPOSANT : CAMERA (Spécifique aux caméras) ---
+            if (m_Registry.all_of<CameraComponent>(m_SelectedContext))
+            {
+                if (ImGui::CollapsingHeader("Camera Settings", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    auto& cam = m_Registry.get<CameraComponent>(m_SelectedContext);
+                    ImGui::DragFloat3("Position", &cam.Position[0], 0.1f);
+                    ImGui::DragFloat("Yaw", &cam.Yaw, 0.5f);
+                    ImGui::DragFloat("Pitch", &cam.Pitch, 0.5f, -89.0f, 89.0f);
+
+                    ImGui::Text("Front: %.2f, %.2f, %.2f", cam.Front.x, cam.Front.y, cam.Front.z);
+                }
+            }
+
+            // --- BOUTON : ADD COMPONENT (Style Unreal/Godot) ---
+            ImGui::Spacing();
+            ImGui::Separator();
+            if (ImGui::Button("Add Component", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                ImGui::OpenPopup("AddComponent");
+            }
+
+            if (ImGui::BeginPopup("AddComponent")) {
+                if (ImGui::MenuItem("Transform")) {
+                    if (!m_Registry.all_of<TransformComponent>(m_SelectedContext))
+                        m_Registry.emplace<TransformComponent>(m_SelectedContext);
+                }
+                if (ImGui::MenuItem("Color")) {
+                    if (!m_Registry.all_of<ColorComponent>(m_SelectedContext))
+                        m_Registry.emplace<ColorComponent>(m_SelectedContext, glm::vec3(1.0f));
+                }
+                ImGui::EndPopup();
+            }
+
+        }
+        else
+        {
+            ImGui::Text("Select an entity to view its properties.");
+        }
+
         ImGui::End();
 
         // --- FENÊTRE : SCENE HIERARCHY ---
