@@ -116,10 +116,55 @@ Application::Application(const std::string& name, int width, int height) {
     fbSpec.Height = 720;
     m_Framebuffer = std::make_unique<Framebuffer>(fbSpec);
 
+    // 36 sommets (X, Y, Z) pour un cube de taille 1x1x1
     float vertices[] = {
-        0.0f, -0.5f, -0.5f,
-        0.0f,  0.5f, -0.5f,
-        0.0f,  0.0f,  0.5f
+        // Face Arrière
+        -0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f,  0.5f, -0.5f,
+         0.5f,  0.5f, -0.5f,
+        -0.5f,  0.5f, -0.5f,
+        -0.5f, -0.5f, -0.5f,
+
+        // Face Avant
+        -0.5f, -0.5f,  0.5f,
+         0.5f, -0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+        -0.5f, -0.5f,  0.5f,
+
+        // Face Gauche
+        -0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f, -0.5f,
+        -0.5f, -0.5f, -0.5f,
+        -0.5f, -0.5f, -0.5f,
+        -0.5f, -0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+
+        // Face Droite
+         0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+
+        // Face Bas
+        -0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f,  0.5f,
+         0.5f, -0.5f,  0.5f,
+        -0.5f, -0.5f,  0.5f,
+        -0.5f, -0.5f, -0.5f,
+
+        // Face Haut
+        -0.5f,  0.5f, -0.5f,
+         0.5f,  0.5f, -0.5f,
+         0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f, -0.5f
     };
 
     glGenVertexArrays(1, &m_VAO);
@@ -186,7 +231,8 @@ void Application::Run() {
             // On utilise la nouvelle méthode propre !
             m_Shader->SetMat4("uModel", transform.GetTransform());
 
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+
         }
         glBindVertexArray(0);
         m_Framebuffer->Unbind();
