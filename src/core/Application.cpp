@@ -214,12 +214,48 @@ void Application::Run() {
 
         ImGui::End(); // Fin du DockSpaceParent
 
-        // --- 4. LOGIQUE INPUTS (Seulement si focus viewport) ---
-        if (m_ViewportHovered && Input::IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
+        // --- 4. LOGIQUE INPUTS (Placé après la fin du DockSpaceParent) ---
+        if (m_ViewportHovered && Input::IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT))
+        {
+            // On verrouille la souris pour la rotation "Unreal style"
             glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            // ... (Ici ta logique de mouvement Pitch/Yaw et ZQSD que tu as déjà) ...
-        } else {
+
+            auto& camera = m_Registry.get<CameraComponent>(m_CameraEntity);
+            float cameraSpeed = 5.0f * m_DeltaTime;
+            float sensitivity = 0.1f;
+
+            // A. ROTATION (Souris)
+            glm::vec2 mousePos = Input::GetMousePosition();
+            glm::vec2 mouseDelta = mousePos - m_LastMousePosition;
+            m_LastMousePosition = mousePos;
+
+            camera.Yaw += mouseDelta.x * sensitivity;
+            camera.Pitch -= mouseDelta.y * sensitivity;
+
+            if (camera.Pitch > 89.0f) camera.Pitch = 89.0f;
+            if (camera.Pitch < -89.0f) camera.Pitch = -89.0f;
+
+            glm::vec3 dir;
+            dir.x = cos(glm::radians(camera.Yaw)) * cos(glm::radians(camera.Pitch));
+            dir.y = sin(glm::radians(camera.Yaw)) * cos(glm::radians(camera.Pitch));
+            dir.z = sin(glm::radians(camera.Pitch));
+            camera.Front = glm::normalize(dir);
+
+            // B. DÉPLACEMENT (Clavier QWERTY)
+            glm::vec3 cameraRight = glm::normalize(glm::cross(camera.WorldUp, camera.Front));
+
+            if (Input::IsKeyPressed(GLFW_KEY_W)) camera.Position += camera.Front * cameraSpeed;
+            if (Input::IsKeyPressed(GLFW_KEY_S)) camera.Position -= camera.Front * cameraSpeed;
+            if (Input::IsKeyPressed(GLFW_KEY_A)) camera.Position -= cameraRight * cameraSpeed;
+            if (Input::IsKeyPressed(GLFW_KEY_D)) camera.Position += cameraRight * cameraSpeed;
+            if (Input::IsKeyPressed(GLFW_KEY_E)) camera.Position += camera.WorldUp * cameraSpeed;
+            if (Input::IsKeyPressed(GLFW_KEY_Q)) camera.Position -= camera.WorldUp * cameraSpeed;
+        }
+        else
+        {
+            // On libère la souris et on reset la position pour éviter le "jump" au prochain clic
             glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            m_LastMousePosition = Input::GetMousePosition();
         }
 
         EndImGui();
