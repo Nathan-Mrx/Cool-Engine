@@ -9,6 +9,7 @@
     "entt",
     "nlohmann-json",
     "nativefiledialog-extended",
+    "assimp",
     {
       "name": "imgui",
       "features": [

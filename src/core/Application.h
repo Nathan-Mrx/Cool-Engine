@@ -9,6 +9,7 @@
 
 #include "../renderer/Shader.h"
 #include "../renderer/Framebuffer.h"
+#include "editor/ContentBrowserPanel.h"
 
 class Application {
 public:
@@ -44,4 +45,6 @@ private:
     entt::entity m_SelectedContext = entt::null;
     bool m_ViewportHovered = false;
     glm::vec2 m_LastMousePosition = { 0.0f, 0.0f };
+
+    std::unique_ptr<ContentBrowserPanel> m_ContentBrowserPanel;
 };

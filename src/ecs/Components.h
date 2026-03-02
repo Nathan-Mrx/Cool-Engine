@@ -6,6 +6,8 @@
 #include <string>
 #include <tuple>
 
+#include "renderer/Mesh.h"
+
 // --- STRUCTURES DE DONNÉES DE BASE ---
 
 struct Vector3 {
@@ -93,6 +95,18 @@ struct CameraComponent {
     }
 };
 
+struct MeshComponent {
+    std::shared_ptr<Mesh> MeshData;
+
+    void OnImGuiRender() {
+        if (MeshData) {
+            ImGui::Text("Mesh Loaded: Yes");
+        } else {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "No Mesh Assigned");
+        }
+    }
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -101,5 +115,6 @@ using AllComponents = std::tuple<
     TagComponent,
     TransformComponent,
     ColorComponent,
-    CameraComponent
+    CameraComponent,
+    MeshComponent
 >;

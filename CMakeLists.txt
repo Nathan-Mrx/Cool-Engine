@@ -11,6 +11,7 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(NFD CONFIG REQUIRED)
+find_package(assimp CONFIG REQUIRED)
 
 # Lister tous les fichiers sources du moteur
 set(SOURCES
@@ -20,9 +21,11 @@ set(SOURCES
         src/ecs/Components.h
         src/renderer/Framebuffer.cpp
         src/core/Input.cpp
-        src/core/Input.h
         src/project/Project.cpp
-        src/project/Project.h
+        src/renderer/Mesh.cpp
+        src/renderer/ModelLoader.h
+        src/editor/ContentBrowserPanel.cpp
+        src/editor/ContentBrowserPanel.h
 )
 
 # Créer l'exécutable avec les sources
@@ -39,7 +42,8 @@ target_link_libraries(GameEngine PRIVATE
         EnTT::EnTT
         imgui::imgui
         nlohmann_json::nlohmann_json
-        nfd::nfd)
+        nfd::nfd
+        assimp::assimp)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
 add_custom_command(TARGET GameEngine POST_BUILD

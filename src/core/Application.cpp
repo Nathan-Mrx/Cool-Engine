@@ -193,6 +193,8 @@ Application::Application(const std::string& name, int width, int height) {
     m_CameraEntity = m_Registry.create();
     m_Registry.emplace<TagComponent>(m_CameraEntity, "Main Camera");
     m_Registry.emplace<CameraComponent>(m_CameraEntity);
+
+    m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
 }
 
 Application::~Application() {
@@ -227,18 +229,20 @@ void Application::Run() {
         glm::mat4 view = glm::lookAtLH(camera.Position, camera.Position + camera.Front, camera.WorldUp);
         m_Shader->SetMat4("uView", view);
 
-        auto renderView = m_Registry.view<TransformComponent, ColorComponent>();
-        for (auto entity : renderView) {
-            auto& transform = renderView.get<TransformComponent>(entity);
-            auto& color = renderView.get<ColorComponent>(entity);
+        // --- RENDU DES MESHES ---
+        auto meshView = m_Registry.view<TransformComponent, MeshComponent, ColorComponent>();
 
-            m_Shader->SetVec3("uColor", color.Color);
+        for (auto entity : meshView) {
+            auto& transform = meshView.get<TransformComponent>(entity);
+            auto& meshComp = meshView.get<MeshComponent>(entity);
+            auto& color = meshView.get<ColorComponent>(entity);
 
-            // On utilise la nouvelle méthode propre !
-            m_Shader->SetMat4("uModel", transform.GetTransform());
+            if (meshComp.MeshData) {
+                m_Shader->SetVec3("uColor", color.Color);
+                m_Shader->SetMat4("uModel", transform.GetTransform()); //
 
-            glDrawArrays(GL_TRIANGLES, 0, 36);
-
+                meshComp.MeshData->Draw();
+            }
         }
         glBindVertexArray(0);
         m_Framebuffer->Unbind();
@@ -364,6 +368,9 @@ void Application::Run() {
         }
         else
         {
+
+            m_ContentBrowserPanel->OnImGuiRender();
+
             // --- VIEWPORT ---
             ImGui::Begin("Viewport");
             m_ViewportHovered = ImGui::IsWindowHovered();

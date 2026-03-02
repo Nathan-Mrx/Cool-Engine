@@ -13,7 +13,13 @@ struct ProjectConfig {
 class Project {
 public:
     static const std::filesystem::path& GetProjectDirectory() { return s_ActiveProject->m_Config.ProjectDirectory; }
-    static const std::filesystem::path& GetAssetDirectory() { return s_ActiveProject->m_Config.AssetDirectory; }
+
+    static const std::filesystem::path& GetAssetDirectory() {
+        static std::filesystem::path empty;
+        if (!s_ActiveProject) return empty; // Retourne un chemin vide au lieu de crash
+        return s_ActiveProject->m_Config.AssetDirectory;
+    }
+
     static const std::string& GetProjectName() { return s_ActiveProject->m_Config.Name; }
     
     // Crée un nouveau projet vierge
@@ -28,6 +34,8 @@ public:
     static std::shared_ptr<Project> GetActive() { return s_ActiveProject; }
 
     ProjectConfig& GetConfig() { return m_Config; }
+
+
 
 private:
     ProjectConfig m_Config;
