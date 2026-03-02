@@ -19,6 +19,8 @@ set(SOURCES
         src/renderer/Framebuffer.cpp
         src/core/Input.cpp
         src/core/Input.h
+        src/project/Project.cpp
+        src/project/Project.h
 )
 
 # Créer l'exécutable avec les sources

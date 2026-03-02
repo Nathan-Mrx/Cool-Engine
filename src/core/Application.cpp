@@ -8,6 +8,8 @@
 #include <imgui_internal.h> // Requis pour GImGui
 #include <iostream>
 
+#include "project/Project.h"
+
 // =========================================================================
 // --- MAGIE DES TEMPLATES (RÉFLEXION UI) ---
 // =========================================================================
@@ -271,72 +273,129 @@ void Application::Run() {
             ImGui::EndMenuBar();
         }
 
-        // --- VIEWPORT ---
-        ImGui::Begin("Viewport");
-        m_ViewportHovered = ImGui::IsWindowHovered();
-        ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-        if (m_Framebuffer->GetSpecification().Width != viewportSize.x || m_Framebuffer->GetSpecification().Height != viewportSize.y) {
-            m_Framebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
+        if (Project::GetActive() == nullptr) {
+        // ==========================================
+        // ÉCRAN D'ACCUEIL : COOL ENGINE HUB
+        // ==========================================
+        ImGui::Begin("Cool Engine - Hub", nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize);
+
+        ImGui::Text("Welcome to Cool Engine");
+        ImGui::Separator();
+
+        static char pathBuffer[256] = "/home/nathan/Documents/MyCoolGame"; // Chemin par défaut
+        ImGui::InputText("Project Path", pathBuffer, sizeof(pathBuffer));
+
+        // Bouton pour CRÉER un projet
+        if (ImGui::Button("Create New Project", ImVec2(150, 0))) {
+            std::filesystem::path newProjPath = pathBuffer;
+
+            // Création de l'arborescence physique sur le disque
+            if (!std::filesystem::exists(newProjPath)) {
+                std::filesystem::create_directories(newProjPath);
+            }
+            std::filesystem::create_directories(newProjPath / "Assets");
+            std::filesystem::create_directories(newProjPath / "Scenes");
+
+            // Création de la configuration en mémoire
+            auto newProj = Project::New();
+            newProj->GetConfig().ProjectDirectory = newProjPath;
+            newProj->GetConfig().AssetDirectory = newProjPath / "Assets";
+            newProj->GetConfig().Name = newProjPath.filename().string();
+
+            // Sauvegarde du fichier .ceproj
+            std::filesystem::path ceprojFile = newProjPath / (newProj->GetConfig().Name + ".ceproj");
+            Project::SaveActive(ceprojFile);
         }
-        uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-        ImGui::Image((ImTextureID)(uint64_t)textureID, viewportSize, ImVec2{0, 1}, ImVec2{1, 0});
+
+        ImGui::SameLine();
+
+        // Bouton pour OUVRIR un projet
+        if (ImGui::Button("Open .ceproj", ImVec2(150, 0))) {
+            std::filesystem::path openPath = pathBuffer;
+            // Si l'utilisateur a tapé le dossier, on cherche le fichier .ceproj à l'intérieur
+            if (std::filesystem::is_directory(openPath)) {
+                for (const auto& entry : std::filesystem::directory_iterator(openPath)) {
+                    if (entry.path().extension() == ".ceproj") {
+                        Project::Load(entry.path());
+                        break;
+                    }
+                }
+            } else if (openPath.extension() == ".ceproj") {
+                Project::Load(openPath);
+            }
+        }
+
         ImGui::End();
+        }
+        else
+        {
+            // --- VIEWPORT ---
+            ImGui::Begin("Viewport");
+            m_ViewportHovered = ImGui::IsWindowHovered();
+            ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+            if (m_Framebuffer->GetSpecification().Width != viewportSize.x || m_Framebuffer->GetSpecification().Height != viewportSize.y) {
+                m_Framebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
+            }
+            uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
+            ImGui::Image((ImTextureID)(uint64_t)textureID, viewportSize, ImVec2{0, 1}, ImVec2{1, 0});
+            ImGui::End();
 
-        // --- SCENE HIERARCHY ---
-        ImGui::Begin("Scene Hierarchy");
-        m_Registry.view<TagComponent>().each([&](auto entity, auto& tag) {
-            ImGuiTreeNodeFlags flags = ((m_SelectedContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-            bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, tag.Tag.c_str());
+            // --- SCENE HIERARCHY ---
+            ImGui::Begin("Scene Hierarchy");
+            m_Registry.view<TagComponent>().each([&](auto entity, auto& tag) {
+                ImGuiTreeNodeFlags flags = ((m_SelectedContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+                bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, tag.Tag.c_str());
 
-            if (ImGui::IsItemClicked()) m_SelectedContext = entity;
+                if (ImGui::IsItemClicked()) m_SelectedContext = entity;
 
-            bool entityDeleted = false;
-            if (ImGui::BeginPopupContextItem()) {
-                if (ImGui::MenuItem("Delete Entity")) entityDeleted = true;
+                bool entityDeleted = false;
+                if (ImGui::BeginPopupContextItem()) {
+                    if (ImGui::MenuItem("Delete Entity")) entityDeleted = true;
+                    ImGui::EndPopup();
+                }
+
+                if (opened) ImGui::TreePop();
+
+                if (entityDeleted) {
+                    m_Registry.destroy(entity);
+                    if (m_SelectedContext == entity) m_SelectedContext = entt::null;
+                }
+            });
+
+            if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+                if (ImGui::MenuItem("Create Empty Entity")) {
+                    auto e = m_Registry.create();
+                    m_Registry.emplace<TagComponent>(e, "Empty Entity");
+                    m_SelectedContext = e; // Sélectionne la nouvelle entité automatiquement
+                }
                 ImGui::EndPopup();
             }
+            ImGui::End();
 
-            if (opened) ImGui::TreePop();
+            // --- INSPECTOR AUTOMATIQUE ---
+            ImGui::Begin("Inspector");
+            if (m_SelectedContext != entt::null) {
 
-            if (entityDeleted) {
-                m_Registry.destroy(entity);
-                if (m_SelectedContext == entity) m_SelectedContext = entt::null;
+                // 1. On dessine tous les composants existants
+                std::apply([&](auto... args) {
+                    DrawAllComponents<decltype(args)...>(m_SelectedContext, m_Registry);
+                }, AllComponents{});
+
+                // 2. Bouton d'ajout automatique
+                ImGui::Dummy(ImVec2(0.0f, 20.0f));
+                if (ImGui::Button("Add Component", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                    ImGui::OpenPopup("AddComponent");
+                }
+
+                std::apply([&](auto... args) {
+                    DrawAddComponentMenu<decltype(args)...>(m_SelectedContext, m_Registry);
+                }, AllComponents{});
+
+            } else {
+                ImGui::Text("Select an entity to view its properties.");
             }
-        });
-
-        if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-            if (ImGui::MenuItem("Create Empty Entity")) {
-                auto e = m_Registry.create();
-                m_Registry.emplace<TagComponent>(e, "Empty Entity");
-                m_SelectedContext = e; // Sélectionne la nouvelle entité automatiquement
-            }
-            ImGui::EndPopup();
+            ImGui::End();
         }
-        ImGui::End();
-
-        // --- INSPECTOR AUTOMATIQUE ---
-        ImGui::Begin("Inspector");
-        if (m_SelectedContext != entt::null) {
-
-            // 1. On dessine tous les composants existants
-            std::apply([&](auto... args) {
-                DrawAllComponents<decltype(args)...>(m_SelectedContext, m_Registry);
-            }, AllComponents{});
-
-            // 2. Bouton d'ajout automatique
-            ImGui::Dummy(ImVec2(0.0f, 20.0f));
-            if (ImGui::Button("Add Component", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-                ImGui::OpenPopup("AddComponent");
-            }
-
-            std::apply([&](auto... args) {
-                DrawAddComponentMenu<decltype(args)...>(m_SelectedContext, m_Registry);
-            }, AllComponents{});
-
-        } else {
-            ImGui::Text("Select an entity to view its properties.");
-        }
-        ImGui::End();
 
         ImGui::End(); // Fin du DockSpaceParent
 
