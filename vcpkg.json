@@ -1,6 +1,7 @@
 {
   "name": "game-engine",
   "version": "0.1.0",
+  "builtin-baseline": "39a6cc0e44641977a7ccdfdb01a14eaf832aa330",
   "dependencies": [
     "glfw3",
     "glad",
@@ -10,7 +11,8 @@
       "name": "imgui",
       "features": [
         "glfw-binding",
-        "opengl3-binding"
+        "opengl3-binding",
+        "docking-experimental"
       ]
     }
   ]

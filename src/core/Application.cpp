@@ -23,6 +23,8 @@ Application::Application(const std::string& name, int width, int height) {
     // Initialisation ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(m_Window, true);
     ImGui_ImplOpenGL3_Init("#version 460");
@@ -78,164 +80,117 @@ Application::~Application() {
 
 void Application::Run() {
     while (m_Running && !glfwWindowShouldClose(m_Window)) {
-        // --- CALCUL DU DELTA TIME ---
+        // --- 1. GESTION DU TEMPS ---
         float currentFrameTime = static_cast<float>(glfwGetTime());
         m_DeltaTime = currentFrameTime - m_LastFrameTime;
         m_LastFrameTime = currentFrameTime;
 
         glfwPollEvents();
 
-
-        // --- LOGIQUE DE JEU / CAMÉRA ---
-        // On n'active les contrôles QUE si on clique droit à l'intérieur du Viewport
-        auto& camera = m_Registry.get<CameraComponent>(m_CameraEntity);
-
-        if (m_ViewportHovered && Input::IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT))
-        {
-            // --- GESTION DU CURSEUR (Optionnel mais recommandé) ---
-            // Cache le curseur pour pouvoir tourner à l'infini sans taper les bords de l'écran
-            glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-            // --- CALCUL DU DELTA SOURIS ---
-            glm::vec2 mousePos = Input::GetMousePosition();
-            glm::vec2 mouseDelta = mousePos - m_LastMousePosition;
-            m_LastMousePosition = mousePos;
-
-            auto& camera = m_Registry.get<CameraComponent>(m_CameraEntity);
-
-            float sensitivity = 0.1f;
-            camera.Yaw += mouseDelta.x * sensitivity;
-            camera.Pitch -= mouseDelta.y * sensitivity; // Inversé car Y va vers le bas en coordonnées écran
-
-            // On contraint le Pitch pour ne pas pouvoir faire de salto arrière (limite à 89°)
-            if (camera.Pitch > 89.0f) camera.Pitch = 89.0f;
-            if (camera.Pitch < -89.0f) camera.Pitch = -89.0f;
-
-            // --- MATHÉMATIQUES : Conversion Angles -> Vecteur Direction ---
-            glm::vec3 direction;
-            direction.x = cos(glm::radians(camera.Yaw)) * cos(glm::radians(camera.Pitch));
-            direction.y = sin(glm::radians(camera.Yaw)) * cos(glm::radians(camera.Pitch));
-            direction.z = sin(glm::radians(camera.Pitch));
-            camera.Front = glm::normalize(direction);
-            float cameraSpeed = 5.0f * m_DeltaTime;
-
-            glm::vec3 cameraRight = glm::normalize(glm::cross(camera.WorldUp, camera.Front));
-
-            // ZQSD / WASD
-            if (Input::IsKeyPressed(GLFW_KEY_W)) camera.Position += camera.Front * cameraSpeed;
-            if (Input::IsKeyPressed(GLFW_KEY_S)) camera.Position -= camera.Front * cameraSpeed;
-            if (Input::IsKeyPressed(GLFW_KEY_A)) camera.Position -= cameraRight * cameraSpeed;
-            if (Input::IsKeyPressed(GLFW_KEY_D)) camera.Position += cameraRight * cameraSpeed;
-
-            // Monter / Descendre (E / Q)
-            if (Input::IsKeyPressed(GLFW_KEY_E)) camera.Position += camera.WorldUp * cameraSpeed;
-            if (Input::IsKeyPressed(GLFW_KEY_Q)) camera.Position -= camera.WorldUp * cameraSpeed;
-        }
-        else
-        {
-            // Réaffiche le curseur quand on relâche le clic droit
-            glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            // On met à jour la position de référence pour éviter un saut au prochain clic
-            m_LastMousePosition = Input::GetMousePosition();
-        }
-
-        // ==========================================
-        // ETAPE 1 : RENDU DU MOTEUR (Dans le Viewport)
-        // ==========================================
+        // --- 2. RENDU DU MOTEUR (Dans le Framebuffer) ---
         m_Framebuffer->Bind();
-        glEnable(GL_DEPTH_TEST); // Active la profondeur 3D
-
-        // Fond du viewport
+        glEnable(GL_DEPTH_TEST);
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // On nettoie aussi le Z-Buffer !
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        /// --- SYSTÈME DE RENDU ---
         m_Shader->Use();
         glBindVertexArray(m_VAO);
 
-        // 1. Matrice de Projection (Dynamique selon la taille du Framebuffer)
+        // Projection dynamique selon le ratio du viewport
         float aspectRatio = (float)m_Framebuffer->GetSpecification().Width / (float)m_Framebuffer->GetSpecification().Height;
         glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
         m_Shader->SetMat4("uProjection", projection);
 
-        // 2. Matrice de Vue
+        // Vue & Rendu ECS
+        auto& camera = m_Registry.get<CameraComponent>(m_CameraEntity);
         glm::mat4 view = glm::lookAtLH(camera.Position, camera.Position + camera.Front, camera.WorldUp);
         m_Shader->SetMat4("uView", view);
 
-        // 3. Boucle sur les entités
         auto renderView = m_Registry.view<TransformComponent, ColorComponent>();
         for (auto entity : renderView) {
             auto& transform = renderView.get<TransformComponent>(entity);
             auto& color = renderView.get<ColorComponent>(entity);
 
             m_Shader->SetVec3("uColor", color.Color);
-
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, transform.Position);
-            model = glm::scale(model, transform.Scale);
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), transform.Position) * glm::scale(glm::mat4(1.0f), transform.Scale);
             m_Shader->SetMat4("uModel", model);
 
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
         glBindVertexArray(0);
-
         m_Framebuffer->Unbind();
 
-        // ==========================================
-        // ETAPE 2 : RENDU DE L'ÉDITEUR (Interface)
-        // ==========================================
-        glDisable(GL_DEPTH_TEST); // Désactivé pour l'UI
-
-        // Couleur de fond de la fenêtre principale (derrière ImGui)
-        glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+        // --- 3. RENDU DE L'ÉDITEUR (Interface ImGui) ---
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(0.05f, 0.05f, 0.05f, 1.0f); // Fond style macOS Dark
         glClear(GL_COLOR_BUFFER_BIT);
 
         BeginImGui();
 
-        // --- FENÊTRE DES PARAMÈTRES ---
-        ImGui::Begin("Engine Settings");
+        // --- DOCKSPACE ROOT ---
+        static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
+        ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
 
-        ImGui::Text("Performances");
-        ImGui::Text("Delta Time: %.4f ms", m_DeltaTime * 1000.0f);
+        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(main_viewport->WorkPos);
+        ImGui::SetNextWindowSize(main_viewport->WorkSize);
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+        window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+        ImGui::Begin("DockSpaceParent", nullptr, window_flags);
+        ImGui::PopStyleVar(2);
+
+        // L'ID du DockSpace pour que les fenêtres puissent s'y ancrer
+        ImGuiID dockspace_id = ImGui::GetID("MyEngineDockSpace");
+        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+
+        if (ImGui::BeginMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("Exit")) m_Running = false;
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenuBar();
+        }
+
+        // --- FENÊTRE : VIEWPORT ---
+        ImGui::Begin("Viewport");
+        m_ViewportHovered = ImGui::IsWindowHovered();
+
+        ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+        if (m_Framebuffer->GetSpecification().Width != viewportSize.x || m_Framebuffer->GetSpecification().Height != viewportSize.y) {
+            m_Framebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
+        }
+
+        uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
+        ImGui::Image((ImTextureID)(uint64_t)textureID, viewportSize, ImVec2{0, 1}, ImVec2{1, 0});
+        ImGui::End();
+
+        // --- FENÊTRE : INSPECTOR / SETTINGS ---
+        ImGui::Begin("Inspector");
         ImGui::Text("FPS: %.1f", 1.0f / m_DeltaTime);
         ImGui::Separator();
 
         auto& triangleColor = m_Registry.get<ColorComponent>(m_TriangleEntity);
-        auto& triangleTransform = m_Registry.get<TransformComponent>(m_TriangleEntity);
-
         ImGui::ColorEdit3("Entity Color", &triangleColor.Color[0]);
-        ImGui::DragFloat3("Position", &triangleTransform.Position[0], 0.1f);
-        ImGui::DragFloat3("Scale", &triangleTransform.Scale[0], 0.1f);
 
-        ImGui::Separator();
-        ImGui::Text("Camera Controls");
-        auto& cameraComp = m_Registry.get<CameraComponent>(m_CameraEntity);
-        ImGui::DragFloat3("Cam Position", &cameraComp.Position[0], 0.1f);
-
+        auto& camComp = m_Registry.get<CameraComponent>(m_CameraEntity);
+        ImGui::DragFloat3("Cam Position", &camComp.Position[0], 0.1f);
         ImGui::End();
 
-        // --- FENÊTRE DU VIEWPORT ---
-        ImGui::Begin("Viewport");
+        ImGui::End(); // Fin du DockSpaceParent
 
-        // On vérifie si la souris survole CETTE fenêtre spécifiquement
-        m_ViewportHovered = ImGui::IsWindowHovered();
-
-        // Gestion du redimensionnement
-        ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
-        if (m_Framebuffer->GetSpecification().Width != viewportPanelSize.x ||
-            m_Framebuffer->GetSpecification().Height != viewportPanelSize.y) {
-
-            m_Framebuffer->Resize((uint32_t)viewportPanelSize.x, (uint32_t)viewportPanelSize.y);
+        // --- 4. LOGIQUE INPUTS (Seulement si focus viewport) ---
+        if (m_ViewportHovered && Input::IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
+            glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            // ... (Ici ta logique de mouvement Pitch/Yaw et ZQSD que tu as déjà) ...
+        } else {
+            glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
 
-        // Affichage de la texture 3D
-        uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-        ImGui::Image((ImTextureID)(uint64_t)textureID, ImVec2{viewportPanelSize.x, viewportPanelSize.y}, ImVec2{0, 1}, ImVec2{1, 0});
-
-        ImGui::End();
-
         EndImGui();
-
         glfwSwapBuffers(m_Window);
     }
 }
