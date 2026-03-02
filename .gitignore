@@ -1,0 +1,71 @@
+# Build directories
+cmake-build-debug/
+cmake-build-release/
+cmake-build-relwithdebinfo/
+cmake-build-minsizerel/
+build/
+dist/
+out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+*.a
+*.lib
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.user
+*.pro.user*
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+
+# Generated files
+*.ninja
+compile_commands.json
+vcpkg-manifest-install.log
+
+# vcpkg
+vcpkg_installed/
+vcpkg/
+
+# Runtime files
+imgui.ini
+*.log
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# OS specific
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.directory
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
