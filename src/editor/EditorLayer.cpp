@@ -214,51 +214,65 @@ void EditorLayer::OnUpdate(float ts) {
     if (m_ViewportSize.x <= 0.0f || m_ViewportSize.y <= 0.0f) return;
     m_ViewportFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 
-    // --- 3. GESTION DE LA CAMÉRA ---
-    GLFWwindow* window = Application::Get().GetWindow();
-    double mouseX, mouseY;
-    glfwGetCursorPos(window, &mouseX, &mouseY);
+    // --- 3. GESTION DE L'ÉTAT DU JEU ---
+    switch (m_SceneState) {
+        case SceneState::Edit: {
+            // --- 3. GESTION DE LA CAMÉRA ---
+            GLFWwindow* window = Application::Get().GetWindow();
+            double mouseX, mouseY;
+            glfwGetCursorPos(window, &mouseX, &mouseY);
 
-    if (m_ViewportFocused) {
-        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
-            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
-            if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
-            if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::SCALE;
+            if (m_ViewportFocused) {
+                if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
+                    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+                    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
+                    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::SCALE;
+                }
+            }
+
+            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+                glm::vec2 mousePos = { (float)mouseX, (float)mouseY };
+                glm::vec2 delta = (mousePos - m_LastMousePosition) * 0.003f;
+                m_LastMousePosition = mousePos;
+
+                m_EditorCamera.Yaw += delta.x;
+                m_EditorCamera.Pitch -= delta.y;
+                m_EditorCamera.Pitch = glm::clamp(m_EditorCamera.Pitch, glm::radians(-89.0f), glm::radians(89.0f));
+
+                glm::vec3 front;
+                front.x = cos(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
+                front.y = sin(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
+                front.z = sin(m_EditorCamera.Pitch);
+                m_EditorCamera.Front = glm::normalize(front);
+
+                float baseSpeed = 500.0f;
+                if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+                    baseSpeed *= 4.0f;
+                }
+
+                float cameraSpeed = baseSpeed * ts;
+                glm::vec3 right = glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front));
+
+                if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_EditorCamera.Position += m_EditorCamera.Front * cameraSpeed;
+                if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) m_EditorCamera.Position -= m_EditorCamera.Front * cameraSpeed;
+                if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) m_EditorCamera.Position -= right * cameraSpeed;
+                if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) m_EditorCamera.Position += right * cameraSpeed;
+                if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) m_EditorCamera.Position += m_EditorCamera.WorldUp * cameraSpeed;
+                if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) m_EditorCamera.Position -= m_EditorCamera.WorldUp * cameraSpeed;
+
+            } else {
+                m_LastMousePosition = { (float)mouseX, (float)mouseY };
+            }
+                break;
+            }
+        case SceneState::Play: {
+                    // Ici, on mettra à jour la simulation Jolt !
+                    break;
         }
-    }
-
-    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-        glm::vec2 mousePos = { (float)mouseX, (float)mouseY };
-        glm::vec2 delta = (mousePos - m_LastMousePosition) * 0.003f;
-        m_LastMousePosition = mousePos;
-
-        m_EditorCamera.Yaw += delta.x;
-        m_EditorCamera.Pitch -= delta.y;
-        m_EditorCamera.Pitch = glm::clamp(m_EditorCamera.Pitch, glm::radians(-89.0f), glm::radians(89.0f));
-
-        glm::vec3 front;
-        front.x = cos(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
-        front.y = sin(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
-        front.z = sin(m_EditorCamera.Pitch);
-        m_EditorCamera.Front = glm::normalize(front);
-
-        float baseSpeed = 500.0f;
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            baseSpeed *= 4.0f;
+        case SceneState::Pause: {
+                    // On ne fait rien
+                    break;
         }
-
-        float cameraSpeed = baseSpeed * ts;
-        glm::vec3 right = glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front));
-
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_EditorCamera.Position += m_EditorCamera.Front * cameraSpeed;
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) m_EditorCamera.Position -= m_EditorCamera.Front * cameraSpeed;
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) m_EditorCamera.Position -= right * cameraSpeed;
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) m_EditorCamera.Position += right * cameraSpeed;
-        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) m_EditorCamera.Position += m_EditorCamera.WorldUp * cameraSpeed;
-        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) m_EditorCamera.Position -= m_EditorCamera.WorldUp * cameraSpeed;
-
-    } else {
-        m_LastMousePosition = { (float)mouseX, (float)mouseY };
     }
 
     // --- 4. RENDU DE LA SCÈNE ---
@@ -336,6 +350,8 @@ void EditorLayer::OnUpdate(float ts) {
 void EditorLayer::OnImGuiRender() {
     BeginDockspace();
     DrawMenuBar();
+
+    UI_Toolbar();
 
     // On vérifie si Ctrl et Shift sont enfoncés
     bool control = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
@@ -672,5 +688,73 @@ void EditorLayer::SaveSceneAs() {
 
         NFD::FreePath(outPath);
         std::cout << "[Editor] Scene saved as " << m_CurrentScenePath << std::endl;
+    }
+}
+
+void EditorLayer::UI_Toolbar() {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 2));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+
+    auto& colors = ImGui::GetStyle().Colors;
+    const auto& buttonHovered = colors[ImGuiCol_ButtonHovered];
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(buttonHovered.x, buttonHovered.y, buttonHovered.z, 0.5f));
+    const auto& buttonActive = colors[ImGuiCol_ButtonActive];
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(buttonActive.x, buttonActive.y, buttonActive.z, 0.5f));
+
+    ImGui::Begin("##Toolbar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    float size = ImGui::GetWindowHeight() - 4.0f;
+    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x * 0.5f) - (size * 1.5f));
+
+    bool isPlaying = m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause;
+    const char* playStopIcon = isPlaying ? "STOP" : "PLAY";
+
+    if (ImGui::Button(playStopIcon, ImVec2(size * 2.0f, size))) {
+        if (m_SceneState == SceneState::Edit)
+            OnScenePlay();
+        else if (isPlaying)
+            OnSceneStop();
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("PAUSE", ImVec2(size * 2.0f, size))) {
+        OnScenePause();
+    }
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(3);
+    ImGui::End();
+}
+
+void EditorLayer::OnScenePlay() {
+    m_SceneState = SceneState::Play;
+
+    // Sauvegarde temporaire pour figer l'état initial
+    SceneSerializer serializer(m_ActiveScene);
+    serializer.Serialize("TempSceneBackup.cescene");
+
+    std::cout << "[Editor] Entered PLAY mode." << std::endl;
+}
+
+void EditorLayer::OnSceneStop() {
+    m_SceneState = SceneState::Edit;
+
+    // On recharge la scène pour annuler toutes les destructions/mouvements
+    m_ActiveScene = std::make_shared<Scene>();
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
+    SceneSerializer serializer(m_ActiveScene);
+    serializer.Deserialize("TempSceneBackup.cescene");
+
+    std::cout << "[Editor] Entered EDIT mode (Scene Restored)." << std::endl;
+}
+
+void EditorLayer::OnScenePause() {
+    if (m_SceneState == SceneState::Play) {
+        m_SceneState = SceneState::Pause;
+    } else if (m_SceneState == SceneState::Pause) {
+        m_SceneState = SceneState::Play;
     }
 }
