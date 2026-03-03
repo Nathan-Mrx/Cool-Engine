@@ -52,4 +52,7 @@ private:
 
     bool m_RequestCloseProject = false;
     void CloseProjectInternal();
+
+    bool m_ShowProjectSettings = false;
+    void DrawProjectSettings();
 };

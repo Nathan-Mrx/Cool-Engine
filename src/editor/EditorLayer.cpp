@@ -101,6 +101,12 @@ void EditorLayer::DrawMenuBar() {
             if (ImGui::MenuItem("Exit")) Application::Get().Close();
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Project Settings")) {
+                m_ShowProjectSettings = true;
+            }
+            ImGui::EndMenu();
+        }
         // ... Menu View
         ImGui::EndMenuBar();
     }
@@ -176,12 +182,44 @@ void EditorLayer::CloseProjectInternal() {
 }
 
 void EditorLayer::OnUpdate(float ts) {
+    // --- 1. DÉTECTION DE CHARGEMENT DE PROJET AUTOMATIQUE ---
+    static std::shared_ptr<Project> s_LastProject = nullptr;
+    auto currentProject = Project::GetActive();
+
+    // Si on vient d'ouvrir un projet depuis le Hub
+    if (currentProject && currentProject != s_LastProject) {
+        s_LastProject = currentProject;
+
+        // 1. Initialisation d'une scène vierge propre
+        m_ActiveScene = std::make_shared<Scene>();
+        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
+        // 2. Récupération du chemin de la StartScene
+        std::filesystem::path scenePath = currentProject->GetProjectDirectory() / currentProject->GetConfig().StartScene;
+
+        // 3. Chargement silencieux
+        if (std::filesystem::exists(scenePath)) {
+            SceneSerializer serializer(m_ActiveScene);
+            serializer.Deserialize(scenePath.string());
+            std::cout << "[Editor] Loaded default scene: " << currentProject->GetConfig().StartScene << std::endl;
+        } else {
+            std::cout << "[Editor] Warning: Default scene not found at " << scenePath << std::endl;
+        }
+    }
+
+    // Si aucun projet n'est actif (on est sur le Hub), on ne calcule pas la 3D
+    if (!currentProject) {
+        s_LastProject = nullptr;
+        return;
+    }
+
+    // --- 2. VÉRIFICATIONS DE SÉCURITÉ DU VIEWPORT ---
     if (!m_ActiveScene || !m_ViewportFramebuffer) return;
 
     if (m_ViewportSize.x <= 0.0f || m_ViewportSize.y <= 0.0f) return;
     m_ViewportFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 
-    // --- GESTION DE LA CAMÉRA ---
+    // --- 3. GESTION DE LA CAMÉRA ---
     GLFWwindow* window = Application::Get().GetWindow();
     double mouseX, mouseY;
     glfwGetCursorPos(window, &mouseX, &mouseY);
@@ -235,11 +273,12 @@ void EditorLayer::OnUpdate(float ts) {
     }
     // --------------------------------------------------
 
+    // --- 4. RENDU DE LA SCÈNE ---
     m_ViewportFramebuffer->Bind();
     glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
     Renderer::Clear();
 
-    // 4. Calcul des matrices (S'assurer de ne les déclarer qu'UNE SEULE fois)
+    // Calcul des matrices
     float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
     glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
     glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
@@ -249,15 +288,16 @@ void EditorLayer::OnUpdate(float ts) {
     Renderer::RenderScene(m_ActiveScene.get());
     Renderer::EndScene();
 
+    // --- 5. LOGIQUE DE FERMETURE ET CAPTURE THUMBNAIL ---
     bool isAppClosing = glfwWindowShouldClose(Application::Get().GetWindow());
 
     if (m_RequestCloseProject || isAppClosing) {
-        if (Project::GetActive()) {
+        if (currentProject) {
             // On capture la thumbnail tant que le projet est actif et le contexte vivant
-            CaptureViewportThumbnail(Project::GetActive()->GetProjectDirectory().string());
+            CaptureViewportThumbnail(currentProject->GetProjectDirectory().string());
 
             // Si c'est une fermeture manuelle du projet (via le menu), on décharge.
-            // Si l'app se ferme, on laisse le moteur s'arrêter proprement.
+            // Si l'app se ferme, on laisse le moteur s'arrêter proprement sans Unload forcé.
             if (!isAppClosing) {
                 CloseProjectInternal();
                 m_RequestCloseProject = false;
@@ -271,6 +311,10 @@ void EditorLayer::OnUpdate(float ts) {
 void EditorLayer::OnImGuiRender() {
     BeginDockspace();
     DrawMenuBar();
+
+    // --- L'APPEL MANQUANT EST ICI ---
+    // On dessine la fenêtre des paramètres si le flag m_ShowProjectSettings est à true
+    DrawProjectSettings();
 
     if (Project::GetActive() == nullptr) {
         m_HubPanel.OnImGuiRender();
@@ -411,4 +455,77 @@ void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
     if (stbi_write_png(finalPath.c_str(), width, height, 4, pixels.data(), width * 4)) {
         std::cout << "[Engine] Thumbnail updated: " << finalPath << std::endl;
     }
+}
+
+void EditorLayer::DrawProjectSettings() {
+    if (!m_ShowProjectSettings) return;
+
+    ImGui::SetNextWindowSize(ImVec2(800, 500), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Project Settings", &m_ShowProjectSettings)) {
+
+        // --- COLONNE GAUCHE : CATÉGORIES ---
+        ImGui::BeginChild("Categories", ImVec2(200, 0), true);
+        static int selectedCategory = 0;
+        if (ImGui::Selectable("Maps & Modes", selectedCategory == 0)) selectedCategory = 0;
+        if (ImGui::Selectable("General", selectedCategory == 1)) selectedCategory = 1;
+        // Tu pourras ajouter "Physics", "Input", etc. ici plus tard
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // --- COLONNE DROITE : CONTENU ---
+        ImGui::BeginChild("Details", ImVec2(0, 0), true);
+
+        if (selectedCategory == 0) { // Maps & Modes
+            ImGui::TextDisabled("DEFAULT MAPS");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            auto project = Project::GetActive();
+            if (project) {
+                auto& config = project->GetConfig(); // Nécessite ProjectConfig& GetConfig() dans Project.h
+
+                ImGui::Text("Editor Startup Map");
+                ImGui::SameLine(150.0f); // Aligne le champ texte
+
+                // Affichage du chemin actuel
+                char buffer[256];
+                strncpy(buffer, config.StartScene.c_str(), sizeof(buffer));
+                ImGui::InputText("##StartupMap", buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
+
+                ImGui::SameLine();
+
+                // Bouton pour parcourir
+                if (ImGui::Button("...##BrowseMap")) {
+                    nfdchar_t* outPath = nullptr;
+                    nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+
+                    // On ouvre NFD directement dans le dossier Content du projet
+                    if (NFD::OpenDialog(outPath, filterItem, 1, project->GetProjectDirectory().string().c_str()) == NFD_OKAY) {
+
+                        // On calcule le chemin relatif pour la portabilité (très important si tu partages ton projet)
+                        std::filesystem::path fullPath = outPath;
+                        std::filesystem::path relPath = std::filesystem::relative(fullPath, project->GetProjectDirectory());
+
+                        config.StartScene = relPath.string();
+
+                        // Sauvegarde immédiate du fichier .ceproj
+                        std::string projFileName = project->GetProjectDirectory().filename().string() + ".ceproj";
+                        std::filesystem::path projFilePath = project->GetProjectDirectory() / projFileName;
+
+                        Project::SaveActive(projFilePath);
+
+                        NFD::FreePath(outPath);
+                    }
+                }
+            }
+        } else if (selectedCategory == 1) { // General
+            ImGui::TextDisabled("PROJECT DETAILS");
+            ImGui::Separator();
+            // Inputs pour le nom du projet, la version, etc.
+        }
+
+        ImGui::EndChild();
+    }
+    ImGui::End();
 }

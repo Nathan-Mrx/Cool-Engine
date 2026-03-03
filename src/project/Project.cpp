@@ -46,17 +46,20 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
         json data = json::parse(stream);
         std::shared_ptr<Project> project = std::make_shared<Project>();
 
-        // 1. Définition des chemins de base
         project->m_Config.ProjectDirectory = absolutePath.parent_path();
         project->m_Config.ContentDirectory = project->m_Config.ProjectDirectory / "Content";
         project->m_Config.ConfigDirectory = project->m_Config.ProjectDirectory / "Config";
         project->m_Config.BinariesDirectory = project->m_Config.ProjectDirectory / "Binaries";
 
-        // 2. CORRECTION : Accès correct aux clés JSON
+        // --- LE FIX : GESTION DES ANCIENS ET NOUVEAUX PROJETS ---
         if (data.contains("Project")) {
             auto& projData = data["Project"];
             project->m_Config.Name = projData.value("Name", "Untitled");
             project->m_Config.StartScene = projData.value("StartScene", "Scenes/Default.cescene");
+        } else {
+            // Rétrocompatibilité pour tes anciens projets !
+            project->m_Config.Name = data.value("Name", "Untitled");
+            project->m_Config.StartScene = data.value("StartScene", "Scenes/Default.cescene");
         }
 
         s_ActiveProject = project;
@@ -73,9 +76,9 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
 void Project::SaveActive(const std::filesystem::path& path) {
     if (!s_ActiveProject) return;
 
-    json data;
-    data["Name"] = s_ActiveProject->m_Config.Name;
-    data["StartScene"] = s_ActiveProject->m_Config.StartScene;
+    nlohmann::json data;
+    data["Project"]["Name"] = s_ActiveProject->m_Config.Name;
+    data["Project"]["StartScene"] = s_ActiveProject->m_Config.StartScene;
 
     std::ofstream stream(path);
     if (stream.is_open()) {
