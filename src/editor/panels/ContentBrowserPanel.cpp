@@ -78,7 +78,21 @@ void ContentBrowserPanel::OnImGuiRender() {
                 }
             } else {
                 // Rendu Fichier
+                bool isScene = path.extension() == ".cescene";
+
+                // --- VISIBILITÉ : On donne une couleur bleue "JetBrains" aux scènes ---
+                if (isScene) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
+
                 ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
+
+                if (isScene) ImGui::PopStyleColor();
+
+                // --- LOGIQUE D'OUVERTURE ---
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    if (isScene && OnSceneOpenCallback) {
+                        OnSceneOpenCallback(path); // On prévient l'éditeur qu'il faut charger cette scène
+                    }
+                }
 
                 // DÉBUT DU DRAG AND DROP (Source)
                 if (ImGui::BeginDragDropSource()) {

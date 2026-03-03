@@ -16,6 +16,19 @@ void EditorLayer::OnAttach() {
     // Utilisation du nom correct défini dans le header
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
     m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
+    m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
+
+    m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
+        // 1. On prépare une nouvelle scène
+        m_ActiveScene = std::make_shared<Scene>();
+        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
+        // 2. On charge les données via le Serializer
+        SceneSerializer serializer(m_ActiveScene);
+        serializer.Deserialize(path.string());
+
+        std::cout << "[Editor] Scene loaded: " << path.filename() << std::endl;
+    };
 
     FramebufferSpecification fbSpec;
     fbSpec.Width = 1280;
