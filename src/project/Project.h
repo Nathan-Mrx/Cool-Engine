@@ -18,7 +18,7 @@ struct ProjectConfig {
 
 class Project {
 public:
-    static std::shared_ptr<Project> New();
+    static std::shared_ptr<Project> New(const std::string& name, const std::filesystem::path& path);
     static std::shared_ptr<Project> Load(const std::filesystem::path& path);
     static void SaveActive(const std::filesystem::path& path);
 

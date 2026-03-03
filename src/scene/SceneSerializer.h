@@ -1,9 +1,15 @@
 #pragma once
-#include <entt/entt.hpp>
-#include <filesystem>
+#include "Scene.h"
+#include <memory>
+#include <string>
 
 class SceneSerializer {
 public:
-    static void Serialize(entt::registry& registry, const std::filesystem::path& filepath);
-    static bool Deserialize(entt::registry& registry, const std::filesystem::path& filepath);
+    SceneSerializer(const std::shared_ptr<Scene>& scene);
+
+    void Serialize(const std::string& filepath);
+    bool Deserialize(const std::string& filepath);
+
+private:
+    std::shared_ptr<Scene> m_Scene;
 };

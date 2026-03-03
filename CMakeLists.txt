@@ -24,10 +24,22 @@ set(SOURCES
         src/project/Project.cpp
         src/renderer/Mesh.cpp
         src/renderer/ModelLoader.h
-        src/editor/ContentBrowserPanel.cpp
-        src/editor/ContentBrowserPanel.h
+        src/editor/panels/ContentBrowserPanel.cpp
+        src/editor/panels/ContentBrowserPanel.h
         src/scene/SceneSerializer.cpp
         src/scene/SceneSerializer.h
+        src/scene/Scene.cpp
+        src/scene/Scene.h
+        src/scene/Entity.cpp
+        src/scene/Entity.h
+        src/renderer/Renderer.cpp
+        src/renderer/Renderer.h
+        src/editor/EditorLayer.cpp
+        src/editor/EditorLayer.h
+        src/editor/panels/SceneHierarchyPanel.cpp
+        src/editor/panels/SceneHierarchyPanel.h
+        src/editor/panels/HubPanel.cpp
+        src/editor/panels/HubPanel.h
 )
 
 # Créer l'exécutable avec les sources

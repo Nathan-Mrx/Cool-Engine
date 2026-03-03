@@ -5,8 +5,11 @@
 #include <imgui.h>
 #include <string>
 #include <tuple>
+#include <filesystem>
 
 #include "renderer/Mesh.h"
+#include <nfd.hpp>
+#include "../renderer/ModelLoader.h"
 
 // --- STRUCTURES DE DONNÉES DE BASE ---
 
@@ -97,13 +100,42 @@ struct CameraComponent {
 
 struct MeshComponent {
     std::shared_ptr<Mesh> MeshData;
-    std::string AssetPath; // <-- INDISPENSABLE POUR LA SAUVEGARDE
+    std::string AssetPath;
 
     void OnImGuiRender() {
         if (MeshData) {
             ImGui::TextWrapped("Path: %s", AssetPath.c_str());
         } else {
             ImGui::TextColored(ImVec4(1, 0, 0, 1), "No Mesh Assigned");
+        }
+
+        ImGui::Spacing();
+
+        // On crée une zone visuelle pour le Drag & Drop
+        ImGui::Button("Drop .obj Here to Load", ImVec2(-1, 40));
+
+        // --- NOUVEAU : DRAG & DROP TARGET (Inspector) ---
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                const char* path = (const char*)payload->Data;
+                std::filesystem::path filepath = path;
+
+                if (filepath.extension() == ".obj" || filepath.extension() == ".fbx") {
+                    AssetPath = filepath.string();
+                    MeshData = ModelLoader::LoadModel(AssetPath);
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        // Garde l'ancien bouton NFD pour la rétrocompatibilité si tu veux chercher en dehors du projet
+        if (ImGui::Button("Or Browse...", ImVec2(-1, 0))) {
+            nfdchar_t* outPath = nullptr;
+            if (NFD::OpenDialog(outPath, nullptr, 0, nullptr) == NFD_OKAY) {
+                AssetPath = outPath;
+                MeshData = ModelLoader::LoadModel(AssetPath);
+                NFD::FreePath(outPath);
+            }
         }
     }
 };

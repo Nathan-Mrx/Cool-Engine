@@ -1,56 +1,33 @@
 #pragma once
-
+#include <string>
+#include <memory>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-#include <entt/entt.hpp>
-#include <glm/glm.hpp>
-#include <memory>
-#include <string>
 
-#include "../renderer/Shader.h"
-#include "../renderer/Framebuffer.h"
-#include "ecs/Components.h"
-#include "editor/ContentBrowserPanel.h"
+class EditorLayer;
 
 class Application {
 public:
-    Application(const std::string& name = "Cool Engine", int width = 1280, int height = 720);
+    Application(const std::string& name = "Cool Engine", int width = 1600, int height = 900);
     ~Application();
 
-    void DrawCreationMenu();
     void Run();
+    void Close() { m_Running = false; }
+
+    static Application& Get() { return *s_Instance; }
+    GLFWwindow* GetWindow() const { return m_Window; }
 
 private:
-    void BeginImGui();
-    void EndImGui();
+    void Init();
     void Shutdown();
-    entt::entity CreateEntity(const std::string& name);
 
 private:
     GLFWwindow* m_Window;
     bool m_Running = true;
-
-    // Temps
     float m_DeltaTime = 0.0f;
     float m_LastFrameTime = 0.0f;
 
-    // Rendu & OpenGL
-    std::unique_ptr<Shader> m_Shader;
-    std::unique_ptr<Framebuffer> m_Framebuffer;
+    std::unique_ptr<EditorLayer> m_EditorLayer;
 
-    // Grille Infinie
-    bool m_ShowGrid = true;
-    uint32_t m_GridVAO, m_GridVBO;
-    std::unique_ptr<Shader> m_GridShader;
-
-    // ECS (EnTT)
-    entt::registry m_Registry;
-    entt::entity m_CameraEntity;
-
-    // État de l'Éditeur
-    entt::entity m_SelectedContext = entt::null;
-    bool m_ViewportHovered = false;
-    glm::vec2 m_LastMousePosition = { 0.0f, 0.0f };
-
-    std::unique_ptr<ContentBrowserPanel> m_ContentBrowserPanel;
+    static Application* s_Instance;
 };

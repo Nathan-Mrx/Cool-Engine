@@ -6,13 +6,38 @@
 
 using json = nlohmann::json;
 
-std::shared_ptr<Project> Project::New() {
-    s_ActiveProject = std::make_shared<Project>();
-    return s_ActiveProject;
+std::shared_ptr<Project> Project::New(const std::string& name, const std::filesystem::path& path) {
+    std::filesystem::path projectFolder = path / name;
+
+    try {
+        std::filesystem::create_directories(projectFolder / "Content");
+        std::filesystem::create_directories(projectFolder / "Config");
+
+        // Création du fichier JSON
+        nlohmann::json projectJson;
+        // On s'assure que la structure correspond à ce que Load() attend
+        projectJson["Name"] = name;
+        projectJson["StartScene"] = "Scenes/Default.cescene";
+
+        // CORRECTION : On repasse sur l'extension .ceproj
+        std::filesystem::path projectFilePath = projectFolder / (name + ".ceproj");
+
+        std::ofstream projectFile(projectFilePath);
+        if (projectFile.is_open()) {
+            projectFile << projectJson.dump(4);
+            projectFile.close();
+        }
+
+        return Load(projectFilePath);
+    } catch (const std::exception& e) {
+        return nullptr;
+    }
 }
 
 std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
-    if (!std::filesystem::exists(path)) return nullptr;
+    std::filesystem::path absolutePath = std::filesystem::absolute(path);
+
+    if (!std::filesystem::exists(absolutePath)) return nullptr;
 
     std::ifstream stream(path);
     if (!stream.is_open()) return nullptr;
@@ -22,14 +47,17 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
         std::shared_ptr<Project> project = std::make_shared<Project>();
 
         // 1. Définition des chemins de base
-        project->m_Config.ProjectDirectory = path.parent_path();
+        project->m_Config.ProjectDirectory = absolutePath.parent_path();
         project->m_Config.ContentDirectory = project->m_Config.ProjectDirectory / "Content";
-        project->m_Config.ConfigDirectory  = project->m_Config.ProjectDirectory / "Config";
+        project->m_Config.ConfigDirectory = project->m_Config.ProjectDirectory / "Config";
         project->m_Config.BinariesDirectory = project->m_Config.ProjectDirectory / "Binaries";
 
-        // 2. Chargement des métadonnées
-        project->m_Config.Name = data.value("Name", "Untitled");
-        project->m_Config.StartScene = data.value("StartScene", "Scenes/Default.cescene");
+        // 2. CORRECTION : Accès correct aux clés JSON
+        if (data.contains("Project")) {
+            auto& projData = data["Project"];
+            project->m_Config.Name = projData.value("Name", "Untitled");
+            project->m_Config.StartScene = projData.value("StartScene", "Scenes/Default.cescene");
+        }
 
         s_ActiveProject = project;
         AddToRecentProjects(path);
