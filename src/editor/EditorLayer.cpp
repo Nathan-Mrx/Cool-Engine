@@ -74,15 +74,7 @@ void EditorLayer::DrawMenuBar() {
             }
 
             if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) {
-                nfdchar_t* outPath = nullptr;
-                // Le filtre "cescene" garantit la bonne extension
-                nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
-                if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, "Untitled.cescene") == NFD_OKAY) {
-                    m_CurrentScenePath = outPath; // Mise à jour du chemin actuel
-                    SceneSerializer serializer(m_ActiveScene);
-                    serializer.Serialize(outPath);
-                    NFD::FreePath(outPath);
-                }
+                SaveSceneAs();
             }
 
             if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) {
