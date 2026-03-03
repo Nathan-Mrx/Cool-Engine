@@ -282,6 +282,8 @@ void EditorLayer::OnUpdate(float ts) {
     glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
     Renderer::Clear();
 
+    m_ViewportFramebuffer->ClearAttachment(1, -1);
+
     float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
     glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
     glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
@@ -427,29 +429,27 @@ void EditorLayer::OnImGuiRender() {
 
             if (mouseX >= 0 && mouseY >= 0 && mouseX < m_ViewportSize.x && mouseY < m_ViewportSize.y) {
 
-                // 2. Conversion en NDC [-1, 1]
-                float ndcX = (2.0f * mouseX) / m_ViewportSize.x - 1.0f;
-                float ndcY = (2.0f * mouseY) / m_ViewportSize.y - 1.0f;
+                // --- NOUVELLE LOGIQUE : COLOR PICKING (PIXEL PERFECT) ---
 
-                // 3. Matrices
-                float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
-                glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
-                glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+                // 1. On "Bind" le Framebuffer pour autoriser OpenGL à lire dedans
+                m_ViewportFramebuffer->Bind();
 
-                // 4. Inversion pour obtenir la direction
-                glm::vec4 rayClip = glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
-                glm::vec4 rayEye = glm::inverse(projection) * rayClip;
-                rayEye = glm::vec4(rayEye.x, rayEye.y, 1.0f, 0.0f); // On annule le Z et W pour garder un vecteur directionnel
+                // 2. On lit le pixel à la position (mouseX, mouseY) sur l'attachment 1 (ID Buffer)
+                int pixelData = m_ViewportFramebuffer->ReadPixel(1, (int)mouseX, (int)mouseY);
 
-                glm::vec3 rayWorld = glm::normalize(glm::vec3(glm::inverse(view) * rayEye));
-                glm::vec3 rayOrigin = m_EditorCamera.Position;
+                // 3. On n'oublie pas de refermer le Framebuffer
+                m_ViewportFramebuffer->Unbind();
 
-                // --- ICI : LOGIQUE D'INTERSECTION ---
-                // Exemple si tu as un moteur physique actif :
-                // Entity hit = PhysicsEngine::Raycast(rayOrigin, rayWorld, maxDistance);
-                // m_SceneHierarchyPanel.SetSelectedEntity(hit);
-
-                std::cout << "Ray Casted ! Dir X: " << rayWorld.x << " Y: " << rayWorld.y << " Z: " << rayWorld.z << std::endl;
+                // 4. On assigne l'entité sélectionnée !
+                if (pixelData != -1) {
+                    if (m_ActiveScene->m_Registry.valid((entt::entity)pixelData)) {
+                        Entity clickedEntity((entt::entity)pixelData, m_ActiveScene.get());
+                        m_SceneHierarchyPanel.SetSelectedEntity(clickedEntity);
+                    }
+                } else {
+                    // Si on a cliqué dans le vide (-1), on désélectionne l'objet actuel
+                    m_SceneHierarchyPanel.SetSelectedEntity({});
+                }
             }
         }
 

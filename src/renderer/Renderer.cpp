@@ -76,6 +76,10 @@ void Renderer::RenderScene(Scene* scene) {
         if (mesh.MeshData) {
             s_Data->MainShader->SetVec3("uColor", color.Color);
             s_Data->MainShader->SetMat4("uModel", transform.GetTransform());
+
+            // --- NOUVEAU : On envoie l'identifiant numérique de l'entité au Shader ---
+            s_Data->MainShader->SetInt("uEntityID", (int)entity);
+
             mesh.MeshData->Draw();
         }
     }

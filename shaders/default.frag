@@ -2,30 +2,32 @@
 in vec3 vFragPos;
 in vec3 vNormal;
 
-out vec4 FragColor;
+// --- NOUVEAU : On spécifie 2 sorties (MRT) ---
+layout(location = 0) out vec4 FragColor; // Va dans GL_COLOR_ATTACHMENT0
+layout(location = 1) out int EntityID;   // Va dans GL_COLOR_ATTACHMENT1 (Texture R32I)
 
 uniform vec3 uColor;
-
-// Paramètres de la Directional Light
 uniform vec3 uLightDir;
 uniform vec3 uLightColor;
 uniform float uAmbientStrength;
 uniform float uDiffuseStrength;
 
+// --- NOUVEAU : On reçoit l'ID de l'entité depuis le C++ ---
+uniform int uEntityID;
+
 void main() {
-    // 1. Ambient (Lumière indirecte de base)
+    // 1. Ambient
     vec3 ambient = uAmbientStrength * uLightColor;
 
-    // 2. Diffuse (Lumière directe de la source)
+    // 2. Diffuse
     vec3 norm = normalize(vNormal);
-    // On inverse la direction car on veut calculer de la surface VERS la lumière
     vec3 lightDir = normalize(-uLightDir);
-
-    // Produit scalaire (Dot product) pour savoir si la face regarde la lumière
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * uDiffuseStrength * uLightColor;
 
-    // Application sur la couleur de base de ton objet
     vec3 result = (ambient + diffuse) * uColor;
-    FragColor = vec4(result, 1.0);
+
+    // --- SORTIES MULTIPLES ---
+    FragColor = vec4(result, 1.0); // Écran normal
+    EntityID = uEntityID;          // Texture cachée pour le clic
 }

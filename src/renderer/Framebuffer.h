@@ -13,18 +13,22 @@ public:
     Framebuffer(const FramebufferSpecification& spec);
     ~Framebuffer();
 
-    void Invalidate(); // Fonction pour générer ou regénérer le FBO
-    void Bind();       // On appelle ça AVANT de dessiner notre scène 3D
-    void Unbind();     // On appelle ça APRÈS avoir dessiné, pour revenir à l'écran normal
+    void Invalidate();
+    void Bind();
+    void Unbind();
 
     void Resize(uint32_t width, uint32_t height);
 
     uint32_t GetColorAttachmentRendererID() const { return m_ColorAttachment; }
     const FramebufferSpecification& GetSpecification() const { return m_Specification; }
 
+    int ReadPixel(uint32_t attachmentIndex, int x, int y);
+    void ClearAttachment(uint32_t attachmentIndex, int value);
+
 private:
     uint32_t m_RendererID = 0;
     uint32_t m_ColorAttachment = 0;
-    uint32_t m_DepthAttachment = 0; // Très important pour la 3D (Z-Buffer)
+    uint32_t m_EntityIDAttachment = 0; // <-- NOUVEAU : Texture pour les IDs
+    uint32_t m_DepthAttachment = 0;
     FramebufferSpecification m_Specification;
 };
