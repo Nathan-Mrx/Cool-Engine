@@ -20,6 +20,12 @@ struct EditorCamera {
     float Pitch = 0.0f;
 };
 
+enum class SceneState {
+    Edit = 0,
+    Play = 1,
+    Pause = 2
+};
+
 class EditorLayer {
 public:
     void OnAttach();
@@ -33,8 +39,16 @@ private:
     void BeginDockspace();
     void EndDockspace();
 
+    void UI_Toolbar();
+    void OnScenePlay();
+    void OnSceneStop();
+    void OnScenePause();
+
 private:
     std::shared_ptr<Scene> m_ActiveScene;
+
+    SceneState m_SceneState = SceneState::Edit;
+
     EditorCamera m_EditorCamera;
     SceneHierarchyPanel m_SceneHierarchyPanel;
     std::unique_ptr<ContentBrowserPanel> m_ContentBrowserPanel;
