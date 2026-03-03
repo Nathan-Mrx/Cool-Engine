@@ -265,13 +265,15 @@ void EditorLayer::OnUpdate(float ts) {
             }
                 break;
             }
+
         case SceneState::Play: {
-                    // Ici, on mettra à jour la simulation Jolt !
-                    break;
+            m_ActiveScene->OnUpdatePhysics(ts);
+            break;
         }
+
         case SceneState::Pause: {
-                    // On ne fait rien
-                    break;
+            // On ne fait rien
+            break;
         }
     }
 

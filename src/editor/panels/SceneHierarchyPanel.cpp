@@ -14,6 +14,9 @@ const char* GetComponentName() {
     if constexpr (std::is_same_v<T, CameraComponent>) return "Camera";
     if constexpr (std::is_same_v<T, MeshComponent>) return "Mesh";
     if constexpr (std::is_same_v<T, DirectionalLightComponent>) return "Directional Light";
+    //if constexpr (std::is_same_v<T, PointLightComponent>) return "Point Light"; // not implemented yet
+    if constexpr (std::is_same_v<T, RigidBodyComponent>) return "Rigid Body";
+    if constexpr (std::is_same_v<T, BoxColliderComponent>) return "Box Collider";
     return "Unknown Component";
 }
 
@@ -33,6 +36,17 @@ void DrawComponentUI(Entity entity, entt::registry& registry) {
             component.OnImGuiRender();
 
             ImGui::TreePop();
+        }
+    }
+}
+
+template<typename T>
+void DrawAddComponentEntry(Entity entity) {
+    // On n'affiche le composant dans la liste que si l'entité ne l'a pas encore !
+    if (!entity.HasComponent<T>()) {
+        if (ImGui::MenuItem(GetComponentName<T>())) {
+            entity.AddComponent<T>();
+            ImGui::CloseCurrentPopup();
         }
     }
 }
@@ -128,10 +142,37 @@ void SceneHierarchyPanel::OnImGuiRender() {
 }
 
 void SceneHierarchyPanel::DrawComponents(Entity entity) {
-    // Utilisation de la réflexion sur le tuple de composants défini dans Components.h
+    // 1. Dessin des composants existants
     std::apply([&](auto... args) {
         (DrawComponentUI<decltype(args)>(entity, m_Context->m_Registry), ...);
     }, AllComponents{});
+
+    // 2. Bouton "Add Component"
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImVec2 buttonSize(150.0f, 30.0f);
+
+    // On centre le bouton mathématiquement
+    float cursorX = (ImGui::GetContentRegionAvail().x - buttonSize.x) * 0.5f;
+    if (cursorX > 0.0f) {
+        ImGui::SetCursorPosX(cursorX);
+    }
+
+    if (ImGui::Button("Add Component", buttonSize)) {
+        ImGui::OpenPopup("AddComponentPopup");
+    }
+
+    // 3. Le Popup (Menu déroulant)
+    if (ImGui::BeginPopup("AddComponentPopup")) {
+        // On réutilise la magie de la réflexion pour lister tous les composants possibles !
+        std::apply([&](auto... args) {
+            (DrawAddComponentEntry<decltype(args)>(entity), ...);
+        }, AllComponents{});
+
+        ImGui::EndPopup();
+    }
 }
 
 void SceneHierarchyPanel::DrawEntityNode(Entity entity) {

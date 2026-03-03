@@ -3,6 +3,8 @@
 #include <cstdarg>
 
 // --- INCLUDES JOLT ---
+#include <glm/fwd.hpp>
+#include <glm/detail/type_quat.hpp>
 #include <Jolt/Jolt.h>
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
@@ -10,6 +12,13 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+
+static JPH::Vec3 ToJolt(const glm::vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
+static glm::vec3 ToGLM(const JPH::Vec3& v) { return glm::vec3(v.GetX(), v.GetY(), v.GetZ()); }
+static JPH::Quat ToJolt(const glm::quat& q) { return JPH::Quat(q.x, q.y, q.z, q.w); }
+static glm::quat ToGLM(const JPH::Quat& q) { return glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ()); }
 
 using namespace JPH;
 
@@ -159,4 +168,53 @@ void PhysicsEngine::Update(float ts) {
 
     // On dit à Jolt d'avancer dans le temps.
     s_PhysicsData->m_PhysicsSystem->Update(ts, 1, s_PhysicsData->TempAllocator, s_PhysicsData->JobSystem);
+}
+
+uint32_t PhysicsEngine::CreateBoxBody(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& halfExtents, int type, float mass) {
+    if (!s_PhysicsData) return 0xFFFFFFFF;
+
+    JPH::BodyInterface& bodyInterface = s_PhysicsData->m_PhysicsSystem->GetBodyInterface();
+
+    // 1. Création de la forme (Box)
+    JPH::BoxShapeSettings shapeSettings(ToJolt(halfExtents));
+    JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
+    JPH::ShapeRefC shape = shapeResult.Get();
+
+    // 2. Type de mouvement
+    JPH::EMotionType motionType = JPH::EMotionType::Static;
+    JPH::ObjectLayer layer = PhysicsLayers::NON_MOVING;
+
+    if (type == 1) { motionType = JPH::EMotionType::Kinematic; layer = PhysicsLayers::MOVING; }
+    else if (type == 2) { motionType = JPH::EMotionType::Dynamic; layer = PhysicsLayers::MOVING; }
+
+    // 3. Configuration du corps
+    JPH::BodyCreationSettings bodySettings(shape, ToJolt(position), ToJolt(rotation), motionType, layer);
+
+    if (type == 2) { // Si Dynamique, on applique la masse
+        bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        bodySettings.mMassPropertiesOverride.mMass = mass;
+    }
+
+    // 4. Instanciation dans le monde
+    JPH::Body* body = bodyInterface.CreateBody(bodySettings);
+    bodyInterface.AddBody(body->GetID(), JPH::EActivation::Activate);
+
+    return body->GetID().GetIndexAndSequenceNumber();
+}
+
+void PhysicsEngine::DestroyBody(uint32_t bodyID) {
+    if (!s_PhysicsData || bodyID == 0xFFFFFFFF) return;
+    JPH::BodyID id(bodyID);
+    JPH::BodyInterface& bodyInterface = s_PhysicsData->m_PhysicsSystem->GetBodyInterface();
+    bodyInterface.RemoveBody(id);
+    bodyInterface.DestroyBody(id);
+}
+
+void PhysicsEngine::GetBodyTransform(uint32_t bodyID, glm::vec3& outPosition, glm::quat& outRotation) {
+    if (!s_PhysicsData || bodyID == 0xFFFFFFFF) return;
+    JPH::BodyID id(bodyID);
+    JPH::BodyInterface& bodyInterface = s_PhysicsData->m_PhysicsSystem->GetBodyInterface();
+
+    outPosition = ToGLM(bodyInterface.GetPosition(id));
+    outRotation = ToGLM(bodyInterface.GetRotation(id));
 }

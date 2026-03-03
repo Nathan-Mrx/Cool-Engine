@@ -61,6 +61,20 @@ void SceneSerializer::Serialize(const std::string& filepath) {
             entityJson["MeshComponent"]["AssetPath"] = mc.AssetPath;
         }
 
+        if (entity.HasComponent<RigidBodyComponent>()) {
+            auto& rb = entity.GetComponent<RigidBodyComponent>();
+            entityJson["RigidBodyComponent"]["Type"] = (int)rb.Type;
+            entityJson["RigidBodyComponent"]["Mass"] = rb.Mass;
+        }
+
+        if (entity.HasComponent<BoxColliderComponent>()) {
+            auto& bc = entity.GetComponent<BoxColliderComponent>();
+            entityJson["BoxColliderComponent"]["HalfSize"] = { bc.HalfSize.x, bc.HalfSize.y, bc.HalfSize.z };
+            entityJson["BoxColliderComponent"]["Offset"] = { bc.Offset.x, bc.Offset.y, bc.Offset.z };
+            entityJson["BoxColliderComponent"]["Friction"] = bc.Friction;
+            entityJson["BoxColliderComponent"]["Restitution"] = bc.Restitution;
+        }
+
         entitiesData.push_back(entityJson);
     }
 
@@ -147,6 +161,26 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
                     mc.MeshData = ModelLoader::LoadModel(mc.AssetPath);
                 }
             }
+        }
+
+        if (entityJson.contains("RigidBodyComponent")) {
+            auto& jRb = entityJson["RigidBodyComponent"];
+            if (!deserializedEntity.HasComponent<RigidBodyComponent>()) deserializedEntity.AddComponent<RigidBodyComponent>();
+            auto& rb = deserializedEntity.GetComponent<RigidBodyComponent>();
+
+            rb.Type = (RigidBodyType)jRb["Type"].get<int>();
+            rb.Mass = jRb["Mass"].get<float>();
+        }
+
+        if (entityJson.contains("BoxColliderComponent")) {
+            auto& jBc = entityJson["BoxColliderComponent"];
+            if (!deserializedEntity.HasComponent<BoxColliderComponent>()) deserializedEntity.AddComponent<BoxColliderComponent>();
+            auto& bc = deserializedEntity.GetComponent<BoxColliderComponent>();
+
+            bc.HalfSize = { jBc["HalfSize"][0], jBc["HalfSize"][1], jBc["HalfSize"][2] };
+            bc.Offset   = { jBc["Offset"][0], jBc["Offset"][1], jBc["Offset"][2] };
+            bc.Friction    = jBc["Friction"].get<float>();
+            bc.Restitution = jBc["Restitution"].get<float>();
         }
     }
     return true;
