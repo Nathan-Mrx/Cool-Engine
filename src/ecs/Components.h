@@ -107,6 +107,18 @@ struct MeshComponent {
     }
 };
 
+struct DirectionalLightComponent {
+    glm::vec3 Color = { 1.0f, 1.0f, 1.0f }; // Lumière blanche par défaut
+    float AmbientIntensity = 0.2f;          // Lumière ambiante (pour ne pas avoir de noir total)
+    float DiffuseIntensity = 0.8f;          // Puissance de la lumière directe
+
+    void OnImGuiRender() {
+        ImGui::ColorEdit3("Light Color", &Color[0]);
+        ImGui::DragFloat("Ambient", &AmbientIntensity, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat("Diffuse", &DiffuseIntensity, 0.01f, 0.0f, 1.0f);
+    }
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -116,5 +128,6 @@ using AllComponents = std::tuple<
     TransformComponent,
     ColorComponent,
     CameraComponent,
-    MeshComponent
+    MeshComponent,
+    DirectionalLightComponent
 >;

@@ -24,6 +24,7 @@ const char* GetComponentName() {
     if constexpr (std::is_same_v<T, ColorComponent>) return "Color";
     if constexpr (std::is_same_v<T, CameraComponent>) return "Camera";
     if constexpr (std::is_same_v<T, MeshComponent>) return "Mesh";
+    if constexpr (std::is_same_v<T, DirectionalLightComponent>) return "Directional Light";
     return "Unknown Component";
 }
 
@@ -162,7 +163,19 @@ void Application::DrawCreationMenu() {
     }
 
     if (ImGui::BeginMenu("Lights")) {
-        if (ImGui::MenuItem("Directional Light")) {} // À implémenter
+        if (ImGui::BeginMenu("Lights")) {
+            if (ImGui::MenuItem("Directional Light")) {
+                auto e = CreateEntity("Directional Light");
+                m_Registry.emplace<DirectionalLightComponent>(e);
+
+                // On l'incline par défaut pour voir tout de suite le relief
+                auto& transform = m_Registry.get<TransformComponent>(e);
+                transform.Rotation = { 45.0f, 45.0f, 0.0f };
+
+                m_SelectedContext = e;
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
 
@@ -218,6 +231,32 @@ void Application::Run() {
         m_Shader->Use();
         m_Shader->SetMat4("uProjection", projection);
         m_Shader->SetMat4("uView", view);
+
+        // --- GESTION DE LA LUMIÈRE DIRECTIONNELLE ---
+        glm::vec3 lightDir = { 0.0f, 0.0f, -1.0f }; // Par défaut (Z vers le bas)
+        glm::vec3 lightColor = { 1.0f, 1.0f, 1.0f };
+        float ambientStrength = 0.2f;
+        float diffuseStrength = 0.8f;
+
+        auto lightView = m_Registry.view<TransformComponent, DirectionalLightComponent>();
+        for (auto entity : lightView) {
+            auto& transform = lightView.get<TransformComponent>(entity);
+            auto& light = lightView.get<DirectionalLightComponent>(entity);
+
+            // On extrait l'axe Forward (X) directement depuis la matrice de transformation.
+            // C'est très robuste et ça supporte toutes les rotations de l'éditeur !
+            lightDir = glm::normalize(glm::vec3(transform.GetTransform()[0]));
+
+            lightColor = light.Color;
+            ambientStrength = light.AmbientIntensity;
+            diffuseStrength = light.DiffuseIntensity;
+            break; // On ne gère qu'une seule Directional Light globale pour l'instant
+        }
+
+        m_Shader->SetVec3("uLightDir", lightDir);
+        m_Shader->SetVec3("uLightColor", lightColor);
+        m_Shader->SetFloat("uAmbientStrength", ambientStrength);
+        m_Shader->SetFloat("uDiffuseStrength", diffuseStrength);
 
         auto meshView = m_Registry.view<TransformComponent, MeshComponent, ColorComponent>();
         for (auto entity : meshView) {
