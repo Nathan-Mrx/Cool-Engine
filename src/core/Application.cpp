@@ -5,6 +5,7 @@
 #include <glad/glad.h>
 #include <nfd.hpp>
 #include <iostream>
+#include <stb_image.h>
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -91,5 +92,17 @@ void Application::Run() {
         }
 
         glfwSwapBuffers(m_Window);
+    }
+}
+
+void Application::SetWindowIcon(const std::string& path) {
+    GLFWimage images[1];
+    int channels;
+    // On charge les pixels de l'icône (PNG recommandé)
+    images[0].pixels = stbi_load(path.c_str(), &images[0].width, &images[0].height, &channels, 4);
+
+    if (images[0].pixels) {
+        glfwSetWindowIcon(m_Window, 1, images);
+        stbi_image_free(images[0].pixels);
     }
 }

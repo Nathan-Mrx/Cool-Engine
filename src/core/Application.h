@@ -12,6 +12,7 @@ public:
     ~Application();
 
     void Run();
+    void SetWindowIcon(const std::string& path);
     void Close() { m_Running = false; }
 
     static Application& Get() { return *s_Instance; }

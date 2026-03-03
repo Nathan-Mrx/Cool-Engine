@@ -1,5 +1,6 @@
 #include "EditorLayer.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <glad/glad.h>
 
 #include "core/Application.h"
@@ -95,7 +96,42 @@ void EditorLayer::BeginDockspace() {
     ImGui::Begin("DockSpaceParent", &dockspaceOpen, window_flags);
     ImGui::PopStyleVar(2);
 
-    ImGui::DockSpace(ImGui::GetID("MyEngineDockSpace"), ImVec2(0.0f, 0.0f), dockspace_flags);
+    ImGuiID dockspace_id = ImGui::GetID("MyEngineDockSpace");
+    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+
+    // --- LOGIQUE DE LAYOUT PAR DÉFAUT ---
+    // On vérifie si le dockspace est déjà configuré. Si non, on crée le layout.
+    if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr || ImGui::DockBuilderGetNode(dockspace_id)->ChildNodes[0] == 0) {
+
+        // On nettoie tout noeud existant pour repartir sur une base propre
+        ImGui::DockBuilderRemoveNode(dockspace_id);
+        ImGui::DockBuilderAddNode(dockspace_id, dockspace_flags | ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
+
+        ImGuiID dock_id_main = dockspace_id;
+
+        // 1. On sépare la GAUCHE pour la Hiérarchie (20% de l'écran)
+        ImGuiID dock_id_left = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Left, 0.20f, nullptr, &dock_id_main);
+
+        // 2. On sépare la DROITE pour l'Inspector (25% de ce qu'il reste)
+        ImGuiID dock_id_right = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Right, 0.25f, nullptr, &dock_id_main);
+
+        // 3. Dans la zone centrale restante, on sépare le BAS pour le Content Browser (30% de hauteur)
+        ImGuiID dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Down, 0.30f, nullptr, &dock_id_main);
+
+        // 4. On assigne les fenêtres aux nœuds via leurs noms exacts
+        ImGui::DockBuilderDockWindow("Scene Hierarchy", dock_id_left);
+        ImGui::DockBuilderDockWindow("Inspector", dock_id_right);
+        ImGui::DockBuilderDockWindow("Content Browser", dock_id_bottom);
+        ImGui::DockBuilderDockWindow("Viewport", dock_id_main);
+
+        ImGuiDockNode* node = ImGui::DockBuilderGetNode(dock_id_main);
+        if (node) {
+            node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+        }
+
+        ImGui::DockBuilderFinish(dockspace_id);
+    }
 }
 
 void EditorLayer::EndDockspace() {
@@ -191,7 +227,7 @@ void EditorLayer::OnImGuiRender() {
         m_ContentBrowserPanel->OnImGuiRender();
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 }); // Enlève les bordures moches
-        ImGui::Begin("Viewport");
+        ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoTitleBar);
 
         m_ViewportFocused = ImGui::IsWindowFocused();
         m_ViewportHovered = ImGui::IsWindowHovered();

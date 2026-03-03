@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+    <mime-type type="application/x-cool-engine-project">
+        <comment>Cool Engine Project</comment>
+        <glob pattern="*.ceproj"/>
+        <icon name="application-x-cool-engine-project"/>
+    </mime-type>
+</mime-info>

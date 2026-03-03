@@ -73,6 +73,14 @@ add_custom_command(TARGET GameEngine POST_BUILD
         COMMENT "Copie des shaders vers le dossier de build..."
 )
 
+# On copie l'icône à côté de l'exécutable
+add_custom_command(TARGET GameEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_SOURCE_DIR}/splash.png
+        $<TARGET_FILE_DIR:GameEngine>/splash.png
+        COMMENT "Copie de l'icône vers le dossier de build..."
+)
+
 # Jolt nécessite quelques définitions de préprocesseur pour fonctionner correctement
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         JPH_DEBUG_RENDERER         # Pour pouvoir afficher les boîtes de collision plus tard
