@@ -19,11 +19,17 @@ public:
     static void DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, const glm::vec3& right, const glm::vec3& up, const glm::vec3& color, const glm::mat4& view, const glm::mat4& projection, float length);
     static void Clear();
 
+    static void BeginOutlineMask(const glm::mat4& transform);
+    static void BeginOutlineDraw(const glm::mat4& outlineTransform, const glm::vec3& color);
+    static void EndOutline();
+
 private:
     struct RendererData {
         std::unique_ptr<Shader> MainShader;
         std::unique_ptr<Shader> GridShader;
         std::unique_ptr<Shader> LineShader; // For debug Lines
+        std::unique_ptr<Shader> OutlineShader;
+
         uint32_t GridVAO, GridVBO;
 
         // Ajoute ces deux lignes pour stocker l'état de la caméra

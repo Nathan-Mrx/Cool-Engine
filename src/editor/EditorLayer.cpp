@@ -293,6 +293,27 @@ void EditorLayer::OnUpdate(float ts) {
         );
     }
 
+    // --- RENDU DE L'OUTLINE ORANGE (SILHOUETTE) ---
+    Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+    if (selectedEntity && selectedEntity.HasComponent<MeshComponent>()) {
+        auto& transform = selectedEntity.GetComponent<TransformComponent>();
+        auto& mesh = selectedEntity.GetComponent<MeshComponent>();
+
+        if (mesh.MeshData) {
+            // Étape 1 : Le masque
+            Renderer::BeginOutlineMask(transform.GetTransform());
+            mesh.MeshData->Draw();
+
+            // Étape 2 : L'outline via le fil de fer épais
+            // On utilise la MÊME matrice, sans aucun Scale !
+            Renderer::BeginOutlineDraw(transform.GetTransform(), glm::vec3(1.0f, 0.5f, 0.0f));
+            mesh.MeshData->Draw();
+
+            // Étape 3 : Nettoyage
+            Renderer::EndOutline();
+        }
+    }
+
     Renderer::EndScene();
 
     // --- 5. LOGIQUE DE FERMETURE ET CAPTURE THUMBNAIL ---
@@ -371,6 +392,48 @@ void EditorLayer::OnImGuiRender() {
         // --- 2. GESTION DE LA TAILLE ---
         ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
         m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
+
+        // --- SÉLECTION PAR CLIC (RAYCAST) ---
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_ViewportHovered && !ImGuizmo::IsOver()) {
+
+            // 1. Récupérer la position relative au Viewport ImGui
+            ImVec2 mousePos = ImGui::GetMousePos();
+            ImVec2 windowPos = ImGui::GetWindowPos();
+            ImVec2 viewportMin = ImGui::GetWindowContentRegionMin();
+
+            float mouseX = mousePos.x - (windowPos.x + viewportMin.x);
+            float mouseY = mousePos.y - (windowPos.y + viewportMin.y);
+
+            // Inverser l'axe Y (OpenGL a son 0,0 en bas)
+            mouseY = m_ViewportSize.y - mouseY;
+
+            if (mouseX >= 0 && mouseY >= 0 && mouseX < m_ViewportSize.x && mouseY < m_ViewportSize.y) {
+
+                // 2. Conversion en NDC [-1, 1]
+                float ndcX = (2.0f * mouseX) / m_ViewportSize.x - 1.0f;
+                float ndcY = (2.0f * mouseY) / m_ViewportSize.y - 1.0f;
+
+                // 3. Matrices
+                float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
+                glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
+                glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+
+                // 4. Inversion pour obtenir la direction
+                glm::vec4 rayClip = glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+                glm::vec4 rayEye = glm::inverse(projection) * rayClip;
+                rayEye = glm::vec4(rayEye.x, rayEye.y, 1.0f, 0.0f); // On annule le Z et W pour garder un vecteur directionnel
+
+                glm::vec3 rayWorld = glm::normalize(glm::vec3(glm::inverse(view) * rayEye));
+                glm::vec3 rayOrigin = m_EditorCamera.Position;
+
+                // --- ICI : LOGIQUE D'INTERSECTION ---
+                // Exemple si tu as un moteur physique actif :
+                // Entity hit = PhysicsEngine::Raycast(rayOrigin, rayWorld, maxDistance);
+                // m_SceneHierarchyPanel.SetSelectedEntity(hit);
+
+                std::cout << "Ray Casted ! Dir X: " << rayWorld.x << " Y: " << rayWorld.y << " Z: " << rayWorld.z << std::endl;
+            }
+        }
 
         uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
         ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });

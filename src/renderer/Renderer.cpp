@@ -8,6 +8,7 @@ void Renderer::Init() {
     s_Data->MainShader = std::make_unique<Shader>("shaders/default.vert", "shaders/default.frag");
     s_Data->GridShader = std::make_unique<Shader>("shaders/grid.vert", "shaders/grid.frag");
     s_Data->LineShader = std::make_unique<Shader>("shaders/line.vert", "shaders/line.frag");
+    s_Data->OutlineShader = std::make_unique<Shader>("shaders/outline.vert", "shaders/outline.frag");
 
     // --- INITIALISATION DE LA GRILLE ---
     float gridVertices[] = {
@@ -133,9 +134,9 @@ void Renderer::DrawGrid(bool show) {
 }
 
 void Renderer::Clear() {
-    // Un gris neutre très "Engine" (0.1, 0.1, 0.1)
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // AJOUT DU GL_STENCIL_BUFFER_BIT ICI :
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
 void Renderer::DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, const glm::vec3& right, const glm::vec3& up, const glm::vec3& color, const glm::mat4& view, const glm::mat4& projection, float length) {
@@ -184,4 +185,60 @@ void Renderer::DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, 
 
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
+}
+
+void Renderer::BeginOutlineMask(const glm::mat4& transform) {
+    if (!s_Data->MainShader) return;
+
+    glEnable(GL_STENCIL_TEST);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glStencilMask(0xFF);
+
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    // --- NOUVEAU : Fix de l'Image 5 ---
+    // On désactive la profondeur pour que le masque englobe
+    // TOUT l'objet, même s'il est caché derrière un mur ou le sol.
+    glDisable(GL_DEPTH_TEST);
+
+    s_Data->MainShader->Use();
+    s_Data->MainShader->SetMat4("uModel", transform);
+}
+
+void Renderer::BeginOutlineDraw(const glm::mat4& transform, const glm::vec3& color) {
+    glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+    glStencilMask(0x00);
+
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    // --- NOUVEAU : Fix de l'Image 5 (Suite) ---
+    // On garde la profondeur désactivée pour que l'outline se
+    // dessine PAR-DESSUS tout le reste du monde.
+    glDisable(GL_DEPTH_TEST);
+
+    // --- NOUVEAU : Fix de l'Image 3 et 4 ---
+    // L'astuce du fil de fer !
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glLineWidth(6.0f); // Épaisseur de ton outline. Ajuste selon tes goûts !
+
+    // On utilise le shader standard, plus besoin de gonfler l'objet
+    s_Data->MainShader->Use();
+    s_Data->MainShader->SetVec3("uColor", color);
+    s_Data->MainShader->SetMat4("uModel", transform);
+    s_Data->MainShader->SetFloat("uAmbientStrength", 1.0f);
+    s_Data->MainShader->SetFloat("uDiffuseStrength", 0.0f);
+}
+
+void Renderer::EndOutline() {
+    // Nettoyage absolu pour ne pas corrompre la frame suivante
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glLineWidth(1.0f);
+
+    glStencilMask(0xFF);
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glDisable(GL_STENCIL_TEST);
+
+    // On réactive le Z-Buffer pour le rendu normal !
+    glEnable(GL_DEPTH_TEST);
 }
