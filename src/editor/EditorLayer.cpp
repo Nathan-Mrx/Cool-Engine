@@ -111,9 +111,19 @@ void EditorLayer::DrawMenuBar() {
             ImGui::EndMenu();
         }
 
-        // --- NOUVEAU : Menu View pour la grille ---
+        // --- Menu View pour la grille, les collisions et le rendu ---
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Show Grid", nullptr, &m_ShowGrid);
+            ImGui::MenuItem("Show Collisions", nullptr, &m_ShowCollisions); // <-- NOUVEAU
+
+            ImGui::Separator();
+
+            if (ImGui::BeginMenu("Render Mode")) {
+                if (ImGui::MenuItem("Lit", nullptr, m_RenderMode == 0)) m_RenderMode = 0;
+                if (ImGui::MenuItem("Unlit", nullptr, m_RenderMode == 1)) m_RenderMode = 1;
+                if (ImGui::MenuItem("Wireframe", nullptr, m_RenderMode == 2)) m_RenderMode = 2;
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
 
@@ -290,7 +300,24 @@ void EditorLayer::OnUpdate(float ts) {
 
     Renderer::BeginScene(view, projection, m_EditorCamera.Position);
     Renderer::DrawGrid(m_ShowGrid);
-    Renderer::RenderScene(m_ActiveScene.get());
+    Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+
+    // --- NOUVEAU : DESSIN DES COLLISIONS (Si activé) ---
+    if (m_ShowCollisions) {
+        auto view = m_ActiveScene->m_Registry.view<TransformComponent, BoxColliderComponent>();
+        for (auto entity : view) {
+            auto [tc, bc] = view.get<TransformComponent, BoxColliderComponent>(entity);
+
+            // On construit la matrice de la boîte en prenant en compte la position, la rotation, l'offset et le scale !
+            glm::mat4 boxTransform = glm::translate(glm::mat4(1.0f), tc.Location)
+                                   * glm::toMat4(tc.Rotation)
+                                   * glm::translate(glm::mat4(1.0f), bc.Offset)
+                                   * glm::scale(glm::mat4(1.0f), tc.Scale * bc.HalfSize);
+
+            // On dessine la boîte en Vert Fluo !
+            Renderer::DrawDebugBox(boxTransform, glm::vec3(0.1f, 0.9f, 0.1f));
+        }
+    }
 
     auto lightView = m_ActiveScene->m_Registry.view<TransformComponent, DirectionalLightComponent>();
     for (auto entity : lightView) {

@@ -14,9 +14,12 @@ public:
     static void BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& camPos);
     static void EndScene();
 
-    static void RenderScene(Scene* scene);
+    static void RenderScene(Scene* scene, int renderMode = 0);
     static void DrawGrid(bool show);
+
+    static void DrawDebugBox(const glm::mat4& transform, const glm::vec3& color);
     static void DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, const glm::vec3& right, const glm::vec3& up, const glm::vec3& color, const glm::mat4& view, const glm::mat4& projection, float length);
+
     static void Clear();
 
     static void BeginOutlineMask(const glm::mat4& transform);
@@ -31,6 +34,7 @@ private:
         std::unique_ptr<Shader> OutlineShader;
 
         uint32_t GridVAO, GridVBO;
+        uint32_t DebugBoxVAO, DebugBoxVBO;
 
         // Ajoute ces deux lignes pour stocker l'état de la caméra
         glm::mat4 CurrentView;

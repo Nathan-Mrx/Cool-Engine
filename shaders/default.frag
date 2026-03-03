@@ -2,7 +2,6 @@
 in vec3 vFragPos;
 in vec3 vNormal;
 
-// --- NOUVEAU : On spécifie 2 sorties (MRT) ---
 layout(location = 0) out vec4 FragColor; // Va dans GL_COLOR_ATTACHMENT0
 layout(location = 1) out int EntityID;   // Va dans GL_COLOR_ATTACHMENT1 (Texture R32I)
 
@@ -12,14 +11,20 @@ uniform vec3 uLightColor;
 uniform float uAmbientStrength;
 uniform float uDiffuseStrength;
 
-// --- NOUVEAU : On reçoit l'ID de l'entité depuis le C++ ---
+
 uniform int uEntityID;
+uniform int uRenderMode;
 
 void main() {
-    // 1. Ambient
-    vec3 ambient = uAmbientStrength * uLightColor;
+    // --- MODE UNLIT OU WIREFRAME ---
+    if (uRenderMode == 1 || uRenderMode == 2) {
+        FragColor = vec4(uColor, 1.0); // Couleur pure, sans ombre !
+        EntityID = uEntityID;
+        return; // On arrête le shader ici
+    }
 
-    // 2. Diffuse
+    // --- MODE LIT (Ton code existant) ---
+    vec3 ambient = uAmbientStrength * uLightColor;
     vec3 norm = normalize(vNormal);
     vec3 lightDir = normalize(-uLightDir);
     float diff = max(dot(norm, lightDir), 0.0);
@@ -27,7 +32,6 @@ void main() {
 
     vec3 result = (ambient + diffuse) * uColor;
 
-    // --- SORTIES MULTIPLES ---
-    FragColor = vec4(result, 1.0); // Écran normal
-    EntityID = uEntityID;          // Texture cachée pour le clic
+    FragColor = vec4(result, 1.0);
+    EntityID = uEntityID;
 }

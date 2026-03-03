@@ -76,4 +76,7 @@ private:
     void SaveScene();
     void SaveSceneAs();
 
+    bool m_ShowCollisions = false;
+    int m_RenderMode = 0; // 0: Lit, 1: Unlit, 2: Wireframe
+
 };

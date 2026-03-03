@@ -30,12 +30,39 @@ void Renderer::Init() {
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    // --- INITIALISATION DE LA BOÎTE DE DEBUG ---
+    float boxVertices[] = {
+        // Les 12 lignes qui forment un cube (de -1 à 1)
+        -1, -1, -1,   1, -1, -1,    1, -1, -1,   1, -1,  1,
+         1, -1,  1,  -1, -1,  1,   -1, -1,  1,  -1, -1, -1,
+        -1,  1, -1,   1,  1, -1,    1,  1, -1,   1,  1,  1,
+         1,  1,  1,  -1,  1,  1,   -1,  1,  1,  -1,  1, -1,
+        -1, -1, -1,  -1,  1, -1,    1, -1, -1,   1,  1, -1,
+         1, -1,  1,   1,  1,  1,   -1, -1,  1,  -1,  1,  1
+    };
+
+    glGenVertexArrays(1, &s_Data->DebugBoxVAO);
+    glGenBuffers(1, &s_Data->DebugBoxVBO);
+    glBindVertexArray(s_Data->DebugBoxVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, s_Data->DebugBoxVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(boxVertices), boxVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 }
 
 
-void Renderer::RenderScene(Scene* scene) {
+void Renderer::RenderScene(Scene* scene, int renderMode) {
     if (s_Data->MainShader) {
         s_Data->MainShader->Use();
+        s_Data->MainShader->SetInt("uRenderMode", renderMode); // On prévient le shader !
+    }
+
+    // Si on est en mode Wireframe (2), on demande à OpenGL de ne dessiner que les lignes
+    if (renderMode == 2) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    } else {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
 
     // --- 1. GESTION DE LA LUMIÈRE ---
@@ -83,6 +110,8 @@ void Renderer::RenderScene(Scene* scene) {
             mesh.MeshData->Draw();
         }
     }
+
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
 void Renderer::Shutdown() {
@@ -192,7 +221,7 @@ void Renderer::DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, 
 }
 
 void Renderer::BeginOutlineMask(const glm::mat4& transform) {
-    if (!s_Data->MainShader) return;
+    if (!s_Data->MainShader) return;    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     glEnable(GL_STENCIL_TEST);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
@@ -245,4 +274,17 @@ void Renderer::EndOutline() {
 
     // On réactive le Z-Buffer pour le rendu normal !
     glEnable(GL_DEPTH_TEST);
+}
+
+void Renderer::DrawDebugBox(const glm::mat4& transform, const glm::vec3& color) {
+    if (!s_Data->LineShader) return;
+
+    s_Data->LineShader->Use();
+    s_Data->LineShader->SetMat4("uModel", transform);
+    s_Data->LineShader->SetMat4("uView", s_Data->CurrentView);
+    s_Data->LineShader->SetMat4("uProjection", s_Data->CurrentProjection);
+    s_Data->LineShader->SetVec3("uColor", color);
+
+    glBindVertexArray(s_Data->DebugBoxVAO);
+    glDrawArrays(GL_LINES, 0, 24); // 12 lignes * 2 sommets = 24
 }
