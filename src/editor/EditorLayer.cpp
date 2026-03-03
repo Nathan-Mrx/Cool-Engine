@@ -113,6 +113,15 @@ void EditorLayer::OnUpdate(float ts) {
     double mouseX, mouseY;
     glfwGetCursorPos(window, &mouseX, &mouseY);
 
+    // On ne change d'outil QUE si on ne vole pas avec la caméra (Pas de clic droit)
+    if (m_ViewportFocused) {
+        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
+            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+            if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
+            if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::SCALE;
+        }
+    }
+
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
 
         // 1. Calcul de la rotation
@@ -184,11 +193,21 @@ void EditorLayer::OnImGuiRender() {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 }); // Enlève les bordures moches
         ImGui::Begin("Viewport");
 
-        // 1. On capture la taille EXACTE du panneau une fois qu'il est ouvert
+        m_ViewportFocused = ImGui::IsWindowFocused();
+        m_ViewportHovered = ImGui::IsWindowHovered();
+
+        // --- 1. BARRE D'OUTILS GIZMO ---
+        ImGui::SetCursorPos(ImVec2(10.0f, 10.0f)); // Petit padding interne
+        if (ImGui::RadioButton("Translate (W)", m_GizmoType == ImGuizmo::OPERATION::TRANSLATE)) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Rotate (E)", m_GizmoType == ImGuizmo::OPERATION::ROTATE)) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE)) m_GizmoType = ImGuizmo::OPERATION::SCALE;
+
+        // --- 2. GESTION DE LA TAILLE ---
         ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
         m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
-        // 2. On affiche la texture
         uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
         ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
@@ -220,6 +239,42 @@ void EditorLayer::OnImGuiRender() {
                 }
             }
             ImGui::EndDragDropTarget();
+        }
+
+        // --- 3. RENDU DU GIZMO 3D ---
+        Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+        if (selectedEntity && m_GizmoType != -1) {
+
+            // Configuration de base d'ImGuizmo
+            ImGuizmo::SetOrthographic(false);
+            ImGuizmo::SetDrawlist();
+
+            // On cale parfaitement le Gizmo sur la fenêtre de ton Viewport
+            ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, ImGui::GetWindowWidth(), ImGui::GetWindowHeight());
+
+            // Récupération des matrices de ta caméra
+            float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
+            glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
+            glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+
+            // Récupération de la matrice de l'entité
+            auto& tc = selectedEntity.GetComponent<TransformComponent>();
+            glm::mat4 transform = tc.GetTransform();
+
+            // L'appel magique qui affiche les flèches et gère la souris !
+            ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection),
+                                 (ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform));
+
+            // Si l'utilisateur est en train de tirer sur une flèche
+            if (ImGuizmo::IsUsing()) {
+                // On décompose la matrice modifiée pour récupérer les nouveaux Location/Rotation/Scale
+                float translation[3], rotation[3], scale[3];
+                ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(transform), translation, rotation, scale);
+
+                tc.Location = { translation[0], translation[1], translation[2] };
+                tc.Rotation = { rotation[0], rotation[1], rotation[2] };
+                tc.Scale    = { scale[0], scale[1], scale[2] };
+            }
         }
 
         ImGui::End();

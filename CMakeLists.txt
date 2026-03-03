@@ -12,6 +12,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(NFD CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
+find_package(ImGuizmo CONFIG REQUIRED)
 
 # Lister tous les fichiers sources du moteur
 set(SOURCES
@@ -57,7 +58,8 @@ target_link_libraries(GameEngine PRIVATE
         imgui::imgui
         nlohmann_json::nlohmann_json
         nfd::nfd
-        assimp::assimp)
+        assimp::assimp
+        imguizmo::imguizmo)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
 add_custom_command(TARGET GameEngine POST_BUILD

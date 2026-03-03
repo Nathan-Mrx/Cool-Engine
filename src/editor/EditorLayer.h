@@ -9,6 +9,9 @@
 #include "panels/HubPanel.h"
 #include "../renderer/Framebuffer.h"
 
+#include <imgui.h>
+#include <ImGuizmo.h>
+
 struct EditorCamera {
     glm::vec3 Position = { -300.0f, 0.0f, 100.0f };
     glm::vec3 Front = { 1.0f, 0.0f, -0.2f };
@@ -40,4 +43,9 @@ private:
 
     glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
     glm::vec2 m_LastMousePosition = { 0.0f, 0.0f };
+
+    int m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+
+    bool m_ViewportFocused = false;
+    bool m_ViewportHovered = false;
 };

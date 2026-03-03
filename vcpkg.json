@@ -10,6 +10,7 @@
     "nlohmann-json",
     "nativefiledialog-extended",
     "assimp",
+    "imguizmo",
     {
       "name": "imgui",
       "features": [
