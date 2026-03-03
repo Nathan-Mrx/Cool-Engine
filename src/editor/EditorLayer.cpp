@@ -20,6 +20,17 @@ void EditorLayer::OnAttach() {
     fbSpec.Width = 1280;
     fbSpec.Height = 720;
     m_ViewportFramebuffer = std::make_unique<Framebuffer>(fbSpec);
+
+    // Si un projet a été chargé via la ligne de commande (CLI)
+    if (Project::GetActive())
+    {
+        // On récupère la scène de démarrage du projet
+        // (Ou on crée une scène par défaut si le projet est neuf)
+        m_ActiveScene = std::make_shared<Scene>();
+        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
+        // Optionnel : charger le fichier .cescene par défaut du projet ici
+    }
 }
 
 void EditorLayer::OnDetach() {

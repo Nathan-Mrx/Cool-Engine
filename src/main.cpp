@@ -54,6 +54,12 @@ void ShowSplashScreen(GLFWwindow*& splashWindow) {
 }
 
 int main(int argc, char** argv) {
+    char result[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
+    if (count != -1) {
+        std::filesystem::current_path(std::filesystem::path(result).parent_path());
+    }
+
     if (!glfwInit()) return -1;
 
     GLFWwindow* splashWindow = nullptr;
