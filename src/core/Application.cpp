@@ -11,6 +11,8 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include "physics/PhysicsEngine.h"
+
 
 Application* Application::s_Instance = nullptr;
 
@@ -44,12 +46,17 @@ Application::Application(const std::string& name, int width, int height) {
 
     // 3. Initialisation des moteurs de haut niveau
     Renderer::Init();
+
+    PhysicsEngine::Init();
+
     m_EditorLayer = std::make_unique<EditorLayer>();
     m_EditorLayer->OnAttach();
 }
 
 Application::~Application() {
     m_EditorLayer->OnDetach();
+
+    PhysicsEngine::Shutdown();
 
     // SHUTDOWN IMGUI
     ImGui_ImplOpenGL3_Shutdown();

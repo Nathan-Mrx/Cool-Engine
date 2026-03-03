@@ -45,6 +45,8 @@ set(SOURCES
         src/renderer/PrimitiveFactory.cpp
         src/renderer/PrimitiveFactory.h
         src/renderer/TextureLoader.h
+        src/physics/PhysicsEngine.cpp
+        src/physics/PhysicsEngine.h
 )
 
 # Créer l'exécutable avec les sources
@@ -84,7 +86,7 @@ add_custom_command(TARGET GameEngine POST_BUILD
 
 # Jolt nécessite quelques définitions de préprocesseur pour fonctionner correctement
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-        JPH_DEBUG_RENDERER         # Pour pouvoir afficher les boîtes de collision plus tard
-        JPH_PROFILE_ENABLED        # Pour le profilage
-        JPH_FLOATING_POINT_EXCEPTIONS_ENABLED
+        #JPH_DEBUG_RENDERER         # Pour pouvoir afficher les boîtes de collision plus tard
+        #JPH_PROFILE_ENABLED        # Pour le profilage
+        #JPH_FLOATING_POINT_EXCEPTIONS_ENABLED
 )

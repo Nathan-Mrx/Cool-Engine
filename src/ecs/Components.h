@@ -172,6 +172,64 @@ struct DirectionalLightComponent {
     }
 };
 
+// Définit le comportement de l'objet dans le monde physique
+enum class RigidBodyType { Static = 0, Kinematic, Dynamic };
+
+struct RigidBodyComponent {
+    RigidBodyType Type = RigidBodyType::Static;
+    float Mass = 1.0f;
+
+    // Identifiant interne utilisé par Jolt (on l'initialise à une valeur invalide)
+    uint32_t RuntimeBodyID = 0xFFFFFFFF;
+
+    RigidBodyComponent() = default;
+    RigidBodyComponent(const RigidBodyComponent&) = default;
+
+    void OnImGuiRender() {
+        const char* bodyTypeStrings[] = { "Static", "Kinematic", "Dynamic" };
+        const char* currentBodyTypeString = bodyTypeStrings[(int)Type];
+
+        if (ImGui::BeginCombo("Body Type", currentBodyTypeString)) {
+            for (int i = 0; i < 3; i++) {
+                bool isSelected = currentBodyTypeString == bodyTypeStrings[i];
+                if (ImGui::Selectable(bodyTypeStrings[i], isSelected)) {
+                    Type = (RigidBodyType)i;
+                }
+                if (isSelected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        if (Type == RigidBodyType::Dynamic) {
+            ImGui::DragFloat("Mass", &Mass, 0.1f, 0.01f, 10000.0f);
+        }
+    }
+};
+
+// Définit la forme de la boîte de collision
+struct BoxColliderComponent {
+    glm::vec3 HalfSize = { 0.5f, 0.5f, 0.5f }; // La taille de la boîte (depuis le centre)
+    glm::vec3 Offset = { 0.0f, 0.0f, 0.0f };   // Décalage par rapport au Transform de l'entité
+
+    float Friction = 0.5f;
+    float Restitution = 0.0f; // Bounciness (Rebond)
+
+    BoxColliderComponent() = default;
+    BoxColliderComponent(const BoxColliderComponent&) = default;
+
+    void OnImGuiRender() {
+        // Multiplié par 2 visuellement pour que l'utilisateur rentre la taille totale (plus intuitif)
+        glm::vec3 size = HalfSize * 2.0f;
+        if (ImGui::DragFloat3("Size", glm::value_ptr(size), 0.1f)) {
+            HalfSize = size / 2.0f;
+        }
+
+        ImGui::DragFloat3("Offset", glm::value_ptr(Offset), 0.1f);
+        ImGui::DragFloat("Friction", &Friction, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat("Restitution", &Restitution, 0.01f, 0.0f, 1.0f);
+    }
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -182,5 +240,7 @@ using AllComponents = std::tuple<
     ColorComponent,
     CameraComponent,
     MeshComponent,
-    DirectionalLightComponent
+    DirectionalLightComponent,
+    RigidBodyComponent,
+    BoxColliderComponent
 >;
