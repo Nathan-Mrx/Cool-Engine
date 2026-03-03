@@ -50,21 +50,35 @@ void HubPanel::OnImGuiRender() {
             for (const auto& path : recents) {
                 ImGui::TableNextColumn();
                 ImGui::PushID(path.string().c_str());
-                ImGui::BeginGroup();
+
+                ImGui::BeginGroup(); // On groupe l'image et le texte pour le clic droit
 
                 ImTextureID texID = (ImTextureID)(uintptr_t)GetThumbnailTexture(path);
-                // Fix UVs pour l'image à l'endroit
                 if (ImGui::ImageButton("##thumb", texID, ImVec2(cardWidth, cardWidth * 0.56f), ImVec2(0, 1), ImVec2(1, 0))) {
                     Project::Load(path);
                 }
 
                 ImGui::TextWrapped("%s", path.stem().string().c_str());
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                ImGui::TextWrapped("%s", path.parent_path().string().c_str());
-                ImGui::PopStyleColor();
 
-                ImGui::EndGroup();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.string().c_str());
+                ImGui::EndGroup(); // Fin du groupe "Card"
+
+                // --- LE FIX : MENU CONTEXTUEL CLIC DROIT ---
+                // S'applique au groupe (Image + Texte)
+                if (ImGui::BeginPopupContextItem("ProjectCardMenu")) {
+                    if (ImGui::MenuItem("Forget Project")) {
+                        Project::RemoveFromHistory(path);
+
+                        // OPTIONNEL : Nettoyer aussi la texture du cache pour libérer de la VRAM
+                        if (m_ThumbnailCache.count(path)) {
+                            // glDeleteTextures(1, &m_ThumbnailCache[path]); // Si tu veux être très propre
+                            m_ThumbnailCache.erase(path);
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", path.string().c_str());
 
                 ImGui::PopID();
                 ImGui::Spacing();

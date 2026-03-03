@@ -39,6 +39,8 @@ public:
     static void AddToRecentProjects(const std::filesystem::path& path);
     static void ValidateRecentProjects();
 
+    static void RemoveFromHistory(const std::filesystem::path& path);
+
 private:
     ProjectConfig m_Config;
     inline static std::shared_ptr<Project> s_ActiveProject;

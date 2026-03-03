@@ -150,3 +150,21 @@ void Project::ValidateRecentProjects() {
         }
     }
 }
+
+void Project::RemoveFromHistory(const std::filesystem::path& path) {
+    auto recents = GetRecentProjects();
+
+    // On retire le chemin spécifique de la liste
+    recents.erase(std::remove(recents.begin(), recents.end(), path), recents.end());
+
+    // On réécrit le fichier de configuration
+    nlohmann::json data;
+    for (const auto& p : recents)
+        data["RecentProjects"].push_back(p.string());
+
+    std::ofstream stream(EDITOR_CONFIG_FILE);
+    if (stream.is_open()) {
+        stream << data.dump(4);
+        std::cout << "[Project] Project removed from history: " << path << std::endl;
+    }
+}
