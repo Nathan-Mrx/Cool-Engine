@@ -19,7 +19,6 @@ void EditorLayer::OnAttach() {
     // Utilisation du nom correct défini dans le header
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
     m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
-    m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
 
     m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
         // 1. On prépare une nouvelle scène
@@ -69,11 +68,17 @@ void EditorLayer::DrawMenuBar() {
 
             ImGui::Separator();
 
+            // --- NOUVEAU : SAUVEGARDE RAPIDE ---
+            if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
+                SaveScene();
+            }
+
             if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) {
                 nfdchar_t* outPath = nullptr;
                 // Le filtre "cescene" garantit la bonne extension
                 nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
                 if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, "Untitled.cescene") == NFD_OKAY) {
+                    m_CurrentScenePath = outPath; // Mise à jour du chemin actuel
                     SceneSerializer serializer(m_ActiveScene);
                     serializer.Serialize(outPath);
                     NFD::FreePath(outPath);
@@ -84,6 +89,8 @@ void EditorLayer::DrawMenuBar() {
                 nfdchar_t* outPath = nullptr;
                 nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
                 if (NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
+                    m_CurrentScenePath = outPath; // Mise à jour du chemin actuel
+
                     // 1. On crée une nouvelle scène vierge
                     m_ActiveScene = std::make_shared<Scene>();
                     // 2. On met à jour le panneau de hiérarchie pour qu'il pointe sur la nouvelle
@@ -104,13 +111,20 @@ void EditorLayer::DrawMenuBar() {
             if (ImGui::MenuItem("Exit")) Application::Get().Close();
             ImGui::EndMenu();
         }
+
         if (ImGui::BeginMenu("Edit")) {
             if (ImGui::MenuItem("Project Settings")) {
                 m_ShowProjectSettings = true;
             }
             ImGui::EndMenu();
         }
-        // ... Menu View
+
+        // --- NOUVEAU : Menu View pour la grille ---
+        if (ImGui::BeginMenu("View")) {
+            ImGui::MenuItem("Show Grid", nullptr, &m_ShowGrid);
+            ImGui::EndMenu();
+        }
+
         ImGui::EndMenuBar();
     }
 }
@@ -137,26 +151,18 @@ void EditorLayer::BeginDockspace() {
     ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 
     // --- LOGIQUE DE LAYOUT PAR DÉFAUT ---
-    // On vérifie si le dockspace est déjà configuré. Si non, on crée le layout.
     if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr || ImGui::DockBuilderGetNode(dockspace_id)->ChildNodes[0] == 0) {
 
-        // On nettoie tout noeud existant pour repartir sur une base propre
         ImGui::DockBuilderRemoveNode(dockspace_id);
         ImGui::DockBuilderAddNode(dockspace_id, dockspace_flags | ImGuiDockNodeFlags_DockSpace);
         ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
 
         ImGuiID dock_id_main = dockspace_id;
 
-        // 1. On sépare la GAUCHE pour la Hiérarchie (20% de l'écran)
         ImGuiID dock_id_left = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Left, 0.20f, nullptr, &dock_id_main);
-
-        // 2. On sépare la DROITE pour l'Inspector (25% de ce qu'il reste)
         ImGuiID dock_id_right = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Right, 0.25f, nullptr, &dock_id_main);
-
-        // 3. Dans la zone centrale restante, on sépare le BAS pour le Content Browser (30% de hauteur)
         ImGuiID dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Down, 0.30f, nullptr, &dock_id_main);
 
-        // 4. On assigne les fenêtres aux nœuds via leurs noms exacts
         ImGui::DockBuilderDockWindow("Scene Hierarchy", dock_id_left);
         ImGui::DockBuilderDockWindow("Inspector", dock_id_right);
         ImGui::DockBuilderDockWindow("Content Browser", dock_id_bottom);
@@ -176,10 +182,8 @@ void EditorLayer::EndDockspace() {
 }
 
 void EditorLayer::CloseProjectInternal() {
-    // Ici, on décharge proprement le projet du moteur
-    Project::Unload(); //
+    Project::Unload();
 
-    // Optionnel : On peut aussi réinitialiser la scène ici
     m_ActiveScene = std::make_shared<Scene>();
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 }
@@ -189,28 +193,24 @@ void EditorLayer::OnUpdate(float ts) {
     static std::shared_ptr<Project> s_LastProject = nullptr;
     auto currentProject = Project::GetActive();
 
-    // Si on vient d'ouvrir un projet depuis le Hub
     if (currentProject && currentProject != s_LastProject) {
         s_LastProject = currentProject;
 
-        // 1. Initialisation d'une scène vierge propre
         m_ActiveScene = std::make_shared<Scene>();
         m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 
-        // 2. Récupération du chemin de la StartScene
         std::filesystem::path scenePath = currentProject->GetProjectDirectory() / currentProject->GetConfig().StartScene;
 
-        // 3. Chargement silencieux
         if (std::filesystem::exists(scenePath)) {
             SceneSerializer serializer(m_ActiveScene);
             serializer.Deserialize(scenePath.string());
+            m_CurrentScenePath = scenePath; // On mémorise la scène de départ
             std::cout << "[Editor] Loaded default scene: " << currentProject->GetConfig().StartScene << std::endl;
         } else {
             std::cout << "[Editor] Warning: Default scene not found at " << scenePath << std::endl;
         }
     }
 
-    // Si aucun projet n'est actif (on est sur le Hub), on ne calcule pas la 3D
     if (!currentProject) {
         s_LastProject = nullptr;
         return;
@@ -227,7 +227,6 @@ void EditorLayer::OnUpdate(float ts) {
     double mouseX, mouseY;
     glfwGetCursorPos(window, &mouseX, &mouseY);
 
-    // On ne change d'outil QUE si on ne vole pas avec la caméra (Pas de clic droit)
     if (m_ViewportFocused) {
         if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
             if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
@@ -237,28 +236,23 @@ void EditorLayer::OnUpdate(float ts) {
     }
 
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-
-        // 1. Calcul de la rotation
         glm::vec2 mousePos = { (float)mouseX, (float)mouseY };
         glm::vec2 delta = (mousePos - m_LastMousePosition) * 0.003f;
         m_LastMousePosition = mousePos;
 
         m_EditorCamera.Yaw += delta.x;
         m_EditorCamera.Pitch -= delta.y;
-
         m_EditorCamera.Pitch = glm::clamp(m_EditorCamera.Pitch, glm::radians(-89.0f), glm::radians(89.0f));
 
-        // 2. Calcul du vecteur Front
         glm::vec3 front;
         front.x = cos(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
         front.y = sin(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
         front.z = sin(m_EditorCamera.Pitch);
         m_EditorCamera.Front = glm::normalize(front);
 
-        // 3. Déplacement avec gestion du Sprint
-        float baseSpeed = 500.0f; // 5 m/s
+        float baseSpeed = 500.0f;
         if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            baseSpeed *= 4.0f; // Sprint à 20 m/s
+            baseSpeed *= 4.0f;
         }
 
         float cameraSpeed = baseSpeed * ts;
@@ -274,14 +268,12 @@ void EditorLayer::OnUpdate(float ts) {
     } else {
         m_LastMousePosition = { (float)mouseX, (float)mouseY };
     }
-    // --------------------------------------------------
 
     // --- 4. RENDU DE LA SCÈNE ---
     m_ViewportFramebuffer->Bind();
     glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
     Renderer::Clear();
 
-    // Calcul des matrices
     float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
     glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
     glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
@@ -294,20 +286,16 @@ void EditorLayer::OnUpdate(float ts) {
     for (auto entity : lightView) {
         auto [transform, light] = lightView.get<TransformComponent, DirectionalLightComponent>(entity);
 
-        // 1. On calcule la VRAIE direction de la lumière (vers le bas en local, comme dans le shader)
         glm::vec3 lightDirection = glm::normalize(transform.Rotation * glm::vec3(0.0f, -1.0f, 0.0f));
-
-        // 2. On récupère deux axes perpendiculaires pour dessiner la pointe de la flèche
         glm::vec3 rightAxis = transform.GetRightVector();
         glm::vec3 upAxis    = transform.GetForwardVector();
 
-        // 3. On dessine la flèche
         Renderer::DrawDebugArrow(
             transform.Location,
-            lightDirection, // La flèche pointe maintenant là où la lumière frappe !
+            lightDirection,
             rightAxis,
             upAxis,
-            glm::vec3(1.0f, 0.9f, 0.1f), // Jaune
+            glm::vec3(1.0f, 0.9f, 0.1f),
             view, projection,
             50.0f
         );
@@ -320,11 +308,8 @@ void EditorLayer::OnUpdate(float ts) {
 
     if (m_RequestCloseProject || isAppClosing) {
         if (currentProject) {
-            // On capture la thumbnail tant que le projet est actif et le contexte vivant
             CaptureViewportThumbnail(currentProject->GetProjectDirectory().string());
 
-            // Si c'est une fermeture manuelle du projet (via le menu), on décharge.
-            // Si l'app se ferme, on laisse le moteur s'arrêter proprement sans Unload forcé.
             if (!isAppClosing) {
                 CloseProjectInternal();
                 m_RequestCloseProject = false;
@@ -339,8 +324,26 @@ void EditorLayer::OnImGuiRender() {
     BeginDockspace();
     DrawMenuBar();
 
-    // --- L'APPEL MANQUANT EST ICI ---
-    // On dessine la fenêtre des paramètres si le flag m_ShowProjectSettings est à true
+    // On vérifie si Ctrl et Shift sont enfoncés
+    bool control = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+    bool shift   = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+
+    // Si on appuie sur 'S' (le 'false' empêche la répétition automatique de la touche)
+    if (control && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        if (shift) {
+            SaveSceneAs(); // Ctrl + Shift + S
+        } else {
+            SaveScene();   // Ctrl + S
+        }
+    }
+
+    if (control && !shift && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        // Logique pour Ctrl+N (Nouvelle scène)
+        m_ActiveScene = std::make_shared<Scene>();
+        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+        m_CurrentScenePath = ""; // On réinitialise le chemin car c'est une nouvelle scène
+    }
+
     DrawProjectSettings();
 
     if (Project::GetActive() == nullptr) {
@@ -350,14 +353,14 @@ void EditorLayer::OnImGuiRender() {
         m_SceneHierarchyPanel.OnImGuiRender();
         m_ContentBrowserPanel->OnImGuiRender();
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 }); // Enlève les bordures moches
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
         ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoTitleBar);
 
         m_ViewportFocused = ImGui::IsWindowFocused();
         m_ViewportHovered = ImGui::IsWindowHovered();
 
         // --- 1. BARRE D'OUTILS GIZMO ---
-        ImGui::SetCursorPos(ImVec2(10.0f, 10.0f)); // Petit padding interne
+        ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
         if (ImGui::RadioButton("Translate (W)", m_GizmoType == ImGuizmo::OPERATION::TRANSLATE)) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Rotate (E)", m_GizmoType == ImGuizmo::OPERATION::ROTATE)) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
@@ -365,10 +368,9 @@ void EditorLayer::OnImGuiRender() {
         if (ImGui::RadioButton("Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE)) m_GizmoType = ImGuizmo::OPERATION::SCALE;
 
         ImGui::SameLine();
-        ImGui::Dummy(ImVec2(20.0f, 0.0f)); // Adds a nice visual gap
+        ImGui::Dummy(ImVec2(20.0f, 0.0f));
         ImGui::SameLine();
 
-        // The button displays the current state and flips it when clicked
         const char* modeStr = (m_GizmoMode == ImGuizmo::LOCAL) ? "Local Space" : "World Space";
         if (ImGui::Button(modeStr)) {
             m_GizmoMode = (m_GizmoMode == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
@@ -387,11 +389,9 @@ void EditorLayer::OnImGuiRender() {
                 const char* path = (const char*)payload->Data;
                 std::filesystem::path filepath = path;
 
-                // Si c'est un modèle 3D, on spawn une entité !
                 if (filepath.extension() == ".obj" || filepath.extension() == ".fbx") {
                     auto entity = m_ActiveScene->CreateEntity(filepath.stem().string());
 
-                    // Sécurité : on n'ajoute les composants que s'ils n'existent pas déjà
                     if (!entity.HasComponent<TransformComponent>()) {
                         entity.AddComponent<TransformComponent>();
                     }
@@ -402,7 +402,6 @@ void EditorLayer::OnImGuiRender() {
                         entity.AddComponent<MeshComponent>();
                     }
 
-                    // On récupère le composant pour le modifier (qu'il vienne d'être créé ou non)
                     auto& meshComp = entity.GetComponent<MeshComponent>();
                     meshComp.AssetPath = filepath.string();
                     meshComp.MeshData = ModelLoader::LoadModel(meshComp.AssetPath);
@@ -415,30 +414,22 @@ void EditorLayer::OnImGuiRender() {
         Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
         if (selectedEntity && m_GizmoType != -1) {
 
-            // Configuration de base d'ImGuizmo
             ImGuizmo::SetOrthographic(false);
             ImGuizmo::SetDrawlist();
-
-            // On cale parfaitement le Gizmo sur la fenêtre de ton Viewport
             ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, ImGui::GetWindowWidth(), ImGui::GetWindowHeight());
 
-            // Récupération des matrices de ta caméra
             float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
             glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
             glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
 
-            // Récupération de la matrice de l'entité
             auto& tc = selectedEntity.GetComponent<TransformComponent>();
             glm::mat4 transform = tc.GetTransform();
 
-            // L'appel magique qui affiche les flèches et gère la souris !
             ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection),
                                  (ImGuizmo::OPERATION)m_GizmoType,
                                  (ImGuizmo::MODE)m_GizmoMode,
                                  glm::value_ptr(transform));
 
-            // Si l'utilisateur est en train de tirer sur une flèche
-            // Si l'utilisateur est en train de tirer sur une flèche
             if (ImGuizmo::IsUsing()) {
                 glm::vec3 scale;
                 glm::quat rotation;
@@ -452,10 +443,8 @@ void EditorLayer::OnImGuiRender() {
                 tc.Rotation = rotation;
                 tc.Scale = scale;
 
-                // On force le cache UI à s'aligner sur la nouvelle rotation du Gizmo
                 tc.RotationEuler = glm::degrees(glm::eulerAngles(rotation));
             }
-
         }
 
         ImGui::End();
@@ -474,19 +463,14 @@ void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
     int height = fb->GetSpecification().Height;
 
     std::vector<unsigned char> pixels(width * height * 4);
-    // On s'assure de lire le buffer de couleur actuel
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
     fb->Unbind();
 
-    // --- FIX : FORCER L'OPACITÉ ---
-    // On parcourt les pixels (R, G, B, A) et on force le A à 255
     for (size_t i = 3; i < pixels.size(); i += 4) {
         pixels[i] = 255;
     }
 
-    // --- FIX : CHEMIN COHÉRENT ---
-    // On part du répertoire racine du projet
     std::filesystem::path projectDir = std::filesystem::path(projectPath);
     if (std::filesystem::is_regular_file(projectDir)) {
         projectDir = projectDir.parent_path();
@@ -516,7 +500,6 @@ void EditorLayer::DrawProjectSettings() {
         static int selectedCategory = 0;
         if (ImGui::Selectable("Maps & Modes", selectedCategory == 0)) selectedCategory = 0;
         if (ImGui::Selectable("General", selectedCategory == 1)) selectedCategory = 1;
-        // Tu pourras ajouter "Physics", "Input", etc. ici plus tard
         ImGui::EndChild();
 
         ImGui::SameLine();
@@ -531,33 +514,27 @@ void EditorLayer::DrawProjectSettings() {
 
             auto project = Project::GetActive();
             if (project) {
-                auto& config = project->GetConfig(); // Nécessite ProjectConfig& GetConfig() dans Project.h
+                auto& config = project->GetConfig();
 
                 ImGui::Text("Editor Startup Map");
-                ImGui::SameLine(150.0f); // Aligne le champ texte
+                ImGui::SameLine(150.0f);
 
-                // Affichage du chemin actuel
                 char buffer[256];
                 strncpy(buffer, config.StartScene.c_str(), sizeof(buffer));
                 ImGui::InputText("##StartupMap", buffer, sizeof(buffer), ImGuiInputTextFlags_ReadOnly);
 
                 ImGui::SameLine();
 
-                // Bouton pour parcourir
                 if (ImGui::Button("...##BrowseMap")) {
                     nfdchar_t* outPath = nullptr;
                     nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
 
-                    // On ouvre NFD directement dans le dossier Content du projet
                     if (NFD::OpenDialog(outPath, filterItem, 1, project->GetProjectDirectory().string().c_str()) == NFD_OKAY) {
-
-                        // On calcule le chemin relatif pour la portabilité (très important si tu partages ton projet)
                         std::filesystem::path fullPath = outPath;
                         std::filesystem::path relPath = std::filesystem::relative(fullPath, project->GetProjectDirectory());
 
                         config.StartScene = relPath.string();
 
-                        // Sauvegarde immédiate du fichier .ceproj
                         std::string projFileName = project->GetProjectDirectory().filename().string() + ".ceproj";
                         std::filesystem::path projFilePath = project->GetProjectDirectory() / projFileName;
 
@@ -570,10 +547,75 @@ void EditorLayer::DrawProjectSettings() {
         } else if (selectedCategory == 1) { // General
             ImGui::TextDisabled("PROJECT DETAILS");
             ImGui::Separator();
-            // Inputs pour le nom du projet, la version, etc.
+            ImGui::Spacing();
+
+            // --- NOUVEAU : Formulaire de détails du projet ---
+            auto project = Project::GetActive();
+            if (project) {
+                auto& config = project->GetConfig();
+
+                char nameBuffer[256];
+                strncpy(nameBuffer, config.Name.c_str(), sizeof(nameBuffer)); // Assume config.Name existe
+                if (ImGui::InputText("Project Name", nameBuffer, sizeof(nameBuffer))) {
+                    config.Name = std::string(nameBuffer);
+                }
+
+                char versionBuffer[256];
+                strncpy(versionBuffer, config.Version.c_str(), sizeof(versionBuffer)); // Assume config.Version existe
+                if (ImGui::InputText("Project Version", versionBuffer, sizeof(versionBuffer))) {
+                    config.Version = std::string(versionBuffer);
+                }
+
+                ImGui::Spacing();
+                if (ImGui::Button("Save Changes")) {
+                    std::string projFileName = project->GetProjectDirectory().filename().string() + ".ceproj";
+                    std::filesystem::path projFilePath = project->GetProjectDirectory() / projFileName;
+                    Project::SaveActive(projFilePath);
+                }
+            }
         }
 
         ImGui::EndChild();
     }
     ImGui::End();
+}
+
+void EditorLayer::SaveScene() {
+    if (!m_CurrentScenePath.empty()) {
+        SceneSerializer serializer(m_ActiveScene);
+        serializer.Serialize(m_CurrentScenePath.string());
+        std::cout << "[Editor] Scene saved to " << m_CurrentScenePath << std::endl;
+    }
+    else {
+        SaveSceneAs();
+    }
+}
+
+void EditorLayer::SaveSceneAs() {
+    nfdchar_t* outPath = nullptr;
+    nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+
+    const char* defaultPath = nullptr;
+    if (Project::GetActive()) {
+        defaultPath = Project::GetContentDirectory().string().c_str();
+    }
+
+    if (NFD::SaveDialog(outPath, filterItem, 1, defaultPath, nullptr) == NFD_OKAY) {
+        // --- NOUVEAU : GESTION DE L'EXTENSION ---
+        std::filesystem::path filepath = outPath;
+
+        // On s'assure que l'extension est bien présente
+        if (filepath.extension() != ".cescene") {
+            filepath += ".cescene";
+        }
+
+        m_CurrentScenePath = filepath;
+        // ----------------------------------------
+
+        SceneSerializer serializer(m_ActiveScene);
+        serializer.Serialize(m_CurrentScenePath.string());
+
+        NFD::FreePath(outPath);
+        std::cout << "[Editor] Scene saved as " << m_CurrentScenePath << std::endl;
+    }
 }

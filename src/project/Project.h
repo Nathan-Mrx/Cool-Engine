@@ -6,6 +6,7 @@
 
 struct ProjectConfig {
     std::string Name = "Untitled";
+    std::string Version = "0.0.1";
     std::filesystem::path ProjectDirectory; // Racine (où se trouve le .ceproj)
 
     // Dossiers standards alignés sur l'industrie
@@ -29,6 +30,7 @@ public:
     static const std::filesystem::path& GetBinariesDirectory() { return s_ActiveProject->m_Config.BinariesDirectory; }
 
     static const std::string& GetProjectName() { return s_ActiveProject->m_Config.Name; }
+    static const std::string& GetProjectVersion() { return s_ActiveProject->m_Config.Version; }
     static std::shared_ptr<Project> GetActive() { return s_ActiveProject; }
 
     ProjectConfig& GetConfig() { return m_Config; }

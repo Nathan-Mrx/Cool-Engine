@@ -17,6 +17,7 @@ std::shared_ptr<Project> Project::New(const std::string& name, const std::filesy
         nlohmann::json projectJson;
         // On s'assure que la structure correspond à ce que Load() attend
         projectJson["Name"] = name;
+        projectJson["Version"] = "0.0.1";
         projectJson["StartScene"] = "Scenes/Default.cescene";
 
         // CORRECTION : On repasse sur l'extension .ceproj
@@ -55,10 +56,12 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
         if (data.contains("Project")) {
             auto& projData = data["Project"];
             project->m_Config.Name = projData.value("Name", "Untitled");
+            project->m_Config.Version = projData.value("Version", "0.0.1");
             project->m_Config.StartScene = projData.value("StartScene", "Scenes/Default.cescene");
         } else {
             // Rétrocompatibilité pour tes anciens projets !
             project->m_Config.Name = data.value("Name", "Untitled");
+            project->m_Config.Version = data.value("Version", "0.0.1");
             project->m_Config.StartScene = data.value("StartScene", "Scenes/Default.cescene");
         }
 
@@ -78,6 +81,7 @@ void Project::SaveActive(const std::filesystem::path& path) {
 
     nlohmann::json data;
     data["Project"]["Name"] = s_ActiveProject->m_Config.Name;
+    data["Project"]["Version"] = s_ActiveProject->m_Config.Version;
     data["Project"]["StartScene"] = s_ActiveProject->m_Config.StartScene;
 
     std::ofstream stream(path);
