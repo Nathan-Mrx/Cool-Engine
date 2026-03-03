@@ -89,6 +89,12 @@ void Project::SaveActive(const std::filesystem::path& path) {
 
 static const std::string EDITOR_CONFIG_FILE = "editor_config.json";
 
+void Project::Unload()
+{
+    s_ActiveProject = nullptr;
+    std::cout << "[Project] Project unloaded." << std::endl;
+}
+
 std::vector<std::filesystem::path> Project::GetRecentProjects() {
     std::vector<std::filesystem::path> recents;
     if (!std::filesystem::exists(EDITOR_CONFIG_FILE)) return recents;

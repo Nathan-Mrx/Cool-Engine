@@ -44,6 +44,7 @@ set(SOURCES
         src/editor/panels/HubPanel.h
         src/renderer/PrimitiveFactory.cpp
         src/renderer/PrimitiveFactory.h
+        src/renderer/TextureLoader.h
 )
 
 # Créer l'exécutable avec les sources

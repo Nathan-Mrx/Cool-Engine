@@ -26,6 +26,7 @@ public:
     void OnDetach();
     void OnUpdate(float ts);
     void OnImGuiRender();
+    void CaptureViewportThumbnail(const std::string& projectPath);
 
 private:
     void DrawMenuBar();
@@ -48,4 +49,7 @@ private:
 
     bool m_ViewportFocused = false;
     bool m_ViewportHovered = false;
+
+    bool m_RequestCloseProject = false;
+    void CloseProjectInternal();
 };

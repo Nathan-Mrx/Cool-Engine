@@ -32,6 +32,7 @@ public:
     static std::shared_ptr<Project> GetActive() { return s_ActiveProject; }
 
     ProjectConfig& GetConfig() { return m_Config; }
+    static void Unload();
 
     // Projets récents
     static std::vector<std::filesystem::path> GetRecentProjects();

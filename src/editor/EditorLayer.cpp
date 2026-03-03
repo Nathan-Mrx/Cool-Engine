@@ -9,6 +9,7 @@
 #include "project/Project.h"
 #include "renderer/Renderer.h"
 #include "scene/SceneSerializer.h"
+#include <stb_image_write.h>
 
 void EditorLayer::OnAttach() {
     m_ActiveScene = std::make_shared<Scene>();
@@ -81,6 +82,9 @@ void EditorLayer::DrawMenuBar() {
             }
 
             ImGui::Separator();
+            if (ImGui::MenuItem("Close Project")) {
+                m_RequestCloseProject = true;
+            }
             if (ImGui::MenuItem("Exit")) Application::Get().Close();
             ImGui::EndMenu();
         }
@@ -147,6 +151,15 @@ void EditorLayer::BeginDockspace() {
 
 void EditorLayer::EndDockspace() {
     ImGui::End();
+}
+
+void EditorLayer::CloseProjectInternal() {
+    // Ici, on décharge proprement le projet du moteur
+    Project::Unload(); //
+
+    // Optionnel : On peut aussi réinitialiser la scène ici
+    m_ActiveScene = std::make_shared<Scene>();
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 }
 
 void EditorLayer::OnUpdate(float ts) {
@@ -222,6 +235,14 @@ void EditorLayer::OnUpdate(float ts) {
     Renderer::DrawGrid(m_ShowGrid);
     Renderer::RenderScene(m_ActiveScene.get());
     Renderer::EndScene();
+
+    if (m_RequestCloseProject) {
+        // On utilise le nom correct défini dans le header : GetProjectDirectory
+        CaptureViewportThumbnail(Project::GetActive()->GetProjectDirectory().string());
+
+        CloseProjectInternal();
+        m_RequestCloseProject = false;
+    }
 
     m_ViewportFramebuffer->Unbind();
 }
@@ -328,4 +349,45 @@ void EditorLayer::OnImGuiRender() {
         ImGui::PopStyleVar();
     }
     EndDockspace();
+}
+
+void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
+    if (!m_ViewportFramebuffer) return;
+
+    auto& fb = m_ViewportFramebuffer;
+    fb->Bind();
+
+    int width = fb->GetSpecification().Width;
+    int height = fb->GetSpecification().Height;
+
+    std::vector<unsigned char> pixels(width * height * 4);
+    // On s'assure de lire le buffer de couleur actuel
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    fb->Unbind();
+
+    // --- FIX : FORCER L'OPACITÉ ---
+    // On parcourt les pixels (R, G, B, A) et on force le A à 255
+    for (size_t i = 3; i < pixels.size(); i += 4) {
+        pixels[i] = 255;
+    }
+
+    // --- FIX : CHEMIN COHÉRENT ---
+    // On part du répertoire racine du projet
+    std::filesystem::path projectDir = std::filesystem::path(projectPath);
+    if (std::filesystem::is_regular_file(projectDir)) {
+        projectDir = projectDir.parent_path();
+    }
+
+    std::filesystem::path thumbDir = projectDir / ".ce_cache";
+    if (!std::filesystem::exists(thumbDir)) {
+        std::filesystem::create_directories(thumbDir);
+    }
+
+    std::string finalPath = (thumbDir / "thumbnail.png").string();
+    stbi_flip_vertically_on_write(true);
+
+    if (stbi_write_png(finalPath.c_str(), width, height, 4, pixels.data(), width * 4)) {
+        std::cout << "[Engine] Thumbnail updated: " << finalPath << std::endl;
+    }
 }
