@@ -236,12 +236,20 @@ void EditorLayer::OnUpdate(float ts) {
     Renderer::RenderScene(m_ActiveScene.get());
     Renderer::EndScene();
 
-    if (m_RequestCloseProject) {
-        // On utilise le nom correct défini dans le header : GetProjectDirectory
-        CaptureViewportThumbnail(Project::GetActive()->GetProjectDirectory().string());
+    bool isAppClosing = glfwWindowShouldClose(Application::Get().GetWindow());
 
-        CloseProjectInternal();
-        m_RequestCloseProject = false;
+    if (m_RequestCloseProject || isAppClosing) {
+        if (Project::GetActive()) {
+            // On capture la thumbnail tant que le projet est actif et le contexte vivant
+            CaptureViewportThumbnail(Project::GetActive()->GetProjectDirectory().string());
+
+            // Si c'est une fermeture manuelle du projet (via le menu), on décharge.
+            // Si l'app se ferme, on laisse le moteur s'arrêter proprement.
+            if (!isAppClosing) {
+                CloseProjectInternal();
+                m_RequestCloseProject = false;
+            }
+        }
     }
 
     m_ViewportFramebuffer->Unbind();
