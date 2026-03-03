@@ -3,6 +3,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "renderer/PrimitiveFactory.h"
+
 // --- RÉFLEXION UI ---
 template <typename T>
 const char* GetComponentName() {
@@ -55,23 +57,35 @@ void SceneHierarchyPanel::OnImGuiRender() {
         ImGui::Separator();
 
         // --- Sous-menu pour les primitives 3D ---
-        if (ImGui::BeginMenu("3D Object"))
-        {
+        // --- Sous-menu pour les primitives 3D ---
+        if (ImGui::BeginMenu("3D Object")) {
             if (ImGui::MenuItem("Cube")) {
                 auto entity = m_Context->CreateEntity("Cube");
+                if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
+                entity.AddComponent<ColorComponent>(glm::vec3(0.8f));
 
-                // On s'assure que l'entité a une position dans le monde
-                if (!entity.HasComponent<TransformComponent>()) {
-                    entity.AddComponent<TransformComponent>();
-                }
-
-                // On lui donne une couleur par défaut
-                entity.AddComponent<ColorComponent>(glm::vec3(0.8f, 0.8f, 0.8f));
-
-                // On prépare le conteneur du Mesh (qui affichera le bouton "Load Mesh" dans l'Inspector)
-                entity.AddComponent<MeshComponent>();
+                auto& mesh = entity.AddComponent<MeshComponent>();
+                mesh.MeshData = PrimitiveFactory::CreateCube();
+                mesh.AssetPath = "Primitive::Cube"; // Ce tag spécial nous aidera pour la sauvegarde !
             }
-            // ... (Fais la même chose pour Sphere et Plane si besoin)
+            if (ImGui::MenuItem("Sphere")) {
+                auto entity = m_Context->CreateEntity("Sphere");
+                if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
+                entity.AddComponent<ColorComponent>(glm::vec3(0.8f));
+
+                auto& mesh = entity.AddComponent<MeshComponent>();
+                mesh.MeshData = PrimitiveFactory::CreateSphere();
+                mesh.AssetPath = "Primitive::Sphere";
+            }
+            if (ImGui::MenuItem("Plane")) {
+                auto entity = m_Context->CreateEntity("Plane");
+                if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
+                entity.AddComponent<ColorComponent>(glm::vec3(0.8f));
+
+                auto& mesh = entity.AddComponent<MeshComponent>();
+                mesh.MeshData = PrimitiveFactory::CreatePlane();
+                mesh.AssetPath = "Primitive::Plane";
+            }
             ImGui::EndMenu();
         }
 

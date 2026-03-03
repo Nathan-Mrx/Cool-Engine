@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iostream>
 
+#include "renderer/PrimitiveFactory.h"
+
 using json = nlohmann::json;
 
 SceneSerializer::SceneSerializer(const std::shared_ptr<Scene>& scene)
@@ -120,8 +122,17 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
 
             mc.AssetPath = jMc["AssetPath"].get<std::string>();
             if (!mc.AssetPath.empty()) {
-                // On recharge le modèle 3D en mémoire VRAM !
-                mc.MeshData = ModelLoader::LoadModel(mc.AssetPath);
+                // --- ROUTAGE DES ASSETS VS PRIMITIVES ---
+                if (mc.AssetPath == "Primitive::Cube") {
+                    mc.MeshData = PrimitiveFactory::CreateCube();
+                } else if (mc.AssetPath == "Primitive::Sphere") {
+                    mc.MeshData = PrimitiveFactory::CreateSphere();
+                } else if (mc.AssetPath == "Primitive::Plane") {
+                    mc.MeshData = PrimitiveFactory::CreatePlane();
+                } else {
+                    // C'est un vrai fichier .obj/.fbx
+                    mc.MeshData = ModelLoader::LoadModel(mc.AssetPath);
+                }
             }
         }
     }

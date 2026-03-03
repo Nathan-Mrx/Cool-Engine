@@ -41,6 +41,8 @@ set(SOURCES
         src/editor/panels/SceneHierarchyPanel.h
         src/editor/panels/HubPanel.cpp
         src/editor/panels/HubPanel.h
+        src/renderer/PrimitiveFactory.cpp
+        src/renderer/PrimitiveFactory.h
 )
 
 # Créer l'exécutable avec les sources
