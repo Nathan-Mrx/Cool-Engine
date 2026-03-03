@@ -204,6 +204,46 @@ Application::~Application() {
     NFD::Quit();
 }
 
+void Application::DrawCreationMenu() {
+    if (ImGui::MenuItem("Empty Entity")) {
+        m_SelectedContext = CreateEntity("Empty Entity");
+    }
+
+    if (ImGui::BeginMenu("3D Objects")) {
+        if (ImGui::MenuItem("Cube")) {
+            auto e = CreateEntity("Cube");
+            auto& mc = m_Registry.emplace<MeshComponent>(e);
+            m_Registry.emplace<ColorComponent>(e, glm::vec3(1.0f));
+
+            // Ici, tu peux charger ton cube par défaut
+            mc.MeshData = ModelLoader::LoadModel("assets/primitives/cube.obj");
+            m_SelectedContext = e;
+        }
+
+        if (ImGui::MenuItem("Sphere")) {
+            auto e = CreateEntity("Sphere");
+            auto& mc = m_Registry.emplace<MeshComponent>(e);
+            m_Registry.emplace<ColorComponent>(e, glm::vec3(1.0f));
+            mc.MeshData = ModelLoader::LoadModel("assets/primitives/sphere.obj");
+            m_SelectedContext = e;
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Lights")) {
+        if (ImGui::MenuItem("Directional Light")) {
+            // À implémenter quand on aura le LightComponent !
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::MenuItem("Camera")) {
+        auto e = CreateEntity("Camera");
+        m_Registry.emplace<CameraComponent>(e);
+        m_SelectedContext = e;
+    }
+}
+
 void Application::Run() {
     while (m_Running && !glfwWindowShouldClose(m_Window)) {
         float currentFrameTime = static_cast<float>(glfwGetTime());
@@ -413,6 +453,19 @@ void Application::Run() {
 
             // --- SCENE HIERARCHY ---
             ImGui::Begin("Scene Hierarchy");
+
+            // 1. Bouton "+" style Godot
+            if (ImGui::Button("+", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+                ImGui::OpenPopup("HierarchyCreateMenu");
+            }
+
+            if (ImGui::BeginPopup("HierarchyCreateMenu")) {
+                DrawCreationMenu(); // On déporte la logique pour la réutiliser
+                ImGui::EndPopup();
+            }
+
+            ImGui::Separator();
+
             m_Registry.view<TagComponent>().each([&](auto entity, auto& tag) {
                 ImGuiTreeNodeFlags flags = ((m_SelectedContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
                 bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, tag.Tag.c_str());
@@ -441,6 +494,14 @@ void Application::Run() {
                 }
                 ImGui::EndPopup();
             }
+
+            // 2. Menu contextuel (Clic droit dans le vide)
+            if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+            {
+                DrawCreationMenu();
+                ImGui::EndPopup();
+            }
+
             ImGui::End();
 
             // --- INSPECTOR AUTOMATIQUE ---
@@ -550,4 +611,11 @@ void Application::Shutdown() {
     ImGui::DestroyContext();
     glfwDestroyWindow(m_Window);
     glfwTerminate();
+}
+
+entt::entity Application::CreateEntity(const std::string& name) {
+    auto entity = m_Registry.create();
+    m_Registry.emplace<TagComponent>(entity, name.empty() ? "Entity" : name);
+    m_Registry.emplace<TransformComponent>(entity);
+    return entity;
 }

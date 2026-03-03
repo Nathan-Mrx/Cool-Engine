@@ -9,6 +9,7 @@
 
 #include "../renderer/Shader.h"
 #include "../renderer/Framebuffer.h"
+#include "ecs/Components.h"
 #include "editor/ContentBrowserPanel.h"
 
 class Application {
@@ -16,12 +17,14 @@ public:
     Application(const std::string& name = "Mon Moteur 3D", int width = 1280, int height = 720);
     ~Application();
 
+    void DrawCreationMenu();
     void Run();
 
 private:
     void BeginImGui();
     void EndImGui();
     void Shutdown();
+    entt::entity CreateEntity(const std::string& name);
 
 private:
     GLFWwindow* m_Window;
