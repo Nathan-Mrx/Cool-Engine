@@ -124,3 +124,29 @@ void Project::AddToRecentProjects(const std::filesystem::path& path) {
     std::ofstream stream(EDITOR_CONFIG_FILE);
     if (stream.is_open()) stream << data.dump(4);
 }
+
+void Project::ValidateRecentProjects() {
+    auto recents = GetRecentProjects(); // On récupère la copie
+    size_t initialSize = recents.size();
+
+    // Filtrage des chemins inexistants
+    auto it = std::remove_if(recents.begin(), recents.end(), [](const std::filesystem::path& path) {
+        return !std::filesystem::exists(path);
+    });
+
+    // On ne sauvegarde QUE si la taille a changé (optimisation I/O)
+    if (it != recents.end()) {
+        recents.erase(it, recents.end());
+
+        // --- LE FIX : SAUVEGARDE SUR DISQUE ---
+        nlohmann::json data;
+        for (const auto& p : recents)
+            data["RecentProjects"].push_back(p.string());
+
+        std::ofstream stream(EDITOR_CONFIG_FILE);
+        if (stream.is_open()) {
+            stream << data.dump(4);
+            std::cout << "[Project] History cleaned and saved." << std::endl;
+        }
+    }
+}

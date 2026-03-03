@@ -37,6 +37,7 @@ public:
     // Projets récents
     static std::vector<std::filesystem::path> GetRecentProjects();
     static void AddToRecentProjects(const std::filesystem::path& path);
+    static void ValidateRecentProjects();
 
 private:
     ProjectConfig m_Config;

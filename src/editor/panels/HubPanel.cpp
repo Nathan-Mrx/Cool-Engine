@@ -47,6 +47,13 @@ void HubPanel::OnImGuiRender() {
 
         float cardWidth = 160.0f;
         float windowVisibleX2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+
+        static bool firstFrame = true;
+        if (firstFrame) {
+            Project::ValidateRecentProjects();
+            firstFrame = false;
+        }
+
         auto recents = Project::GetRecentProjects(); //
 
         if (ImGui::BeginTable("ProjectGrid", 3)) { // 3 colonnes de cartes
