@@ -44,12 +44,11 @@ void Renderer::RenderScene(Scene* scene) {
     for (auto entity : lightView) {
         auto [lightTransform, light] = lightView.get<TransformComponent, DirectionalLightComponent>(entity);
 
-        // Calcul de la direction à partir de la rotation Euler
-        glm::mat4 rot = glm::rotate(glm::mat4(1.0f), glm::radians(lightTransform.Rotation.x), { 1, 0, 0 })
-                      * glm::rotate(glm::mat4(1.0f), glm::radians(lightTransform.Rotation.y), { 0, 1, 0 })
-                      * glm::rotate(glm::mat4(1.0f), glm::radians(lightTransform.Rotation.z), { 0, 0, 1 });
-
-        glm::vec3 lightDir = glm::vec3(rot * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
+        // --- LE FIX : Calcul de la direction avec le Quaternion ---
+        // On prend le vecteur de base de la lumière (vers le bas) et on le tourne avec le Quat.
+        // C'est beaucoup plus performant qu'une multiplication de matrices 4x4 !
+        glm::vec3 baseDirection = glm::vec3(0.0f, -1.0f, 0.0f);
+        glm::vec3 lightDir = glm::normalize(lightTransform.Rotation * baseDirection);
 
         s_Data->MainShader->SetVec3("uLightColor", light.Color);
         s_Data->MainShader->SetVec3("uLightDir", lightDir);

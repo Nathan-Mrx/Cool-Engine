@@ -11,6 +11,10 @@
 #include <nfd.hpp>
 #include "../renderer/ModelLoader.h"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
+
 // --- STRUCTURES DE DONNÉES DE BASE ---
 
 struct Vector3 {
@@ -43,28 +47,44 @@ struct TagComponent {
 };
 
 struct TransformComponent {
-    Vector3 Location;
-    Vector3 Rotation; // Stocké en degrés (Euler) pour l'éditeur
-    Vector3 Scale = { 1.0f, 1.0f, 1.0f };
+    glm::vec3 Location = { 0.0f, 0.0f, 0.0f };
+    glm::vec3 RotationEuler = { 0.0f, 0.0f, 0.0f }; // <-- LE CACHE POUR L'UI
+    glm::quat Rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // <-- POUR LES MATHS ET LA PHYSIQUE
+    glm::vec3 Scale = { 1.0f, 1.0f, 1.0f };
 
     TransformComponent() = default;
+    TransformComponent(const TransformComponent&) = default;
+    TransformComponent(const glm::vec3& translation) : Location(translation) {}
 
-    void OnImGuiRender() {
-        // Utilisation de DragFloat3 pour une édition précise et rapide sur CachyOS
-        ImGui::DragFloat3("Location", Location.Data(), 0.1f);
-        ImGui::DragFloat3("Rotation", Rotation.Data(), 0.1f);
-        ImGui::DragFloat3("Scale", Scale.Data(), 0.1f);
+    glm::mat4 GetTransform() const {
+        return glm::translate(glm::mat4(1.0f), Location)
+             * glm::toMat4(Rotation)
+             * glm::scale(glm::mat4(1.0f), Scale);
     }
 
-    // Calcule la matrice finale (Translation * Rotation * Scale)
-    glm::mat4 GetTransform() const {
-        glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(Rotation.x), { 1, 0, 0 })
-                           * glm::rotate(glm::mat4(1.0f), glm::radians(Rotation.y), { 0, 1, 0 })
-                           * glm::rotate(glm::mat4(1.0f), glm::radians(Rotation.z), { 0, 0, 1 });
+    void OnImGuiRender() {
+        ImGui::DragFloat3("Location", glm::value_ptr(Location), 0.1f);
 
-        return glm::translate(glm::mat4(1.0f), Location.ToGlm())
-             * rotation
-             * glm::scale(glm::mat4(1.0f), Scale.ToGlm());
+        // On modifie directement le cache Euler (plus de sauts étranges en tapant les chiffres !)
+        if (ImGui::DragFloat3("Rotation", glm::value_ptr(RotationEuler), 0.1f)) {
+            // Si l'utilisateur change l'UI, on force le Quaternion à se mettre à jour
+            Rotation = glm::quat(glm::radians(RotationEuler));
+        }
+
+        ImGui::DragFloat3("Scale", glm::value_ptr(Scale), 0.1f);
+    }
+
+    glm::vec3 GetForwardVector() const {
+        // Comme tu es en Left-Handed (perspectiveLH), "l'avant" est généralement +Z.
+        // On prend un vecteur qui pointe vers l'avant, et on lui applique notre Quaternion !
+        return glm::rotate(Rotation, glm::vec3(0.0f, 0.0f, 1.0f));
+    }
+
+    glm::vec3 GetUpVector() const {
+        return glm::rotate(Rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+    glm::vec3 GetRightVector() const {
+        return glm::rotate(Rotation, glm::vec3(1.0f, 0.0f, 0.0f));
     }
 };
 

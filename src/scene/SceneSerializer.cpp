@@ -37,7 +37,8 @@ void SceneSerializer::Serialize(const std::string& filepath) {
         if (entity.HasComponent<TransformComponent>()) {
             auto& tc = entity.GetComponent<TransformComponent>();
             entityJson["TransformComponent"]["Location"] = { tc.Location.x, tc.Location.y, tc.Location.z };
-            entityJson["TransformComponent"]["Rotation"] = { tc.Rotation.x, tc.Rotation.y, tc.Rotation.z };
+
+            entityJson["Rotation"] = { tc.RotationEuler.x, tc.RotationEuler.y, tc.RotationEuler.z };
             entityJson["TransformComponent"]["Scale"]    = { tc.Scale.x, tc.Scale.y, tc.Scale.z };
         }
 
@@ -95,7 +96,9 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
             auto& tc = deserializedEntity.GetComponent<TransformComponent>(); // Déjà ajouté par CreateEntity
             auto& jTc = entityJson["TransformComponent"];
             tc.Location = { jTc["Location"][0], jTc["Location"][1], jTc["Location"][2] };
-            tc.Rotation = { jTc["Rotation"][0], jTc["Rotation"][1], jTc["Rotation"][2] };
+            glm::vec3 eulerRotation = { jTc["Rotation"][0], jTc["Rotation"][1], jTc["Rotation"][2] };
+            tc.RotationEuler = eulerRotation;
+            tc.Rotation = glm::quat(glm::radians(eulerRotation));
             tc.Scale    = { jTc["Scale"][0], jTc["Scale"][1], jTc["Scale"][2] };
         }
 

@@ -11,6 +11,9 @@
 #include "scene/SceneSerializer.h"
 #include <stb_image_write.h>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
+
 void EditorLayer::OnAttach() {
     m_ActiveScene = std::make_shared<Scene>();
     // Utilisation du nom correct défini dans le header
@@ -337,6 +340,16 @@ void EditorLayer::OnImGuiRender() {
         ImGui::SameLine();
         if (ImGui::RadioButton("Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE)) m_GizmoType = ImGuizmo::OPERATION::SCALE;
 
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(20.0f, 0.0f)); // Adds a nice visual gap
+        ImGui::SameLine();
+
+        // The button displays the current state and flips it when clicked
+        const char* modeStr = (m_GizmoMode == ImGuizmo::LOCAL) ? "Local Space" : "World Space";
+        if (ImGui::Button(modeStr)) {
+            m_GizmoMode = (m_GizmoMode == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+        }
+
         // --- 2. GESTION DE LA TAILLE ---
         ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
         m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
@@ -396,18 +409,29 @@ void EditorLayer::OnImGuiRender() {
 
             // L'appel magique qui affiche les flèches et gère la souris !
             ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection),
-                                 (ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform));
+                                 (ImGuizmo::OPERATION)m_GizmoType,
+                                 (ImGuizmo::MODE)m_GizmoMode,
+                                 glm::value_ptr(transform));
 
             // Si l'utilisateur est en train de tirer sur une flèche
+            // Si l'utilisateur est en train de tirer sur une flèche
             if (ImGuizmo::IsUsing()) {
-                // On décompose la matrice modifiée pour récupérer les nouveaux Location/Rotation/Scale
-                float translation[3], rotation[3], scale[3];
-                ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(transform), translation, rotation, scale);
+                glm::vec3 scale;
+                glm::quat rotation;
+                glm::vec3 translation;
+                glm::vec3 skew;
+                glm::vec4 perspective;
 
-                tc.Location = { translation[0], translation[1], translation[2] };
-                tc.Rotation = { rotation[0], rotation[1], rotation[2] };
-                tc.Scale    = { scale[0], scale[1], scale[2] };
+                glm::decompose(transform, scale, rotation, translation, skew, perspective);
+
+                tc.Location = translation;
+                tc.Rotation = rotation;
+                tc.Scale = scale;
+
+                // On force le cache UI à s'aligner sur la nouvelle rotation du Gizmo
+                tc.RotationEuler = glm::degrees(glm::eulerAngles(rotation));
             }
+
         }
 
         ImGui::End();

@@ -46,6 +46,7 @@ private:
     glm::vec2 m_LastMousePosition = { 0.0f, 0.0f };
 
     int m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+    int m_GizmoMode = ImGuizmo::MODE::LOCAL;
 
     bool m_ViewportFocused = false;
     bool m_ViewportHovered = false;
