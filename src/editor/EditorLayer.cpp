@@ -294,11 +294,52 @@ void EditorLayer::OnUpdate(float ts) {
 
     m_ViewportFramebuffer->ClearAttachment(1, -1);
 
+    glm::mat4 view;
+    glm::mat4 projection;
+    glm::vec3 cameraPosition;
     float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
-    glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
-    glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
 
-    Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+    if (m_SceneState == SceneState::Edit) {
+        // --- MODE ÉDITION : On utilise la caméra de l'éditeur ---
+        projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
+        view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+        cameraPosition = m_EditorCamera.Position;
+    } else {
+        // --- MODE PLAY : On cherche la caméra du joueur ---
+        auto cameraView = m_ActiveScene->m_Registry.view<TransformComponent, CameraComponent>();
+        bool cameraFound = false;
+
+        for (auto entity : cameraView) {
+            auto [transform, camera] = cameraView.get<TransformComponent, CameraComponent>(entity);
+
+            if (camera.Primary) {
+                // 1. On applique les paramètres de la caméra (FOV, Near, Far)
+                projection = glm::perspectiveLH(glm::radians(camera.FOV), aspectRatio, camera.NearClip, camera.FarClip);
+
+                // 2. On calcule la direction dans laquelle la caméra regarde.
+                // En Left-Handed (façon Unreal), le "Forward" est souvent l'axe X (1,0,0) et le "Up" l'axe Z (0,0,1)
+                glm::vec3 forward = glm::normalize(transform.Rotation * glm::vec3(1.0f, 0.0f, 0.0f));
+                glm::vec3 up      = glm::normalize(transform.Rotation * glm::vec3(0.0f, 0.0f, 1.0f));
+
+                view = glm::lookAtLH(transform.Location, transform.Location + forward, up);
+                cameraPosition = transform.Location;
+
+                cameraFound = true;
+                break; // On a trouvé la caméra primaire, on arrête de chercher
+            }
+        }
+
+        // --- FALLBACK : Si le niveau n'a pas de CameraComponent, on garde la vue Éditeur ---
+        if (!cameraFound) {
+            projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
+            view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+            cameraPosition = m_EditorCamera.Position;
+        }
+    }
+
+    // On envoie la bonne vue au moteur de rendu !
+    Renderer::BeginScene(view, projection, cameraPosition);
+
     Renderer::DrawGrid(m_ShowGrid);
     Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
 

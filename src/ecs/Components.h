@@ -100,21 +100,19 @@ struct ColorComponent {
 };
 
 struct CameraComponent {
-    glm::vec3 Position = { -300.0f, 0.0f, 100.0f };
-    glm::vec3 Front = { 1.0f, 0.0f, 0.0f };
-    glm::vec3 WorldUp = { 0.0f, 0.0f, 1.0f };
-
-    float Yaw = 0.0f;
-    float Pitch = 0.0f;
+    bool Primary = true; // Si vrai, c'est cette caméra qui est rendue à l'écran
+    float FOV = 90.0f;   // Champ de vision (en degrés)
+    float NearClip = 0.1f;
+    float FarClip = 100000.0f;
 
     CameraComponent() = default;
+    CameraComponent(const CameraComponent&) = default;
 
     void OnImGuiRender() {
-        ImGui::DragFloat3("Position", &Position[0], 0.1f);
-        ImGui::SliderFloat("Yaw", &Yaw, -180.0f, 180.0f);
-        ImGui::SliderFloat("Pitch", &Pitch, -89.0f, 89.0f);
-
-        ImGui::Text("Front Vector: %.2f, %.2f, %.2f", Front.x, Front.y, Front.z);
+        ImGui::Checkbox("Primary Camera", &Primary);
+        ImGui::DragFloat("FOV", &FOV, 0.5f, 10.0f, 150.0f);
+        ImGui::DragFloat("Near Clip", &NearClip, 0.1f, 0.01f, 100.0f);
+        ImGui::DragFloat("Far Clip", &FarClip, 100.0f, 100.0f, 1000000.0f);
     }
 };
 

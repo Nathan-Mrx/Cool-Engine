@@ -75,6 +75,14 @@ void SceneSerializer::Serialize(const std::string& filepath) {
             entityJson["BoxColliderComponent"]["Restitution"] = bc.Restitution;
         }
 
+        if (entity.HasComponent<CameraComponent>()) {
+            auto& camera = entity.GetComponent<CameraComponent>();
+            entityJson["CameraComponent"]["Primary"] = camera.Primary;
+            entityJson["CameraComponent"]["FOV"] = camera.FOV;
+            entityJson["CameraComponent"]["NearClip"] = camera.NearClip;
+            entityJson["CameraComponent"]["FarClip"] = camera.FarClip;
+        }
+
         entitiesData.push_back(entityJson);
     }
 
@@ -181,6 +189,17 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
             bc.Offset   = { jBc["Offset"][0], jBc["Offset"][1], jBc["Offset"][2] };
             bc.Friction    = jBc["Friction"].get<float>();
             bc.Restitution = jBc["Restitution"].get<float>();
+        }
+
+        if (entityJson.contains("CameraComponent")) {
+            auto& jCamera = entityJson["CameraComponent"];
+            if (!deserializedEntity.HasComponent<CameraComponent>()) deserializedEntity.AddComponent<CameraComponent>();
+            auto& camera = deserializedEntity.GetComponent<CameraComponent>();
+
+            camera.Primary = jCamera["Primary"].get<bool>();
+            camera.FOV = jCamera["FOV"].get<float>();
+            camera.NearClip = jCamera["NearClip"].get<float>();
+            camera.FarClip = jCamera["FarClip"].get<float>();
         }
     }
     return true;
