@@ -2,6 +2,8 @@
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <algorithm> // Pour std::remove
+
 
 using json = nlohmann::json;
 
@@ -37,6 +39,9 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
         project->m_Config.StartScene = data.value("StartScene", "Scenes/Default.scene");
 
         s_ActiveProject = project;
+
+        AddToRecentProjects(path);
+
         return s_ActiveProject;
     }
     catch (json::parse_error& e) {
@@ -60,5 +65,55 @@ void Project::SaveActive(const std::filesystem::path& path) {
     std::ofstream stream(path);
     if (stream.is_open()) {
         stream << data.dump(4); // Indentation de 4 espaces pour un JSON lisible
+    }
+
+    AddToRecentProjects(path);
+}
+
+
+// Fichier de configuration global du moteur (créé à côté de l'exécutable)
+static const std::string EDITOR_CONFIG_FILE = "editor_config.json";
+
+std::vector<std::filesystem::path> Project::GetRecentProjects() {
+    std::vector<std::filesystem::path> recents;
+    if (std::filesystem::exists(EDITOR_CONFIG_FILE)) {
+        std::ifstream stream(EDITOR_CONFIG_FILE);
+        if (stream.is_open()) {
+            try {
+                json data = json::parse(stream);
+                if (data.contains("RecentProjects")) {
+                    for (auto& pathStr : data["RecentProjects"]) {
+                        recents.push_back(pathStr.get<std::string>());
+                    }
+                }
+            } catch (json::parse_error& e) {
+                std::cerr << "Failed to parse editor config: " << e.what() << std::endl;
+            }
+        }
+    }
+    return recents;
+}
+
+void Project::AddToRecentProjects(const std::filesystem::path& path) {
+    auto recents = GetRecentProjects();
+
+    // 1. Si le projet est déjà dans la liste, on le retire pour le remettre tout en haut
+    recents.erase(std::remove(recents.begin(), recents.end(), path), recents.end());
+
+    // 2. On l'insère au début de la liste
+    recents.insert(recents.begin(), path);
+
+    // 3. On garde un maximum de 10 projets récents
+    if (recents.size() > 10) recents.resize(10);
+
+    // 4. On sauvegarde le tout dans le JSON global
+    json data;
+    for (const auto& p : recents) {
+        data["RecentProjects"].push_back(p.string());
+    }
+
+    std::ofstream stream(EDITOR_CONFIG_FILE);
+    if (stream.is_open()) {
+        stream << data.dump(4);
     }
 }

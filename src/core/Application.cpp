@@ -5,9 +5,10 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
-#include <imgui_internal.h> // Requis pour GImGui
+#include <imgui_internal.h>
 #include <iostream>
 #include <nfd.hpp>
+#include <algorithm> // Pour std::transform
 
 #include "project/Project.h"
 #include "renderer/ModelLoader.h"
@@ -16,7 +17,6 @@
 // --- MAGIE DES TEMPLATES (RÉFLEXION UI) ---
 // =========================================================================
 
-// Fonction utilitaire pour obtenir le nom propre d'un composant
 template <typename T>
 const char* GetComponentName() {
     if constexpr (std::is_same_v<T, TagComponent>) return "Tag";
@@ -27,13 +27,10 @@ const char* GetComponentName() {
     return "Unknown Component";
 }
 
-// Dessine un composant spécifique s'il existe sur l'entité
 template<typename T>
 void DrawComponentUI(entt::entity entity, entt::registry& registry) {
     if (registry.all_of<T>(entity)) {
-        // --- 1. ON CRÉE UN CONTEXTE UNIQUE POUR CE COMPOSANT ---
         ImGui::PushID((void*)typeid(T).hash_code());
-
         auto& component = registry.get<T>(entity);
         const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
 
@@ -42,12 +39,10 @@ void DrawComponentUI(entt::entity entity, entt::registry& registry) {
         float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
         ImGui::Separator();
 
-        // Plus besoin de la bidouille du "##", PushID s'en occupe en coulisses !
         bool open = ImGui::CollapsingHeader(GetComponentName<T>(), treeNodeFlags);
         ImGui::PopStyleVar();
 
         ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
-        // Le bouton "+" n'entrera plus en conflit avec les autres
         if (ImGui::Button("+", ImVec2{ lineHeight, lineHeight })) {
             ImGui::OpenPopup("ComponentSettings");
         }
@@ -63,24 +58,19 @@ void DrawComponentUI(entt::entity entity, entt::registry& registry) {
         }
 
         if (removeComponent) registry.remove<T>(entity);
-
-        // --- 2. ON FERME LE CONTEXTE ---
         ImGui::PopID();
     }
 }
 
-// Fold expression pour dessiner tous les composants présents sur l'entité
 template<typename... Component>
 void DrawAllComponents(entt::entity entity, entt::registry& registry) {
     ([&]() { DrawComponentUI<Component>(entity, registry); }(), ...);
 }
 
-// Fold expression pour remplir dynamiquement le menu "Add Component"
 template<typename... Component>
 void DrawAddComponentMenu(entt::entity entity, entt::registry& registry) {
     if (ImGui::BeginPopup("AddComponent")) {
         ([&]() {
-            // N'affiche le composant dans la liste que si l'entité ne l'a pas déjà
             if (!registry.all_of<Component>(entity)) {
                 if (ImGui::MenuItem(GetComponentName<Component>())) {
                     registry.emplace<Component>(entity);
@@ -106,7 +96,7 @@ Application::Application(const std::string& name, int width, int height) {
     glfwMakeContextCurrent(m_Window);
     Input::Init(m_Window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-    glfwSwapInterval(1); // VSync
+    glfwSwapInterval(1);
 
     NFD::Init();
 
@@ -123,75 +113,23 @@ Application::Application(const std::string& name, int width, int height) {
     fbSpec.Height = 720;
     m_Framebuffer = std::make_unique<Framebuffer>(fbSpec);
 
-    // 36 sommets (X, Y, Z) pour un cube de taille 1x1x1
-    float vertices[] = {
-        // Face Arrière
-        -0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f, -0.5f,
-         0.5f,  0.5f, -0.5f,
-         0.5f,  0.5f, -0.5f,
-        -0.5f,  0.5f, -0.5f,
-        -0.5f, -0.5f, -0.5f,
-
-        // Face Avant
-        -0.5f, -0.5f,  0.5f,
-         0.5f, -0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f,
-        -0.5f,  0.5f,  0.5f,
-        -0.5f, -0.5f,  0.5f,
-
-        // Face Gauche
-        -0.5f,  0.5f,  0.5f,
-        -0.5f,  0.5f, -0.5f,
-        -0.5f, -0.5f, -0.5f,
-        -0.5f, -0.5f, -0.5f,
-        -0.5f, -0.5f,  0.5f,
-        -0.5f,  0.5f,  0.5f,
-
-        // Face Droite
-         0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f, -0.5f,
-         0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f,
-
-        // Face Bas
-        -0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f, -0.5f,
-         0.5f, -0.5f,  0.5f,
-         0.5f, -0.5f,  0.5f,
-        -0.5f, -0.5f,  0.5f,
-        -0.5f, -0.5f, -0.5f,
-
-        // Face Haut
-        -0.5f,  0.5f, -0.5f,
-         0.5f,  0.5f, -0.5f,
-         0.5f,  0.5f,  0.5f,
-         0.5f,  0.5f,  0.5f,
-        -0.5f,  0.5f,  0.5f,
-        -0.5f,  0.5f, -0.5f
+    // Initialisation de la Grille Infinie (Quad 1x1 qui sera agrandi par le shader)
+    float gridVertices[] = {
+        -1.0f, -1.0f, 0.0f,  1.0f, -1.0f, 0.0f,  1.0f,  1.0f, 0.0f,
+         1.0f,  1.0f, 0.0f, -1.0f,  1.0f, 0.0f, -1.0f, -1.0f, 0.0f
     };
-
-    glGenVertexArrays(1, &m_VAO);
-    glGenBuffers(1, &m_VBO);
-    glBindVertexArray(m_VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glGenVertexArrays(1, &m_GridVAO);
+    glGenBuffers(1, &m_GridVBO);
+    glBindVertexArray(m_GridVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_GridVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(gridVertices), gridVertices, GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
 
+    m_GridShader = std::make_unique<Shader>("shaders/grid.vert", "shaders/grid.frag");
     m_Shader = std::make_unique<Shader>("shaders/default.vert", "shaders/default.frag");
 
-    // Création des entités initiales
-    m_TriangleEntity = m_Registry.create();
-    m_Registry.emplace<TagComponent>(m_TriangleEntity, "Red Triangle");
-    m_Registry.emplace<TransformComponent>(m_TriangleEntity);
-    m_Registry.emplace<ColorComponent>(m_TriangleEntity, glm::vec3(0.8f, 0.2f, 0.3f));
-
+    // Création de la caméra par défaut
     m_CameraEntity = m_Registry.create();
     m_Registry.emplace<TagComponent>(m_CameraEntity, "Main Camera");
     m_Registry.emplace<CameraComponent>(m_CameraEntity);
@@ -205,35 +143,26 @@ Application::~Application() {
 }
 
 void Application::DrawCreationMenu() {
-    if (ImGui::MenuItem("Empty Entity")) {
-        m_SelectedContext = CreateEntity("Empty Entity");
-    }
+    if (ImGui::MenuItem("Empty Entity")) m_SelectedContext = CreateEntity("Empty Entity");
 
     if (ImGui::BeginMenu("3D Objects")) {
         if (ImGui::MenuItem("Cube")) {
             auto e = CreateEntity("Cube");
-            auto& mc = m_Registry.emplace<MeshComponent>(e);
+            m_Registry.emplace<MeshComponent>(e).MeshData = ModelLoader::LoadModel("assets/primitives/cube.obj");
             m_Registry.emplace<ColorComponent>(e, glm::vec3(1.0f));
-
-            // Ici, tu peux charger ton cube par défaut
-            mc.MeshData = ModelLoader::LoadModel("assets/primitives/cube.obj");
             m_SelectedContext = e;
         }
-
         if (ImGui::MenuItem("Sphere")) {
             auto e = CreateEntity("Sphere");
-            auto& mc = m_Registry.emplace<MeshComponent>(e);
+            m_Registry.emplace<MeshComponent>(e).MeshData = ModelLoader::LoadModel("assets/primitives/sphere.obj");
             m_Registry.emplace<ColorComponent>(e, glm::vec3(1.0f));
-            mc.MeshData = ModelLoader::LoadModel("assets/primitives/sphere.obj");
             m_SelectedContext = e;
         }
         ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu("Lights")) {
-        if (ImGui::MenuItem("Directional Light")) {
-            // À implémenter quand on aura le LightComponent !
-        }
+        if (ImGui::MenuItem("Directional Light")) {} // À implémenter
         ImGui::EndMenu();
     }
 
@@ -260,20 +189,37 @@ void Application::Run() {
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        m_Shader->Use();
-        glBindVertexArray(m_VAO);
-
-        float aspectRatio = (float)m_Framebuffer->GetSpecification().Width / (float)m_Framebuffer->GetSpecification().Height;
-        glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
-        m_Shader->SetMat4("uProjection", projection);
-
         auto& camera = m_Registry.get<CameraComponent>(m_CameraEntity);
+        float aspectRatio = (float)m_Framebuffer->GetSpecification().Width / (float)m_Framebuffer->GetSpecification().Height;
+
+        // Nouvelle projection pour l'échelle centimétrique (100 000 cm de vue)
+        glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
         glm::mat4 view = glm::lookAtLH(camera.Position, camera.Position + camera.Front, camera.WorldUp);
+
+        // --- RENDU DE LA GRILLE INFINIE ---
+        if (m_ShowGrid && m_GridShader) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE); // Pour ne pas cacher les objets
+
+            m_GridShader->Use();
+            m_GridShader->SetMat4("uProjection", projection);
+            m_GridShader->SetMat4("uView", view);
+            m_GridShader->SetVec3("uCameraPos", camera.Position);
+
+            glBindVertexArray(m_GridVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+        }
+
+        // --- RENDU DES MESHES ECS ---
+        m_Shader->Use();
+        m_Shader->SetMat4("uProjection", projection);
         m_Shader->SetMat4("uView", view);
 
-        // --- RENDU DES MESHES ---
         auto meshView = m_Registry.view<TransformComponent, MeshComponent, ColorComponent>();
-
         for (auto entity : meshView) {
             auto& transform = meshView.get<TransformComponent>(entity);
             auto& meshComp = meshView.get<MeshComponent>(entity);
@@ -281,16 +227,14 @@ void Application::Run() {
 
             if (meshComp.MeshData) {
                 m_Shader->SetVec3("uColor", color.Color);
-                m_Shader->SetMat4("uModel", transform.GetTransform()); //
-
+                m_Shader->SetMat4("uModel", transform.GetTransform());
                 meshComp.MeshData->Draw();
             }
         }
-        glBindVertexArray(0);
         m_Framebuffer->Unbind();
 
         // ==========================================
-        // 2. RENDU DE L'ÉDITEUR
+        // 2. RENDU DE L'ÉDITEUR (UI)
         // ==========================================
         glDisable(GL_DEPTH_TEST);
         glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
@@ -310,14 +254,16 @@ void Application::Run() {
 
         ImGui::Begin("DockSpaceParent", nullptr, window_flags);
         ImGui::PopStyleVar(2);
-
-        ImGuiID dockspace_id = ImGui::GetID("MyEngineDockSpace");
-        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+        ImGui::DockSpace(ImGui::GetID("MyEngineDockSpace"), ImVec2(0.0f, 0.0f), dockspace_flags);
 
         // --- MENU BAR ---
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("Exit")) m_Running = false;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("View")) {
+                ImGui::MenuItem("Show Grid", nullptr, &m_ShowGrid);
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -327,70 +273,72 @@ void Application::Run() {
             // ==========================================
             // ÉCRAN D'ACCUEIL : COOL ENGINE HUB
             // ==========================================
-
-            // 1. Centrage absolu de la fenêtre
             ImVec2 center = ImGui::GetMainViewport()->GetCenter();
             ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(700, 450), ImGuiCond_Once); // Taille fixe et généreuse
+            ImGui::SetNextWindowSize(ImVec2(700, 450), ImGuiCond_Once);
 
-            // Fenêtre sans barre de titre, ni redimensionnement, ni déplacement
-            ImGuiWindowFlags hubFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
-                                        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                        ImGuiWindowFlags_NoTitleBar;
-
+            ImGuiWindowFlags hubFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar;
             ImGui::Begin("Cool Engine - Hub", nullptr, hubFlags);
 
             // --- HEADER STYLÉ ---
-            ImGui::SetWindowFontScale(1.5f); // Pseudo-grand titre
+            ImGui::SetWindowFontScale(1.5f);
             ImGui::Text("COOL ENGINE");
             ImGui::SetWindowFontScale(1.0f);
             ImGui::TextDisabled("Project Hub");
             ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 10)); // Espacement
+            ImGui::Dummy(ImVec2(0, 10));
 
             // --- MISE EN PAGE : 2 COLONNES ---
-            ImGui::Columns(2, "HubColumns", false); // false = pas de bordure visible
-            ImGui::SetColumnWidth(0, 450); // La colonne de gauche prend plus de place
+            ImGui::Columns(2, "HubColumns", false);
+            ImGui::SetColumnWidth(0, 450);
 
-            // Colonne Gauche : Récents
+            // --- COLONNE GAUCHE : PROJETS RÉCENTS ---
             ImGui::Text("Recent Projects");
             ImGui::Dummy(ImVec2(0, 10));
-            ImGui::TextDisabled("No recent projects found...");
-            // (Plus tard, tu pourras charger un petit fichier JSON global pour lister l'historique ici)
 
-            ImGui::NextColumn();
+            auto recents = Project::GetRecentProjects();
 
-            // Colonne Droite : Boutons d'action
-            ImGui::Dummy(ImVec2(0, 50)); // On pousse les boutons vers le milieu
+            if (recents.empty()) {
+                ImGui::TextDisabled("No recent projects found...");
+            } else {
+                for (const auto& path : recents) {
+                    bool exists = std::filesystem::exists(path);
+                    if (!exists) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
 
-            // --- BOUTON : OPEN PROJECT ---
-            if (ImGui::Button("Open Project...", ImVec2(-1, 50))) { // -1 prend toute la largeur dispo
-                nfdchar_t* outPath = nullptr;
-                // On filtre pour ne proposer que l'extension de ton moteur
-                nfdfilteritem_t filterItem[1] = { { "Cool Engine Project", "ceproj" } };
+                    std::string projectName = path.stem().string();
 
-                nfdresult_t result = NFD::OpenDialog(outPath, filterItem, 1, nullptr);
-                if (result == NFD_OKAY) {
-                    Project::Load(outPath);
-                    NFD::FreePath(outPath); // Libération mémoire requise par NFD
-                } else if (result == NFD_ERROR) {
-                    std::cerr << "Error opening file dialog: " << NFD::GetError() << std::endl;
+                    if (ImGui::Selectable(projectName.c_str()) && exists) {
+                        Project::Load(path);
+                    }
+
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", path.string().c_str());
+                    }
+
+                    if (!exists) ImGui::PopStyleColor();
                 }
             }
 
-            ImGui::Dummy(ImVec2(0, 10));
+            ImGui::NextColumn();
 
-            // --- BOUTON : NEW PROJECT ---
+            // --- COLONNE DROITE : BOUTONS D'ACTION ---
+            ImGui::Dummy(ImVec2(0, 50));
+
+            if (ImGui::Button("Open Project...", ImVec2(-1, 50))) {
+                nfdchar_t* outPath = nullptr;
+                nfdfilteritem_t filterItem[1] = { { "Cool Engine Project", "ceproj" } };
+                if (NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
+                    Project::Load(outPath);
+                    NFD::FreePath(outPath);
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 10));
             if (ImGui::Button("New Project...", ImVec2(-1, 50))) {
                 nfdchar_t* outPath = nullptr;
-
-                // On demande à l'utilisateur de choisir un DOSSIER vide
-                nfdresult_t result = NFD::PickFolder(outPath, nullptr);
-                if (result == NFD_OKAY) {
+                if (NFD::PickFolder(outPath, nullptr) == NFD_OKAY) {
                     std::filesystem::path newProjPath = outPath;
                     NFD::FreePath(outPath);
 
-                    // Logique de création de l'arborescence
                     if (!std::filesystem::exists(newProjPath)) std::filesystem::create_directories(newProjPath);
                     std::filesystem::create_directories(newProjPath / "Assets");
                     std::filesystem::create_directories(newProjPath / "Scenes");
@@ -399,76 +347,61 @@ void Application::Run() {
                     newProj->GetConfig().ProjectDirectory = newProjPath;
                     newProj->GetConfig().AssetDirectory = newProjPath / "Assets";
                     newProj->GetConfig().Name = newProjPath.filename().string();
-
-                    std::filesystem::path ceprojFile = newProjPath / (newProj->GetConfig().Name + ".ceproj");
-                    Project::SaveActive(ceprojFile);
+                    Project::SaveActive(newProjPath / (newProj->GetConfig().Name + ".ceproj"));
                 }
             }
-
-            ImGui::Columns(1); // Fin des colonnes
+            ImGui::Columns(1);
             ImGui::End();
         }
-        else
-        {
-
+        else {
+            // --- ÉDITEUR PRINCIPAL ---
             m_ContentBrowserPanel->OnImGuiRender();
 
+            // VIEWPORT
             ImGui::Begin("Viewport");
-
-            // 1. On récupère la taille disponible dans cette fenêtre ImGui
             ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-
-            // 2. On récupère l'ID de la texture de ton Framebuffer
-            // (Assure-toi que ta classe Framebuffer possède une méthode pour renvoyer l'ID de la texture de couleur)
             uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-
-            // 3. On affiche l'image du rendu OpenGL
             ImGui::Image((ImTextureID)(uintptr_t)textureID, viewportSize, ImVec2{0, 1}, ImVec2{1, 0});
-
             m_ViewportHovered = ImGui::IsItemHovered();
 
-            // --- CIBLE DU DRAG & DROP SUR LE VIEWPORT ---
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                     const char* relPath = (const char*)payload->Data;
                     std::filesystem::path fullPath = Project::GetAssetDirectory() / relPath;
 
-                    if (fullPath.extension() == ".obj") {
-                        // Logique de création d'entité que nous avons vue ensemble
-                        auto entity = m_Registry.create();
-                        m_Registry.emplace<TagComponent>(entity, fullPath.stem().string());
-                        m_Registry.emplace<TransformComponent>(entity);
-                        m_Registry.emplace<ColorComponent>(entity, glm::vec3(1.0f));
+                    std::string ext = fullPath.extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
+                    if (ext == ".obj" || ext == ".fbx" || ext == ".gltf") {
+                        auto entity = CreateEntity(fullPath.stem().string());
                         auto& mc = m_Registry.emplace<MeshComponent>(entity);
+                        m_Registry.emplace<ColorComponent>(entity, glm::vec3(1.0f));
                         mc.MeshData = ModelLoader::LoadModel(fullPath.string());
-
                         m_SelectedContext = entity;
                     }
                 }
                 ImGui::EndDragDropTarget();
             }
-
             ImGui::End();
 
-            // --- SCENE HIERARCHY ---
+            // HIERARCHY
             ImGui::Begin("Scene Hierarchy");
-
-            // 1. Bouton "+" style Godot
             if (ImGui::Button("+", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                 ImGui::OpenPopup("HierarchyCreateMenu");
             }
-
             if (ImGui::BeginPopup("HierarchyCreateMenu")) {
-                DrawCreationMenu(); // On déporte la logique pour la réutiliser
+                DrawCreationMenu();
                 ImGui::EndPopup();
             }
-
             ImGui::Separator();
 
-            m_Registry.view<TagComponent>().each([&](auto entity, auto& tag) {
+            auto view = m_Registry.view<TagComponent>();
+            for (auto entity : view) {
+                auto& tag = view.get<TagComponent>(entity);
                 ImGuiTreeNodeFlags flags = ((m_SelectedContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-                bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, tag.Tag.c_str());
+
+                // On cast l'entité en void* de manière sécurisée (sur Arch Linux / 64-bit)
+                bool opened = ImGui::TreeNodeEx((void*)(uintptr_t)entity, flags, "%s", tag.Tag.c_str());
 
                 if (ImGui::IsItemClicked()) m_SelectedContext = entity;
 
@@ -484,36 +417,21 @@ void Application::Run() {
                     m_Registry.destroy(entity);
                     if (m_SelectedContext == entity) m_SelectedContext = entt::null;
                 }
-            });
-
-            if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-                if (ImGui::MenuItem("Create Empty Entity")) {
-                    auto e = m_Registry.create();
-                    m_Registry.emplace<TagComponent>(e, "Empty Entity");
-                    m_SelectedContext = e; // Sélectionne la nouvelle entité automatiquement
-                }
-                ImGui::EndPopup();
             }
 
-            // 2. Menu contextuel (Clic droit dans le vide)
-            if (ImGui::BeginPopupContextWindow(0, ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
-            {
+            if (ImGui::BeginPopupContextWindow("HierarchyContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
                 DrawCreationMenu();
                 ImGui::EndPopup();
             }
-
             ImGui::End();
 
-            // --- INSPECTOR AUTOMATIQUE ---
+            // INSPECTOR
             ImGui::Begin("Inspector");
             if (m_SelectedContext != entt::null) {
-
-                // 1. On dessine tous les composants existants
                 std::apply([&](auto... args) {
                     DrawAllComponents<decltype(args)...>(m_SelectedContext, m_Registry);
                 }, AllComponents{});
 
-                // 2. Bouton d'ajout automatique
                 ImGui::Dummy(ImVec2(0.0f, 20.0f));
                 if (ImGui::Button("Add Component", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                     ImGui::OpenPopup("AddComponent");
@@ -523,38 +441,36 @@ void Application::Run() {
                     DrawAddComponentMenu<decltype(args)...>(m_SelectedContext, m_Registry);
                 }, AllComponents{});
 
-                DrawComponentUI<MeshComponent>(m_SelectedContext, m_Registry);
-
-                // --- CIBLE DU DRAG & DROP (Sur l'Inspector) ---
-                ImGui::Dummy(ImGui::GetContentRegionAvail()); // Prend tout l'espace vide restant
+                ImGui::Dummy(ImGui::GetContentRegionAvail());
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                         const char* relPath = (const char*)payload->Data;
                         std::filesystem::path fullPath = Project::GetAssetDirectory() / relPath;
 
-                        if (fullPath.extension() == ".obj") {
+                        std::string ext = fullPath.extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+                        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf") {
                             auto& mc = m_Registry.get_or_emplace<MeshComponent>(m_SelectedContext);
                             mc.MeshData = ModelLoader::LoadModel(fullPath.string());
                         }
                     }
                     ImGui::EndDragDropTarget();
                 }
-
             } else {
                 ImGui::Text("Select an entity to view its properties.");
             }
             ImGui::End();
         }
-
-        ImGui::End(); // Fin du DockSpaceParent
+        ImGui::End();
 
         // ==========================================
-        // 3. LOGIQUE INPUTS (Caméra)
+        // 3. LOGIQUE INPUTS (Caméra à 500 cm/s)
         // ==========================================
         if (m_ViewportHovered && Input::IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
             glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-            float cameraSpeed = 5.0f * m_DeltaTime;
+            float cameraSpeed = 500.0f * m_DeltaTime;
             float sensitivity = 0.1f;
 
             glm::vec2 mousePos = Input::GetMousePosition();
@@ -603,8 +519,8 @@ void Application::EndImGui() {
 }
 
 void Application::Shutdown() {
-    glDeleteVertexArrays(1, &m_VAO);
-    glDeleteBuffers(1, &m_VBO);
+    glDeleteVertexArrays(1, &m_GridVAO);
+    glDeleteBuffers(1, &m_GridVBO);
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

@@ -14,7 +14,7 @@
 
 class Application {
 public:
-    Application(const std::string& name = "Mon Moteur 3D", int width = 1280, int height = 720);
+    Application(const std::string& name = "Cool Engine", int width = 1280, int height = 720);
     ~Application();
 
     void DrawCreationMenu();
@@ -35,13 +35,16 @@ private:
     float m_LastFrameTime = 0.0f;
 
     // Rendu & OpenGL
-    uint32_t m_VAO, m_VBO;
     std::unique_ptr<Shader> m_Shader;
     std::unique_ptr<Framebuffer> m_Framebuffer;
 
+    // Grille Infinie
+    bool m_ShowGrid = true;
+    uint32_t m_GridVAO, m_GridVBO;
+    std::unique_ptr<Shader> m_GridShader;
+
     // ECS (EnTT)
     entt::registry m_Registry;
-    entt::entity m_TriangleEntity;
     entt::entity m_CameraEntity;
 
     // État de l'Éditeur

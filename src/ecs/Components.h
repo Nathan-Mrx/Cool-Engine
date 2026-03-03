@@ -77,7 +77,7 @@ struct ColorComponent {
 };
 
 struct CameraComponent {
-    glm::vec3 Position = { -3.0f, 0.0f, 0.0f };
+    glm::vec3 Position = { -300.0f, 0.0f, 100.0f };
     glm::vec3 Front = { 1.0f, 0.0f, 0.0f };
     glm::vec3 WorldUp = { 0.0f, 0.0f, 1.0f };
 

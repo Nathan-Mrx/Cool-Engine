@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <string>
 #include <memory>
+#include <vector>
 
 struct ProjectConfig {
     std::string Name = "Untitled";
@@ -35,7 +36,9 @@ public:
 
     ProjectConfig& GetConfig() { return m_Config; }
 
-
+    // --- GESTION DES PROJETS RÉCENTS ---
+    static std::vector<std::filesystem::path> GetRecentProjects();
+    static void AddToRecentProjects(const std::filesystem::path& path);
 
 private:
     ProjectConfig m_Config;

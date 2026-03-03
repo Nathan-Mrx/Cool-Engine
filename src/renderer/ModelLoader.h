@@ -23,17 +23,21 @@ public:
         std::vector<Vertex> vertices;
         std::vector<unsigned int> indices;
 
+        // Facteur de conversion : Mètres vers Centimètres
+        const float importScale = 100.0f;
+
         for(unsigned int i = 0; i < mesh->mNumVertices; i++) {
             Vertex vertex;
 
-            // On convertit le Y-Up d'Assimp vers le Z-Up de Cool Engine
-            // (X, Y, Z) d'Assimp devient (X, -Z, Y) pour rester dans un repère direct
+            // On applique le Z-Up ET la conversion en centimètres
             vertex.Position = {
-                mesh->mVertices[i].x,
-                -mesh->mVertices[i].z,
-                mesh->mVertices[i].y
+                mesh->mVertices[i].x * importScale,
+                -mesh->mVertices[i].z * importScale,
+                mesh->mVertices[i].y * importScale
             };
 
+            // Attention : Les normales sont des directions (vecteurs unitaires),
+            // elles ne doivent SURTOUT PAS être multipliées par l'échelle !
             vertex.Normal = {
                 mesh->mNormals[i].x,
                 -mesh->mNormals[i].z,
