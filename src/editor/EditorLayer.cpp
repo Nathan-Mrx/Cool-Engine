@@ -400,6 +400,28 @@ void EditorLayer::OnUpdate(float ts) {
         }
     }
 
+    // --- NOUVEAU : RENDU DU FRUSTUM DE LA CAMÉRA SÉLECTIONNÉE ---
+    // On ne le dessine que si on a cliqué sur la caméra dans l'éditeur
+    if (m_SceneState == SceneState::Edit && selectedEntity && selectedEntity.HasComponent<CameraComponent>()) {
+        auto& tc = selectedEntity.GetComponent<TransformComponent>();
+        auto& cc = selectedEntity.GetComponent<CameraComponent>();
+
+        // 1. On recrée les matrices exactes de cette caméra
+        float aspect = m_ViewportSize.x / m_ViewportSize.y;
+        glm::mat4 camProj = glm::perspectiveLH(glm::radians(cc.FOV), aspect, cc.NearClip, cc.FarClip);
+
+        glm::vec3 forward = glm::normalize(tc.Rotation * glm::vec3(1.0f, 0.0f, 0.0f));
+        glm::vec3 up      = glm::normalize(tc.Rotation * glm::vec3(0.0f, 0.0f, 1.0f));
+        glm::mat4 camView = glm::lookAtLH(tc.Location, tc.Location + forward, up);
+
+        // 2. L'astuce magique : L'inverse de Projection * Vue
+        // Cela transforme notre "DebugBox" de 1x1x1 en une immense pyramide de vision !
+        glm::mat4 frustumTransform = glm::inverse(camProj * camView);
+
+        // 3. On dessine la ligne en blanc pur
+        Renderer::DrawDebugBox(frustumTransform, glm::vec3(1.0f, 1.0f, 1.0f));
+    }
+
     Renderer::EndScene();
 
     // --- 5. LOGIQUE DE FERMETURE ET CAPTURE THUMBNAIL ---
