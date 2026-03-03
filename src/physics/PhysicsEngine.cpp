@@ -142,6 +142,8 @@ void PhysicsEngine::Init() {
         s_PhysicsData->ObjectVsObjectLayerFilter
     );
 
+    s_PhysicsData->m_PhysicsSystem->SetGravity(JPH::Vec3(0.0f, 0.0f, -981.0f));
+
     std::cout << "[PhysicsEngine] Jolt Physics initialized successfully." << std::endl;
 }
 

@@ -737,11 +737,15 @@ void EditorLayer::OnScenePlay() {
     SceneSerializer serializer(m_ActiveScene);
     serializer.Serialize("TempSceneBackup.cescene");
 
+    m_ActiveScene->OnPhysicsStart();
+
     std::cout << "[Editor] Entered PLAY mode." << std::endl;
 }
 
 void EditorLayer::OnSceneStop() {
     m_SceneState = SceneState::Edit;
+
+    m_ActiveScene->OnPhysicsStop();
 
     // On recharge la scène pour annuler toutes les destructions/mouvements
     m_ActiveScene = std::make_shared<Scene>();
