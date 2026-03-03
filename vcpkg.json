@@ -11,6 +11,7 @@
     "nativefiledialog-extended",
     "assimp",
     "imguizmo",
+    "joltphysics",
     {
       "name": "imgui",
       "features": [

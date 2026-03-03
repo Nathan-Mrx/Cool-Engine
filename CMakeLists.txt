@@ -13,6 +13,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(NFD CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(ImGuizmo CONFIG REQUIRED)
+find_package(Jolt CONFIG REQUIRED)
 
 # Lister tous les fichiers sources du moteur
 set(SOURCES
@@ -61,7 +62,8 @@ target_link_libraries(GameEngine PRIVATE
         nlohmann_json::nlohmann_json
         nfd::nfd
         assimp::assimp
-        imguizmo::imguizmo)
+        imguizmo::imguizmo
+        Jolt::Jolt)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
 add_custom_command(TARGET GameEngine POST_BUILD
@@ -69,4 +71,11 @@ add_custom_command(TARGET GameEngine POST_BUILD
         ${CMAKE_SOURCE_DIR}/shaders
         $<TARGET_FILE_DIR:GameEngine>/shaders
         COMMENT "Copie des shaders vers le dossier de build..."
+)
+
+# Jolt nécessite quelques définitions de préprocesseur pour fonctionner correctement
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+        JPH_DEBUG_RENDERER         # Pour pouvoir afficher les boîtes de collision plus tard
+        JPH_PROFILE_ENABLED        # Pour le profilage
+        JPH_FLOATING_POINT_EXCEPTIONS_ENABLED
 )
