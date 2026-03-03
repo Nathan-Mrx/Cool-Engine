@@ -97,10 +97,11 @@ struct CameraComponent {
 
 struct MeshComponent {
     std::shared_ptr<Mesh> MeshData;
+    std::string AssetPath; // <-- INDISPENSABLE POUR LA SAUVEGARDE
 
     void OnImGuiRender() {
         if (MeshData) {
-            ImGui::Text("Mesh Loaded: Yes");
+            ImGui::TextWrapped("Path: %s", AssetPath.c_str());
         } else {
             ImGui::TextColored(ImVec4(1, 0, 0, 1), "No Mesh Assigned");
         }

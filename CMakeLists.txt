@@ -26,6 +26,8 @@ set(SOURCES
         src/renderer/ModelLoader.h
         src/editor/ContentBrowserPanel.cpp
         src/editor/ContentBrowserPanel.h
+        src/scene/SceneSerializer.cpp
+        src/scene/SceneSerializer.h
 )
 
 # Créer l'exécutable avec les sources

@@ -11,15 +11,15 @@ void ContentBrowserPanel::OnImGuiRender() {
 
     ImGui::Begin("Content Browser");
 
-    const auto& assetDirectory = Project::GetAssetDirectory();
+    const auto& contentRoot = Project::GetContentDirectory();
 
     // Initialisation du chemin lors du premier chargement de projet
     if (m_CurrentDirectory.empty()) {
-        m_CurrentDirectory = assetDirectory;
+        m_CurrentDirectory = contentRoot;
     }
 
     // --- Barre de Navigation (Breadcrumbs) ---
-    if (m_CurrentDirectory != assetDirectory) {
+    if (m_CurrentDirectory != contentRoot) {
         if (ImGui::Button("<- Back")) {
             m_CurrentDirectory = m_CurrentDirectory.parent_path();
         }
@@ -38,7 +38,7 @@ void ContentBrowserPanel::OnImGuiRender() {
 
     for (auto& directoryEntry : std::filesystem::directory_iterator(m_CurrentDirectory)) {
         const auto& path = directoryEntry.path();
-        auto relativePath = std::filesystem::relative(path, assetDirectory);
+        auto relativePath = std::filesystem::relative(path, contentRoot);
         std::string filenameString = relativePath.filename().string();
 
         ImGui::PushID(filenameString.c_str());

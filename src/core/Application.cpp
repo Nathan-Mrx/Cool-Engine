@@ -12,6 +12,7 @@
 
 #include "project/Project.h"
 #include "renderer/ModelLoader.h"
+#include "scene/SceneSerializer.h"
 
 // =========================================================================
 // --- MAGIE DES TEMPLATES (RÉFLEXION UI) ---
@@ -298,6 +299,38 @@ void Application::Run() {
         // --- MENU BAR ---
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("New Scene", "Ctrl+N")) {
+                    m_Registry.clear();
+                    Project::GetActive()->GetConfig().StartScene = ""; // Reset du chemin actuel
+                }
+
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
+                    auto& startScene = Project::GetActive()->GetConfig().StartScene;
+                    if (startScene.empty()) {
+                        // Si pas de chemin, on redirige vers le Save As
+                        // On peut appeler une fonction interne ou simuler le clic
+                    } else {
+                        SceneSerializer::Serialize(m_Registry, startScene);
+                        std::cout << "[Cool Engine] Scene saved to: " << startScene << std::endl;
+                    }
+                }
+
+                if (ImGui::MenuItem("Save Scene As...")) {
+                    nfdchar_t* outPath = nullptr;
+                    // Définition de notre extension personnalisée .cescene
+                    nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+
+                    // On propose le dossier "Scenes" du projet par défaut
+                    std::string defaultPath = (Project::GetProjectDirectory() / "Scenes").string();
+
+                    if (NFD::SaveDialog(outPath, filterItem, 1, defaultPath.c_str(), "Untitled.cescene") == NFD_OKAY) {
+                        SceneSerializer::Serialize(m_Registry, outPath);
+                        Project::GetActive()->GetConfig().StartScene = outPath; // On mémorise le chemin
+                        NFD::FreePath(outPath);
+                    }
+                }
+
+                ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) m_Running = false;
                 ImGui::EndMenu();
             }
@@ -375,18 +408,21 @@ void Application::Run() {
             if (ImGui::Button("New Project...", ImVec2(-1, 50))) {
                 nfdchar_t* outPath = nullptr;
                 if (NFD::PickFolder(outPath, nullptr) == NFD_OKAY) {
-                    std::filesystem::path newProjPath = outPath;
+                    std::filesystem::path root = outPath;
                     NFD::FreePath(outPath);
 
-                    if (!std::filesystem::exists(newProjPath)) std::filesystem::create_directories(newProjPath);
-                    std::filesystem::create_directories(newProjPath / "Assets");
-                    std::filesystem::create_directories(newProjPath / "Scenes");
+                    // Création de l'arborescence style Unreal
+                    std::filesystem::create_directories(root / "Content/Assets");
+                    std::filesystem::create_directories(root / "Content/Scenes");
+                    std::filesystem::create_directories(root / "Config");
+                    std::filesystem::create_directories(root / "Binaries");
 
                     auto newProj = Project::New();
-                    newProj->GetConfig().ProjectDirectory = newProjPath;
-                    newProj->GetConfig().AssetDirectory = newProjPath / "Assets";
-                    newProj->GetConfig().Name = newProjPath.filename().string();
-                    Project::SaveActive(newProjPath / (newProj->GetConfig().Name + ".ceproj"));
+                    newProj->GetConfig().ProjectDirectory = root;
+                    newProj->GetConfig().ContentDirectory = root / "Content";
+                    newProj->GetConfig().Name = root.filename().string();
+
+                    Project::SaveActive(root / (newProj->GetConfig().Name + ".ceproj"));
                 }
             }
             ImGui::Columns(1);
@@ -406,7 +442,7 @@ void Application::Run() {
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                     const char* relPath = (const char*)payload->Data;
-                    std::filesystem::path fullPath = Project::GetAssetDirectory() / relPath;
+                    std::filesystem::path fullPath = Project::GetContentDirectory() / relPath;
 
                     std::string ext = fullPath.extension().string();
                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -484,7 +520,7 @@ void Application::Run() {
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                         const char* relPath = (const char*)payload->Data;
-                        std::filesystem::path fullPath = Project::GetAssetDirectory() / relPath;
+                        std::filesystem::path fullPath = Project::GetContentDirectory() / relPath;
 
                         std::string ext = fullPath.extension().string();
                         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -506,6 +542,19 @@ void Application::Run() {
         // ==========================================
         // 3. LOGIQUE INPUTS (Caméra à 500 cm/s)
         // ==========================================
+
+        bool control = Input::IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || Input::IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
+        if (control && Input::IsKeyPressed(GLFW_KEY_S)) {
+            auto& currentScene = Project::GetActive()->GetConfig().StartScene;
+            if (!currentScene.empty()) {
+                SceneSerializer::Serialize(m_Registry, currentScene);
+                std::cout << "[Cool Engine] Quick Save successful!" << std::endl;
+            } else {
+                // Optionnel : Déclencher le dialogue "Save As" ici si c'est une nouvelle scène
+                std::cout << "[Cool Engine] No active scene path. Use 'Save As' first." << std::endl;
+            }
+        }
+
         if (m_ViewportHovered && Input::IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
             glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
