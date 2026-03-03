@@ -8,6 +8,7 @@
 class ModelLoader {
 public:
     static std::shared_ptr<Mesh> LoadModel(const std::string& path) {
+        std::cout << "[Cool Engine] Loading asset: " << path << std::endl;
         Assimp::Importer importer;
         // On demande à Assimp de trianguler les faces et de calculer les normales si absentes
         const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals);
@@ -24,12 +25,26 @@ public:
 
         for(unsigned int i = 0; i < mesh->mNumVertices; i++) {
             Vertex vertex;
-            vertex.Position = { mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z };
-            vertex.Normal = { mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z };
+
+            // On convertit le Y-Up d'Assimp vers le Z-Up de Cool Engine
+            // (X, Y, Z) d'Assimp devient (X, -Z, Y) pour rester dans un repère direct
+            vertex.Position = {
+                mesh->mVertices[i].x,
+                -mesh->mVertices[i].z,
+                mesh->mVertices[i].y
+            };
+
+            vertex.Normal = {
+                mesh->mNormals[i].x,
+                -mesh->mNormals[i].z,
+                mesh->mNormals[i].y
+            };
+
             if(mesh->mTextureCoords[0])
                 vertex.TexCoords = { mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y };
             else
                 vertex.TexCoords = { 0.0f, 0.0f };
+
             vertices.push_back(vertex);
         }
 

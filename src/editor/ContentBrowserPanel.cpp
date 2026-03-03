@@ -48,6 +48,18 @@ void ContentBrowserPanel::OnImGuiRender() {
         
         ImGui::Button(icon, { thumbnailSize, thumbnailSize });
 
+        // --- SOURCE DU DRAG & DROP ---
+        if (ImGui::BeginDragDropSource()) {
+            // Sur Linux, c_str() renvoie un const char*
+            const char* itemPath = relativePath.c_str();
+
+            // On utilise strlen pour calculer la taille du payload
+            ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath, (strlen(itemPath) + 1) * sizeof(char));
+
+            ImGui::Text("%s", filenameString.c_str());
+            ImGui::EndDragDropSource();
+        }
+
         // Navigation au double-clic
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             if (directoryEntry.is_directory())

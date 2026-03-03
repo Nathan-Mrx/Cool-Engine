@@ -10,6 +10,7 @@
 #include <nfd.hpp>
 
 #include "project/Project.h"
+#include "renderer/ModelLoader.h"
 
 // =========================================================================
 // --- MAGIE DES TEMPLATES (RÉFLEXION UI) ---
@@ -22,6 +23,7 @@ const char* GetComponentName() {
     if constexpr (std::is_same_v<T, TransformComponent>) return "Transform";
     if constexpr (std::is_same_v<T, ColorComponent>) return "Color";
     if constexpr (std::is_same_v<T, CameraComponent>) return "Camera";
+    if constexpr (std::is_same_v<T, MeshComponent>) return "Mesh";
     return "Unknown Component";
 }
 
@@ -371,15 +373,42 @@ void Application::Run() {
 
             m_ContentBrowserPanel->OnImGuiRender();
 
-            // --- VIEWPORT ---
             ImGui::Begin("Viewport");
-            m_ViewportHovered = ImGui::IsWindowHovered();
+
+            // 1. On récupère la taille disponible dans cette fenêtre ImGui
             ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-            if (m_Framebuffer->GetSpecification().Width != viewportSize.x || m_Framebuffer->GetSpecification().Height != viewportSize.y) {
-                m_Framebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
-            }
+
+            // 2. On récupère l'ID de la texture de ton Framebuffer
+            // (Assure-toi que ta classe Framebuffer possède une méthode pour renvoyer l'ID de la texture de couleur)
             uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-            ImGui::Image((ImTextureID)(uint64_t)textureID, viewportSize, ImVec2{0, 1}, ImVec2{1, 0});
+
+            // 3. On affiche l'image du rendu OpenGL
+            ImGui::Image((ImTextureID)(uintptr_t)textureID, viewportSize, ImVec2{0, 1}, ImVec2{1, 0});
+
+            m_ViewportHovered = ImGui::IsItemHovered();
+
+            // --- CIBLE DU DRAG & DROP SUR LE VIEWPORT ---
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                    const char* relPath = (const char*)payload->Data;
+                    std::filesystem::path fullPath = Project::GetAssetDirectory() / relPath;
+
+                    if (fullPath.extension() == ".obj") {
+                        // Logique de création d'entité que nous avons vue ensemble
+                        auto entity = m_Registry.create();
+                        m_Registry.emplace<TagComponent>(entity, fullPath.stem().string());
+                        m_Registry.emplace<TransformComponent>(entity);
+                        m_Registry.emplace<ColorComponent>(entity, glm::vec3(1.0f));
+
+                        auto& mc = m_Registry.emplace<MeshComponent>(entity);
+                        mc.MeshData = ModelLoader::LoadModel(fullPath.string());
+
+                        m_SelectedContext = entity;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
             ImGui::End();
 
             // --- SCENE HIERARCHY ---
@@ -432,6 +461,23 @@ void Application::Run() {
                 std::apply([&](auto... args) {
                     DrawAddComponentMenu<decltype(args)...>(m_SelectedContext, m_Registry);
                 }, AllComponents{});
+
+                DrawComponentUI<MeshComponent>(m_SelectedContext, m_Registry);
+
+                // --- CIBLE DU DRAG & DROP (Sur l'Inspector) ---
+                ImGui::Dummy(ImGui::GetContentRegionAvail()); // Prend tout l'espace vide restant
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                        const char* relPath = (const char*)payload->Data;
+                        std::filesystem::path fullPath = Project::GetAssetDirectory() / relPath;
+
+                        if (fullPath.extension() == ".obj") {
+                            auto& mc = m_Registry.get_or_emplace<MeshComponent>(m_SelectedContext);
+                            mc.MeshData = ModelLoader::LoadModel(fullPath.string());
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
 
             } else {
                 ImGui::Text("Select an entity to view its properties.");
