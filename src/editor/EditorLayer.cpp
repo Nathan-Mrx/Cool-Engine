@@ -289,6 +289,30 @@ void EditorLayer::OnUpdate(float ts) {
     Renderer::BeginScene(view, projection, m_EditorCamera.Position);
     Renderer::DrawGrid(m_ShowGrid);
     Renderer::RenderScene(m_ActiveScene.get());
+
+    auto lightView = m_ActiveScene->m_Registry.view<TransformComponent, DirectionalLightComponent>();
+    for (auto entity : lightView) {
+        auto [transform, light] = lightView.get<TransformComponent, DirectionalLightComponent>(entity);
+
+        // 1. On calcule la VRAIE direction de la lumière (vers le bas en local, comme dans le shader)
+        glm::vec3 lightDirection = glm::normalize(transform.Rotation * glm::vec3(0.0f, -1.0f, 0.0f));
+
+        // 2. On récupère deux axes perpendiculaires pour dessiner la pointe de la flèche
+        glm::vec3 rightAxis = transform.GetRightVector();
+        glm::vec3 upAxis    = transform.GetForwardVector();
+
+        // 3. On dessine la flèche
+        Renderer::DrawDebugArrow(
+            transform.Location,
+            lightDirection, // La flèche pointe maintenant là où la lumière frappe !
+            rightAxis,
+            upAxis,
+            glm::vec3(1.0f, 0.9f, 0.1f), // Jaune
+            view, projection,
+            50.0f
+        );
+    }
+
     Renderer::EndScene();
 
     // --- 5. LOGIQUE DE FERMETURE ET CAPTURE THUMBNAIL ---

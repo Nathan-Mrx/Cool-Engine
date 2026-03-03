@@ -38,7 +38,9 @@ void SceneSerializer::Serialize(const std::string& filepath) {
             auto& tc = entity.GetComponent<TransformComponent>();
             entityJson["TransformComponent"]["Location"] = { tc.Location.x, tc.Location.y, tc.Location.z };
 
-            entityJson["Rotation"] = { tc.RotationEuler.x, tc.RotationEuler.y, tc.RotationEuler.z };
+            // --- THE FIX: Properly nested Rotation inside TransformComponent ---
+            entityJson["TransformComponent"]["Rotation"] = { tc.RotationEuler.x, tc.RotationEuler.y, tc.RotationEuler.z };
+
             entityJson["TransformComponent"]["Scale"]    = { tc.Scale.x, tc.Scale.y, tc.Scale.z };
         }
 
@@ -95,11 +97,19 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
         if (entityJson.contains("TransformComponent")) {
             auto& tc = deserializedEntity.GetComponent<TransformComponent>(); // Déjà ajouté par CreateEntity
             auto& jTc = entityJson["TransformComponent"];
-            tc.Location = { jTc["Location"][0], jTc["Location"][1], jTc["Location"][2] };
-            glm::vec3 eulerRotation = { jTc["Rotation"][0], jTc["Rotation"][1], jTc["Rotation"][2] };
-            tc.RotationEuler = eulerRotation;
-            tc.Rotation = glm::quat(glm::radians(eulerRotation));
-            tc.Scale    = { jTc["Scale"][0], jTc["Scale"][1], jTc["Scale"][2] };
+
+            // Sécurité supplémentaire : on vérifie que les clés existent bien avant de les lire
+            if (jTc.contains("Location")) {
+                tc.Location = { jTc["Location"][0], jTc["Location"][1], jTc["Location"][2] };
+            }
+            if (jTc.contains("Rotation")) {
+                glm::vec3 eulerRotation = { jTc["Rotation"][0], jTc["Rotation"][1], jTc["Rotation"][2] };
+                tc.RotationEuler = eulerRotation;
+                tc.Rotation = glm::quat(glm::radians(eulerRotation));
+            }
+            if (jTc.contains("Scale")) {
+                tc.Scale = { jTc["Scale"][0], jTc["Scale"][1], jTc["Scale"][2] };
+            }
         }
 
         if (entityJson.contains("ColorComponent")) {

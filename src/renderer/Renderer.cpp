@@ -7,6 +7,7 @@ Renderer::RendererData* Renderer::s_Data = new Renderer::RendererData();
 void Renderer::Init() {
     s_Data->MainShader = std::make_unique<Shader>("shaders/default.vert", "shaders/default.frag");
     s_Data->GridShader = std::make_unique<Shader>("shaders/grid.vert", "shaders/grid.frag");
+    s_Data->LineShader = std::make_unique<Shader>("shaders/line.vert", "shaders/line.frag");
 
     // --- INITIALISATION DE LA GRILLE ---
     float gridVertices[] = {
@@ -135,4 +136,52 @@ void Renderer::Clear() {
     // Un gris neutre très "Engine" (0.1, 0.1, 0.1)
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+void Renderer::DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, const glm::vec3& right, const glm::vec3& up, const glm::vec3& color, const glm::mat4& view, const glm::mat4& projection, float length) {
+
+    float headSize = length * 0.25f;
+
+    glm::vec3 end = start + forward * length;
+
+    glm::vec3 p1 = end - forward * headSize + right * headSize;
+    glm::vec3 p2 = end - forward * headSize - right * headSize;
+    glm::vec3 p3 = end - forward * headSize + up * headSize;
+    glm::vec3 p4 = end - forward * headSize - up * headSize;
+
+    float vertices[] = {
+        start.x, start.y, start.z,   end.x, end.y, end.z,
+        end.x, end.y, end.z,         p1.x, p1.y, p1.z,
+        end.x, end.y, end.z,         p2.x, p2.y, p2.z,
+        end.x, end.y, end.z,         p3.x, p3.y, p3.z,
+        end.x, end.y, end.z,         p4.x, p4.y, p4.z
+    };
+
+    unsigned int VAO, VBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // --- LE FIX : UTILISATION DU BON SHADER ET DES MATRICES ---
+    if (s_Data->LineShader) {
+        s_Data->LineShader->Use();
+        s_Data->LineShader->SetMat4("uModel", glm::mat4(1.0f));
+
+        // Attention à bien utiliser les noms que tu mettras dans line.vert !
+        // J'utilise "uView" et "uProjection" car c'est ta convention dans MainShader.
+        s_Data->LineShader->SetMat4("uView", view);
+        s_Data->LineShader->SetMat4("uProjection", projection);
+        s_Data->LineShader->SetVec3("uColor", color);
+    }
+
+    glDrawArrays(GL_LINES, 0, 10);
+
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
 }
