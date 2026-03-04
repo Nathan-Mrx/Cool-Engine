@@ -47,8 +47,8 @@ set(SOURCES
         src/renderer/TextureLoader.h
         src/physics/PhysicsEngine.cpp
         src/physics/PhysicsEngine.h
-        src/scene/ScriptableEntity.cpp
-        src/scene/ScriptableEntity.h
+        src/scene/ScriptableNode.cpp
+        src/scene/ScriptableNode.h
         src/scripts/PlayerController.h
         src/scripts/ScriptRegistry.h
         src/core/UUID.cpp

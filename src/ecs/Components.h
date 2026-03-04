@@ -16,7 +16,7 @@
 #include <glm/gtx/quaternion.hpp>
 
 #include "core/UUID.h"
-#include "scene/ScriptableEntity.h"
+#include "scene/ScriptableNode.h"
 
 // --- STRUCTURES DE DONNÉES DE BASE ---
 
@@ -233,16 +233,16 @@ struct BoxColliderComponent {
 
 struct NativeScriptComponent {
     std::string ScriptName = "None";
-    ScriptableEntity* Instance = nullptr;
+    ScriptableNode* Instance = nullptr;
 
     // Pointeurs de fonctions pour allouer et désallouer la mémoire dynamiquement
-    ScriptableEntity* (*InstantiateScript)() = nullptr;
+    ScriptableNode* (*InstantiateScript)() = nullptr;
     void (*DestroyScript)(NativeScriptComponent*) = nullptr;
 
     // Fonction template magique pour lier un script au composant
     template<typename T>
     void Bind() {
-        InstantiateScript = []() { return static_cast<ScriptableEntity*>(new T()); };
+        InstantiateScript = []() { return static_cast<ScriptableNode*>(new T()); };
         DestroyScript = [](NativeScriptComponent* nsc) {
             delete nsc->Instance;
             nsc->Instance = nullptr;

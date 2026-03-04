@@ -1,5 +1,5 @@
 #pragma once
-#include "../scene/ScriptableEntity.h"
+#include "../scene/ScriptableNode.h"
 #include "../ecs/Components.h"
 #include "../core/Input.h"
 #include "../physics/PhysicsEngine.h"
@@ -8,7 +8,7 @@
 
 #include "ScriptRegistry.h"
 
-class PlayerController : public ScriptableEntity {
+class PlayerController : public ScriptableNode {
 public:
     void OnCreate() override {
         std::cout << "[PlayerController] Possessed entity: " << GetComponent<TagComponent>().Tag << "!" << std::endl;

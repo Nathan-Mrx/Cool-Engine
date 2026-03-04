@@ -129,7 +129,7 @@ void Scene::OnScriptStart() {
             nsc.Instance = nsc.InstantiateScript();
 
             // On injecte secrètement l'entité actuelle dans la classe C++
-            nsc.Instance->m_Entity = Entity{ entity, this };
+            nsc.Instance->m_Node = Entity{ entity, this };
 
             // On déclenche le "BeginPlay"
             nsc.Instance->OnCreate();

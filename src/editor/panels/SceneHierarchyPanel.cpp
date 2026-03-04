@@ -107,8 +107,8 @@ void SceneHierarchyPanel::OnImGuiRender() {
             }
         };
 
-        if (ImGui::MenuItem("Create Empty Entity")) {
-            Entity newEntity = m_Context->CreateEntity("Empty Entity");
+        if (ImGui::MenuItem("Create Empty Node")) {
+            Entity newEntity = m_Context->CreateEntity("Empty Node");
             autoParentToPrefabRoot(newEntity);
         }
 
@@ -337,8 +337,8 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
         // --- NOUVEAU : Menu complet de création d'enfants ---
         if (!isPrefab) {
             if (ImGui::BeginMenu("Create Child")) {
-                if (ImGui::MenuItem("Empty Entity")) {
-                    Entity child = m_Context->CreateEntity("Empty Entity");
+                if (ImGui::MenuItem("Empty Node")) {
+                    Entity child = m_Context->CreateEntity("Empty Node");
                     m_Context->ParentEntity(child, entity);
                 }
 
@@ -406,7 +406,7 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Delete Entity")) {
+        if (ImGui::MenuItem("Delete Node")) {
             m_EntityToDestroy = entity; // On le marque pour la fin de la frame !
         }
         ImGui::EndPopup();
