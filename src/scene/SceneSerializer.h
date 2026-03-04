@@ -10,6 +10,8 @@ public:
     void Serialize(const std::string& filepath);
     bool Deserialize(const std::string& filepath);
 
+    Entity DeserializePrefab(const std::string& filepath);
+
 private:
     std::shared_ptr<Scene> m_Scene;
 };

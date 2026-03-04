@@ -4,6 +4,7 @@
 #include <imgui_internal.h>
 
 #include "renderer/PrimitiveFactory.h"
+#include "scene/SceneSerializer.h"
 #include "scripts/ScriptRegistry.h"
 
 // --- RÉFLEXION UI ---
@@ -71,6 +72,20 @@ void SceneHierarchyPanel::OnImGuiRender() {
         if (isRoot) {
             DrawEntityNode(entity);
         }
+    }
+
+    // --- DRAG & DROP : Instancier un Prefab À LA RACINE ---
+    // On crée une zone invisible qui prend tout le reste de la fenêtre
+    ImGui::Dummy(ImGui::GetContentRegionAvail());
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+            std::filesystem::path filepath = (const char*)payload->Data;
+            if (filepath.extension() == ".ceprefab") {
+                SceneSerializer serializer(m_Context);
+                serializer.DeserializePrefab(filepath.string());
+            }
+        }
+        ImGui::EndDragDropTarget();
     }
 
     // Le clic droit dans le vide de la hiérarchie
@@ -210,6 +225,20 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
     // On donne cet ID unique au TreeNode
     bool opened = ImGui::TreeNodeEx((void*)(uint64_t)entityID, flags, "%s", displayName.c_str());
     if (ImGui::IsItemClicked()) m_SelectionContext = entity;
+
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+            std::filesystem::path filepath = (const char*)payload->Data;
+            if (filepath.extension() == ".ceprefab") {
+                SceneSerializer serializer(m_Context);
+                Entity prefabRoot = serializer.DeserializePrefab(filepath.string());
+                if (prefabRoot) {
+                    m_Context->ParentEntity(prefabRoot, entity); // On l'attache à l'entité survolée !
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
 
     bool entityDeleted = false;
 

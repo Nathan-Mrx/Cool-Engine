@@ -18,7 +18,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 void EditorLayer::OnAttach() {
-    // On crée l'onglet par défaut au lancement
+    // 1. Initialisation du premier onglet vierge
     m_Tabs.push_back({ "Untitled", "", std::make_shared<Scene>(), false });
     m_ActiveTabIndex = 0;
     m_ActiveScene = m_Tabs[0].SceneContext;
@@ -26,29 +26,12 @@ void EditorLayer::OnAttach() {
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
     m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
 
+    // 2. Connexion des callbacks du Content Browser !
     m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
         OpenScene(path);
     };
-    m_ContentBrowserPanel->OnPrefabOpenCallback = [this](const std::filesystem::path& path)
-    {
+    m_ContentBrowserPanel->OnPrefabOpenCallback = [this](const std::filesystem::path& path) {
         OpenPrefab(path);
-    };
-
-    m_ActiveScene = std::make_shared<Scene>();
-    // Utilisation du nom correct défini dans le header
-    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-    m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
-
-    m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
-        // 1. On prépare une nouvelle scène
-        m_ActiveScene = std::make_shared<Scene>();
-        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-
-        // 2. On charge les données via le Serializer
-        SceneSerializer serializer(m_ActiveScene);
-        serializer.Deserialize(path.string());
-
-        std::cout << "[Editor] Scene loaded: " << path.filename() << std::endl;
     };
 
     FramebufferSpecification fbSpec;
@@ -56,15 +39,8 @@ void EditorLayer::OnAttach() {
     fbSpec.Height = 720;
     m_ViewportFramebuffer = std::make_unique<Framebuffer>(fbSpec);
 
-    // Si un projet a été chargé via la ligne de commande (CLI)
-    if (Project::GetActive())
-    {
-        // On récupère la scène de démarrage du projet
-        // (Ou on crée une scène par défaut si le projet est neuf)
-        m_ActiveScene = std::make_shared<Scene>();
-        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-
-        // Optionnel : charger le fichier .cescene par défaut du projet ici
+    if (Project::GetActive()) {
+        // Optionnel : Tu pourras charger la scène de démarrage ici via OpenScene()
     }
 }
 
@@ -100,16 +76,8 @@ void EditorLayer::DrawMenuBar() {
                 nfdchar_t* outPath = nullptr;
                 nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
                 if (NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
-                    m_CurrentScenePath = outPath; // Mise à jour du chemin actuel
 
-                    // 1. On crée une nouvelle scène vierge
-                    m_ActiveScene = std::make_shared<Scene>();
-                    // 2. On met à jour le panneau de hiérarchie pour qu'il pointe sur la nouvelle
-                    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-
-                    // 3. On charge les données
-                    SceneSerializer serializer(m_ActiveScene);
-                    serializer.Deserialize(outPath);
+                    OpenScene(outPath); // <-- ON UTILISE NOTRE FONCTION D'ONGLET !
 
                     NFD::FreePath(outPath);
                 }
@@ -217,15 +185,16 @@ void EditorLayer::OnUpdate(float ts) {
     if (currentProject && currentProject != s_LastProject) {
         s_LastProject = currentProject;
 
-        m_ActiveScene = std::make_shared<Scene>();
-        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-
         std::filesystem::path scenePath = currentProject->GetProjectDirectory() / currentProject->GetConfig().StartScene;
 
         if (std::filesystem::exists(scenePath)) {
-            SceneSerializer serializer(m_ActiveScene);
-            serializer.Deserialize(scenePath.string());
-            m_CurrentScenePath = scenePath; // On mémorise la scène de départ
+            OpenScene(scenePath);
+
+            // Nettoyage : Si le premier onglet est "Untitled" et qu'on vient de charger le projet, on le ferme
+            if (m_Tabs.size() > 1 && m_Tabs[0].Name == "Untitled") {
+                CloseTab(0);
+            }
+
             std::cout << "[Editor] Loaded default scene: " << currentProject->GetConfig().StartScene << std::endl;
         } else {
             std::cout << "[Editor] Warning: Default scene not found at " << scenePath << std::endl;
@@ -485,44 +454,43 @@ void EditorLayer::OnImGuiRender() {
 
     UI_Toolbar();
 
-    // On vérifie si Ctrl et Shift sont enfoncés
+    // --- RACCOURCIS CLAVIER ---
     bool control = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
     bool shift   = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
 
-    // Si on appuie sur 'S' (le 'false' empêche la répétition automatique de la touche)
     if (control && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        if (shift) {
-            SaveSceneAs(); // Ctrl + Shift + S
-        } else {
-            SaveScene();   // Ctrl + S
-        }
+        if (shift) SaveSceneAs();
+        else SaveScene();
     }
 
     if (control && !shift && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
-        // Logique pour Ctrl+N (Nouvelle scène)
-        m_ActiveScene = std::make_shared<Scene>();
+        // Nouvelle scène = Nouvel onglet !
+        auto newScene = std::make_shared<Scene>();
+        m_Tabs.push_back({ "Untitled", "", newScene, false });
+        m_ActiveTabIndex = m_Tabs.size() - 1;
+        m_ActiveScene = newScene;
+        m_ForceTabSelection = true;
         m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-        m_CurrentScenePath = ""; // On réinitialise le chemin car c'est une nouvelle scène
     }
 
     DrawProjectSettings();
 
+    // --- PANNEAUX DE L'ÉDITEUR ---
     if (Project::GetActive() == nullptr) {
         m_HubPanel.OnImGuiRender();
-    } else
-    {
+    } else {
         m_SceneHierarchyPanel.OnImGuiRender();
         m_ContentBrowserPanel->OnImGuiRender();
 
-        // 1. On enlève le padding pour la fenêtre globale
+        // ==========================================
+        // FENÊTRE PRINCIPALE DU VIEWPORT
+        // ==========================================
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
         ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-        // 2. On ajoute un peu d'espace manuel pour que les onglets respirent visuellement
+        // --- 1. LA BARRE D'ONGLETS ---
         ImGui::Dummy(ImVec2(0, 4.0f));
-        ImGui::SetCursorPosX(8.0f); // Décalage à gauche pour le premier onglet
-
-        // 3. LA BARRE D'ONGLETS
+        ImGui::SetCursorPosX(8.0f);
         if (ImGui::BeginTabBar("SceneTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
             for (int i = 0; i < m_Tabs.size(); i++) {
                 bool isOpen = true;
@@ -540,81 +508,66 @@ void EditorLayer::OnImGuiRender() {
 
                 if (!isOpen) {
                     CloseTab(i);
-                    i--;
+                    i--; // Ajustement de l'index car un onglet vient d'être supprimé
                 }
             }
             ImGui::EndTabBar();
         }
         m_ForceTabSelection = false;
 
+        // --- 2. LE SOUS-ESPACE (CHILD) POUR LA VUE 3D ---
+        ImGui::BeginChild("RenderViewport", ImVec2(0, 0), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
         m_ViewportFocused = ImGui::IsWindowFocused();
         m_ViewportHovered = ImGui::IsWindowHovered();
 
-        // --- 1. BARRE D'OUTILS GIZMO ---
+        // --- 3. LA BARRE D'OUTILS GIZMO ---
         ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
         if (ImGui::RadioButton("Translate (W)", m_GizmoType == ImGuizmo::OPERATION::TRANSLATE)) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Rotate (E)", m_GizmoType == ImGuizmo::OPERATION::ROTATE)) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
         ImGui::SameLine();
         if (ImGui::RadioButton("Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE)) m_GizmoType = ImGuizmo::OPERATION::SCALE;
-
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(20.0f, 0.0f));
         ImGui::SameLine();
-
         const char* modeStr = (m_GizmoMode == ImGuizmo::LOCAL) ? "Local Space" : "World Space";
-        if (ImGui::Button(modeStr)) {
-            m_GizmoMode = (m_GizmoMode == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-        }
+        if (ImGui::Button(modeStr)) m_GizmoMode = (m_GizmoMode == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
 
-        // --- 2. GESTION DE LA TAILLE ---
+        // --- 4. GESTION DE LA TAILLE ET CLICS (RAYCAST) ---
         ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
         m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
-        // --- SÉLECTION PAR CLIC (RAYCAST) ---
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_ViewportHovered && !ImGuizmo::IsOver()) {
-
-            // 1. Récupérer la position relative au Viewport ImGui
             ImVec2 mousePos = ImGui::GetMousePos();
             ImVec2 windowPos = ImGui::GetWindowPos();
             ImVec2 viewportMin = ImGui::GetWindowContentRegionMin();
 
             float mouseX = mousePos.x - (windowPos.x + viewportMin.x);
             float mouseY = mousePos.y - (windowPos.y + viewportMin.y);
-
-            // Inverser l'axe Y (OpenGL a son 0,0 en bas)
-            mouseY = m_ViewportSize.y - mouseY;
+            mouseY = m_ViewportSize.y - mouseY; // Inversion Y pour OpenGL
 
             if (mouseX >= 0 && mouseY >= 0 && mouseX < m_ViewportSize.x && mouseY < m_ViewportSize.y) {
-
-                // --- NOUVELLE LOGIQUE : COLOR PICKING (PIXEL PERFECT) ---
-
-                // 1. On "Bind" le Framebuffer pour autoriser OpenGL à lire dedans
                 m_ViewportFramebuffer->Bind();
-
-                // 2. On lit le pixel à la position (mouseX, mouseY) sur l'attachment 1 (ID Buffer)
                 int pixelData = m_ViewportFramebuffer->ReadPixel(1, (int)mouseX, (int)mouseY);
-
-                // 3. On n'oublie pas de refermer le Framebuffer
                 m_ViewportFramebuffer->Unbind();
 
-                // 4. On assigne l'entité sélectionnée !
                 if (pixelData != -1) {
                     if (m_ActiveScene->m_Registry.valid((entt::entity)pixelData)) {
                         Entity clickedEntity((entt::entity)pixelData, m_ActiveScene.get());
                         m_SceneHierarchyPanel.SetSelectedEntity(clickedEntity);
                     }
                 } else {
-                    // Si on a cliqué dans le vide (-1), on désélectionne l'objet actuel
                     m_SceneHierarchyPanel.SetSelectedEntity({});
                 }
             }
         }
 
+        // --- 5. L'IMAGE OPENGL ---
         uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
         ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
-        // --- DRAG & DROP TARGET (Viewport) ---
+        // --- 6. DRAG & DROP TARGET (Modèles 3D) ---
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                 const char* path = (const char*)payload->Data;
@@ -623,88 +576,71 @@ void EditorLayer::OnImGuiRender() {
                 if (filepath.extension() == ".obj" || filepath.extension() == ".fbx") {
                     auto entity = m_ActiveScene->CreateEntity(filepath.stem().string());
 
-                    if (!entity.HasComponent<TransformComponent>()) {
-                        entity.AddComponent<TransformComponent>();
-                    }
-                    if (!entity.HasComponent<ColorComponent>()) {
-                        entity.AddComponent<ColorComponent>(glm::vec3(1.0f));
-                    }
-                    if (!entity.HasComponent<MeshComponent>()) {
-                        entity.AddComponent<MeshComponent>();
-                    }
+                    if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
+                    if (!entity.HasComponent<ColorComponent>()) entity.AddComponent<ColorComponent>(glm::vec3(1.0f));
+                    if (!entity.HasComponent<MeshComponent>()) entity.AddComponent<MeshComponent>();
 
                     auto& meshComp = entity.GetComponent<MeshComponent>();
                     meshComp.AssetPath = filepath.string();
                     meshComp.MeshData = ModelLoader::LoadModel(meshComp.AssetPath);
                 }
+                else if (filepath.extension() == ".ceprefab") {
+                    SceneSerializer serializer(m_ActiveScene);
+                    serializer.DeserializePrefab(filepath.string());
+                }
             }
             ImGui::EndDragDropTarget();
         }
 
-        // --- 3. RENDU DU GIZMO 3D ---
-        // Si une entité est sélectionnée dans la hiérarchie et qu'un outil est actif
+        // --- 7. IMGUIZMO (MANIPULATION 3D) ---
         if (m_SceneHierarchyPanel.GetSelectedEntity() && m_GizmoType != -1) {
             Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
-            // 1. On configure ImGuizmo pour dessiner par-dessus la fenêtre Viewport actuelle
             ImGuizmo::SetDrawlist();
             ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, ImGui::GetWindowWidth(), ImGui::GetWindowHeight());
 
-            // 2. On recalcule la matrice de vue et projection de la caméra Éditeur
-            // (Sécurité pour éviter une division par zéro si la fenêtre est trop petite)
             if (m_ViewportSize.y > 0.0f) {
                 float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
                 glm::mat4 cameraProjection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
                 glm::mat4 cameraView = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
 
-                // 3. On donne au Gizmo la VRAIE position globale de l'objet dans le monde
                 glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(selectedEntity);
 
-                // 4. Le Gizmo (ta souris) modifie cette matrice globale
                 ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
                                      (ImGuizmo::OPERATION)m_GizmoType, (ImGuizmo::MODE)m_GizmoMode, glm::value_ptr(globalTransform));
 
                 if (ImGuizmo::IsUsing()) {
-                    // 5. On part du principe que la matrice locale = globale (cas sans parent)
                     glm::mat4 localTransform = globalTransform;
 
-                    // --- LA MAGIE DES LOCAL SPACES EST ICI ---
                     if (selectedEntity.HasComponent<RelationshipComponent>()) {
                         entt::entity parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
                         if (parentID != entt::null) {
                             Entity parent{ parentID, m_ActiveScene.get() };
-
-                            // On récupère la position globale du parent
                             glm::mat4 parentGlobal = m_ActiveScene->GetWorldTransform(parent);
-
-                            // On multiplie l'INVERSE du parent par le nouvel enfant global pour trouver le local !
                             localTransform = glm::inverse(parentGlobal) * globalTransform;
                         }
                     }
 
-                    // 6. On extrait les données de la matrice locale calculée
                     glm::vec3 translation, scale;
                     glm::quat rotation;
                     Math::DecomposeTransform(localTransform, translation, rotation, scale);
 
-                    // 7. On met à jour le TransformComponent avec les vraies valeurs locales
                     auto& tc = selectedEntity.GetComponent<TransformComponent>();
                     tc.Location = translation;
                     tc.Rotation = rotation;
-
-                    // On met à jour l'Euler pour que ton Inspector (UI) affiche les bons angles
                     tc.RotationEuler = glm::degrees(glm::eulerAngles(rotation));
                     tc.Scale = scale;
                 }
             }
         }
 
-        ImGui::End();
-        ImGui::PopStyleVar();
+        ImGui::EndChild(); // Fin du RenderViewport
+        ImGui::End(); // Fin de la fenêtre Viewport
+        ImGui::PopStyleVar(); // Pop du WindowPadding
     }
+
     EndDockspace();
 }
-
 void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
     if (!m_ViewportFramebuffer) return;
 
@@ -948,15 +884,11 @@ void EditorLayer::OnScenePause() {
 }
 
 void EditorLayer::OpenScene(const std::filesystem::path& path) {
-    // Si déjà ouvert, on focus l'onglet
     for (int i = 0; i < m_Tabs.size(); i++) {
         if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i;
-            m_ForceTabSelection = true;
-            return;
+            m_ActiveTabIndex = i; m_ForceTabSelection = true; return;
         }
     }
-
     auto newScene = std::make_shared<Scene>();
     SceneSerializer serializer(newScene);
     serializer.Deserialize(path.string());
@@ -971,17 +903,13 @@ void EditorLayer::OpenScene(const std::filesystem::path& path) {
 void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
     for (int i = 0; i < m_Tabs.size(); i++) {
         if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i;
-            m_ForceTabSelection = true;
-            return;
+            m_ActiveTabIndex = i; m_ForceTabSelection = true; return;
         }
     }
-
     auto newPrefabScene = std::make_shared<Scene>();
     SceneSerializer serializer(newPrefabScene);
     serializer.Deserialize(path.string());
 
-    // Différenciation visuelle pour savoir qu'on édite un Prefab !
     m_Tabs.push_back({ "[Prefab] " + path.filename().string(), path, newPrefabScene, true });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ActiveScene = newPrefabScene;
@@ -991,17 +919,10 @@ void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
 
 void EditorLayer::CloseTab(int index) {
     if (index < 0 || index >= m_Tabs.size()) return;
-
     m_Tabs.erase(m_Tabs.begin() + index);
 
-    // Sécurité : toujours garder au moins un onglet ouvert
-    if (m_Tabs.empty()) {
-        m_Tabs.push_back({ "Untitled", "", std::make_shared<Scene>(), false });
-    }
-
-    if (m_ActiveTabIndex >= m_Tabs.size()) {
-        m_ActiveTabIndex = m_Tabs.size() - 1;
-    }
+    if (m_Tabs.empty()) m_Tabs.push_back({ "Untitled", "", std::make_shared<Scene>(), false });
+    if (m_ActiveTabIndex >= m_Tabs.size()) m_ActiveTabIndex = m_Tabs.size() - 1;
 
     m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);

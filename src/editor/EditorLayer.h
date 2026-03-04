@@ -82,8 +82,6 @@ private:
     bool m_ShowProjectSettings = false;
     void DrawProjectSettings();
 
-    std::filesystem::path m_CurrentScenePath; // Garde en mémoire le fichier actuel
-
     void SaveScene();
     void SaveSceneAs();
 

@@ -82,24 +82,22 @@ void ContentBrowserPanel::OnImGuiRender() {
             } else {
                 // Rendu Fichier
                 bool isScene = path.extension() == ".cescene";
+                bool isPrefab = path.extension() == ".ceprefab"; // <-- NOUVEAU
 
-                // --- VISIBILITÉ : On donne une couleur bleue "JetBrains" aux scènes ---
+                // --- VISIBILITÉ : Couleurs différentes ---
                 if (isScene) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
+                else if (isPrefab) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.2f, 1.0f)); // Orange pour les prefabs !
 
                 ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
 
-                if (isScene) ImGui::PopStyleColor();
+                if (isScene || isPrefab) ImGui::PopStyleColor();
 
-                // --- LOGIQUE D'OUVERTURE ---
+                // --- LOGIQUE D'OUVERTURE CORRIGÉE ---
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    if (directoryEntry.is_directory()) {
-                        m_CurrentDirectory /= path.filename();
-                    } else {
-                        if (path.extension() == ".cescene") {
-                            if (OnSceneOpenCallback) OnSceneOpenCallback(path);
-                        } else if (path.extension() == ".ceprefab") {
-                            if (OnPrefabOpenCallback) OnPrefabOpenCallback(path); // <-- NOUVEAU
-                        }
+                    if (isScene && OnSceneOpenCallback) {
+                        OnSceneOpenCallback(path);
+                    } else if (isPrefab && OnPrefabOpenCallback) {
+                        OnPrefabOpenCallback(path);
                     }
                 }
 

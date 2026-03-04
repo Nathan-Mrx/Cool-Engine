@@ -274,3 +274,122 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
 
     return true;
 }
+
+Entity SceneSerializer::DeserializePrefab(const std::string& filepath) {
+    std::ifstream stream(filepath);
+    if (!stream.is_open()) return {};
+
+    json sceneData;
+    try { stream >> sceneData; }
+    catch (json::parse_error& e) { return {}; }
+
+    auto entities = sceneData["Entities"];
+    if (entities.is_null() || entities.empty()) return {};
+
+    std::unordered_map<uint64_t, entt::entity> oldUuidToNewEntityMap;
+    Entity rootEntity = {}; // Mémorisera la racine du prefab
+
+    // ==========================================
+    // PASSE 1 : Création avec de NOUVEAUX UUIDs
+    // ==========================================
+    for (auto& entityJson : entities) {
+        uint64_t oldUuid = entityJson["Entity"].get<uint64_t>();
+        std::string name = entityJson.contains("TagComponent") ? entityJson["TagComponent"]["Tag"].get<std::string>() : "Prefab Part";
+
+        // MAGIE : CreateEntity génère un NOUVEL UUID automatiquement !
+        Entity newEntity = m_Scene->CreateEntity(name);
+        oldUuidToNewEntityMap[oldUuid] = newEntity;
+
+        // --- RECOPIE DES COMPOSANTS (Copier-coller de ton Deserialize) ---
+        if (entityJson.contains("TransformComponent")) {
+            auto& tc = newEntity.GetComponent<TransformComponent>();
+            auto& jTc = entityJson["TransformComponent"];
+            if (jTc.contains("Location")) tc.Location = { jTc["Location"][0], jTc["Location"][1], jTc["Location"][2] };
+            if (jTc.contains("Rotation")) {
+                tc.RotationEuler = { jTc["Rotation"][0], jTc["Rotation"][1], jTc["Rotation"][2] };
+                tc.Rotation = glm::quat(glm::radians(tc.RotationEuler));
+            }
+            if (jTc.contains("Scale")) tc.Scale = { jTc["Scale"][0], jTc["Scale"][1], jTc["Scale"][2] };
+        }
+
+        if (entityJson.contains("ColorComponent")) {
+            auto& cc = newEntity.AddComponent<ColorComponent>();
+            cc.Color = { entityJson["ColorComponent"]["Color"][0], entityJson["ColorComponent"]["Color"][1], entityJson["ColorComponent"]["Color"][2] };
+        }
+
+        if (entityJson.contains("MeshComponent")) {
+            auto& mc = newEntity.AddComponent<MeshComponent>();
+            mc.AssetPath = entityJson["MeshComponent"]["AssetPath"].get<std::string>();
+            if (mc.AssetPath == "Primitive::Cube") mc.MeshData = PrimitiveFactory::CreateCube();
+            else if (mc.AssetPath == "Primitive::Sphere") mc.MeshData = PrimitiveFactory::CreateSphere();
+            else if (mc.AssetPath == "Primitive::Plane") mc.MeshData = PrimitiveFactory::CreatePlane();
+            else if (!mc.AssetPath.empty()) mc.MeshData = ModelLoader::LoadModel(mc.AssetPath);
+        }
+
+        if (entityJson.contains("DirectionalLightComponent")) {
+            auto& dlc = newEntity.AddComponent<DirectionalLightComponent>();
+            dlc.Color = { entityJson["DirectionalLightComponent"]["Color"][0], entityJson["DirectionalLightComponent"]["Color"][1], entityJson["DirectionalLightComponent"]["Color"][2] };
+            dlc.AmbientIntensity = entityJson["DirectionalLightComponent"]["Ambient"].get<float>();
+            dlc.DiffuseIntensity = entityJson["DirectionalLightComponent"]["Diffuse"].get<float>();
+        }
+
+        if (entityJson.contains("RigidBodyComponent")) {
+            auto& rb = newEntity.AddComponent<RigidBodyComponent>();
+            rb.Type = (RigidBodyType)entityJson["RigidBodyComponent"]["Type"].get<int>();
+            rb.Mass = entityJson["RigidBodyComponent"]["Mass"].get<float>();
+        }
+
+        if (entityJson.contains("BoxColliderComponent")) {
+            auto& bc = newEntity.AddComponent<BoxColliderComponent>();
+            bc.HalfSize = { entityJson["BoxColliderComponent"]["HalfSize"][0], entityJson["BoxColliderComponent"]["HalfSize"][1], entityJson["BoxColliderComponent"]["HalfSize"][2] };
+            bc.Offset = { entityJson["BoxColliderComponent"]["Offset"][0], entityJson["BoxColliderComponent"]["Offset"][1], entityJson["BoxColliderComponent"]["Offset"][2] };
+        }
+
+        if (entityJson.contains("CameraComponent")) {
+            auto& cam = newEntity.AddComponent<CameraComponent>();
+            cam.Primary = entityJson["CameraComponent"]["Primary"].get<bool>();
+            cam.FOV = entityJson["CameraComponent"]["FOV"].get<float>();
+        }
+
+        if (entityJson.contains("NativeScriptComponent")) {
+            auto scriptName = entityJson["NativeScriptComponent"]["ScriptName"].get<std::string>();
+            if (ScriptRegistry::Registry.find(scriptName) != ScriptRegistry::Registry.end()) {
+                auto& nsc = newEntity.AddComponent<NativeScriptComponent>();
+                nsc.ScriptName = scriptName;
+                ScriptRegistry::Registry[scriptName](nsc);
+            }
+        }
+    }
+
+    // ==========================================
+    // PASSE 2 : Traduction de la hiérarchie interne
+    // ==========================================
+    for (auto& entityJson : entities) {
+        uint64_t oldUuid = entityJson["Entity"].get<uint64_t>();
+        Entity newEntity{ oldUuidToNewEntityMap[oldUuid], m_Scene.get() };
+
+        if (entityJson.contains("RelationshipComponent")) {
+            auto& rel = newEntity.AddComponent<RelationshipComponent>();
+
+            auto getNewEntity = [&](uint64_t id) -> entt::entity {
+                if (id == 0 || oldUuidToNewEntityMap.find(id) == oldUuidToNewEntityMap.end()) return entt::null;
+                return oldUuidToNewEntityMap[id];
+            };
+
+            rel.Parent = getNewEntity(entityJson["RelationshipComponent"]["Parent"].get<uint64_t>());
+            rel.FirstChild = getNewEntity(entityJson["RelationshipComponent"]["FirstChild"].get<uint64_t>());
+            rel.PreviousSibling = getNewEntity(entityJson["RelationshipComponent"]["PreviousSibling"].get<uint64_t>());
+            rel.NextSibling = getNewEntity(entityJson["RelationshipComponent"]["NextSibling"].get<uint64_t>());
+
+            // Si l'entité n'a pas de parent dans le JSON, c'est la racine absolue du Prefab !
+            if (rel.Parent == entt::null) {
+                rootEntity = newEntity;
+            }
+        } else {
+            // S'il n'y a pas de composant hiérarchie du tout, c'est une racine implicite
+            if (!rootEntity) rootEntity = newEntity;
+        }
+    }
+
+    return rootEntity;
+}
