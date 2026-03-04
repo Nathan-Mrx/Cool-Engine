@@ -19,5 +19,8 @@ public:
     // Permet d'ajouter une impulsion ou une force (pratique pour un saut)
     static void AddForce(uint32_t bodyID, const glm::vec3& force);
 
+    // Permet de lire la vitesse actuelle (indispensable pour conserver la gravité)
+    static glm::vec3 GetLinearVelocity(uint32_t bodyID);
+
     // On rajoutera plus tard des fonctions comme Raycast() ou GetSystem()
 };

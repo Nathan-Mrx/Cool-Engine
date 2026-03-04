@@ -245,3 +245,13 @@ void PhysicsEngine::AddForce(uint32_t bodyID, const glm::vec3& force) {
     bodyInterface.AddForce(id, JPH::Vec3(force.x, force.y, force.z));
     bodyInterface.ActivateBody(id);
 }
+
+glm::vec3 PhysicsEngine::GetLinearVelocity(uint32_t bodyID) {
+    if (!s_PhysicsData || !s_PhysicsData->m_PhysicsSystem || bodyID == 0xFFFFFFFF) return glm::vec3(0.0f);
+
+    JPH::BodyInterface& bodyInterface = s_PhysicsData->m_PhysicsSystem->GetBodyInterface();
+    JPH::BodyID id((JPH::uint32)bodyID);
+
+    JPH::Vec3 vel = bodyInterface.GetLinearVelocity(id);
+    return ToGLM(vel);
+}

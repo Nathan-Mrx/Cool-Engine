@@ -15,33 +15,31 @@ public:
     }
 
     void OnUpdate(float ts) override {
-        // Sécurité : On s'assure que l'entité possède bien un corps physique
         if (!HasComponent<RigidBodyComponent>()) return;
-
         auto& rb = GetComponent<RigidBodyComponent>();
 
-        // On détermine la vitesse cible (ex: 5 mètres par seconde)
-        glm::vec3 velocity(0.0f);
-        float speed = 5.0f;
+        // 1. On récupère la vitesse actuelle imposée par la physique (la gravité !)
+        glm::vec3 currentVel = PhysicsEngine::GetLinearVelocity(rb.RuntimeBodyID);
 
-        if (Input::IsKeyPressed(GLFW_KEY_UP) || Input::IsKeyPressed(GLFW_KEY_W)) {
-            velocity.y += speed; // (Ou Z selon ton axe Forward)
-        }
-        if (Input::IsKeyPressed(GLFW_KEY_DOWN) || Input::IsKeyPressed(GLFW_KEY_S)) {
-            velocity.y -= speed;
-        }
-        if (Input::IsKeyPressed(GLFW_KEY_RIGHT) || Input::IsKeyPressed(GLFW_KEY_D)) {
-            velocity.x += speed;
-        }
-        if (Input::IsKeyPressed(GLFW_KEY_LEFT) || Input::IsKeyPressed(GLFW_KEY_A)) {
-            velocity.x -= speed;
-        }
+        // 2. On prépare notre nouvelle vitesse (on garde le Z actuel pour pouvoir tomber)
+        glm::vec3 targetVel(0.0f, 0.0f, currentVel.z);
+        float speed = 1000.0f; // 1 mètre par seconde
 
-        // On envoie la commande à Jolt !
-        // Note: Pour conserver la gravité, il faudrait idéalement lire la vélocité Z/Y actuelle de Jolt et la conserver.
-        // Mais pour l'instant, c'est parfait pour un test !
-        if (velocity.x != 0.0f || velocity.y != 0.0f) {
-            PhysicsEngine::SetLinearVelocity(rb.RuntimeBodyID, velocity);
+        // Déplacements sur X et Y
+        if (Input::IsKeyPressed(GLFW_KEY_UP) || Input::IsKeyPressed(GLFW_KEY_W))    targetVel.y += speed;
+        if (Input::IsKeyPressed(GLFW_KEY_DOWN) || Input::IsKeyPressed(GLFW_KEY_S))  targetVel.y -= speed;
+        if (Input::IsKeyPressed(GLFW_KEY_RIGHT) || Input::IsKeyPressed(GLFW_KEY_D)) targetVel.x += speed;
+        if (Input::IsKeyPressed(GLFW_KEY_LEFT) || Input::IsKeyPressed(GLFW_KEY_A))  targetVel.x -= speed;
+
+        // 3. On applique le mouvement
+        PhysicsEngine::SetLinearVelocity(rb.RuntimeBodyID, targetVel);
+
+        // 4. LE SAUT (Impulsion vers le haut sur l'axe Z)
+        // Note : En l'état, on peut sauter à l'infini dans les airs (Flappy Bird style).
+        // Il faudra un système de détection du sol (Raycast) plus tard !
+        if (Input::IsKeyPressed(GLFW_KEY_SPACE)) {
+            // On applique une force massive vers le haut (Z positif)
+            PhysicsEngine::AddForce(rb.RuntimeBodyID, glm::vec3(0.0f, 0.0f, 500000.0f));
         }
     }
 
