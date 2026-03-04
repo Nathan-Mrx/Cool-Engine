@@ -29,5 +29,7 @@ private:
     std::shared_ptr<Scene> m_Context;
     Entity m_SelectionContext;
 
+    Entity m_EntityToDestroy = {};
+
     bool m_IsPrefabScene = false;
 };

@@ -91,86 +91,79 @@ void SceneHierarchyPanel::OnImGuiRender() {
     // Le clic droit dans le vide de la hiérarchie
     if (ImGui::BeginPopupContextWindow("SceneHierarchyContextWindow", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
 
-        if (ImGui::MenuItem("Create Empty Entity")) {
-            Entity newEntity = m_Context->CreateEntity("Empty Entity");
-
-            // --- SÉCURITÉ PREFAB : Forcer le parentage ---
+        // --- LAMBDA MAGIQUE : Parentage automatique pour les Prefabs ---
+        auto autoParentToPrefabRoot = [&](Entity newEntity) {
             if (m_IsPrefabScene) {
                 Entity root = {};
-
-                // FIX : On itère sur toutes les entités via TagComponent au lieu de .each()
                 auto view = m_Context->m_Registry.view<TagComponent>();
                 for (auto entityID : view) {
                     Entity e{ entityID, m_Context.get() };
-
-                    // On cherche l'entité qui n'a pas de parent (et qui n'est pas celle qu'on vient de créer)
                     if (e != newEntity && (!e.HasComponent<RelationshipComponent>() || e.GetComponent<RelationshipComponent>().Parent == entt::null)) {
                         root = e;
+                        break; // On a trouvé la racine, on arrête de chercher !
                     }
                 }
-
-                if (root) m_Context->ParentEntity(newEntity, root); // Paf ! Attachée de force à la racine !
+                if (root) m_Context->ParentEntity(newEntity, root);
             }
+        };
+
+        if (ImGui::MenuItem("Create Empty Entity")) {
+            Entity newEntity = m_Context->CreateEntity("Empty Entity");
+            autoParentToPrefabRoot(newEntity);
         }
 
         ImGui::Separator();
 
         // --- Sous-menu pour les primitives 3D ---
-        // --- Sous-menu pour les primitives 3D ---
         if (ImGui::BeginMenu("3D Object")) {
             if (ImGui::MenuItem("Cube")) {
-                auto entity = m_Context->CreateEntity("Cube");
-                if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
-                entity.AddComponent<ColorComponent>(glm::vec3(0.8f));
-
-                auto& mesh = entity.AddComponent<MeshComponent>();
+                auto newEntity = m_Context->CreateEntity("Cube");
+                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
+                newEntity.AddComponent<ColorComponent>(glm::vec3(0.8f));
+                auto& mesh = newEntity.AddComponent<MeshComponent>();
                 mesh.MeshData = PrimitiveFactory::CreateCube();
-                mesh.AssetPath = "Primitive::Cube"; // Ce tag spécial nous aidera pour la sauvegarde !
+                mesh.AssetPath = "Primitive::Cube";
+                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
             }
             if (ImGui::MenuItem("Sphere")) {
-                auto entity = m_Context->CreateEntity("Sphere");
-                if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
-                entity.AddComponent<ColorComponent>(glm::vec3(0.8f));
-
-                auto& mesh = entity.AddComponent<MeshComponent>();
+                auto newEntity = m_Context->CreateEntity("Sphere");
+                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
+                newEntity.AddComponent<ColorComponent>(glm::vec3(0.8f));
+                auto& mesh = newEntity.AddComponent<MeshComponent>();
                 mesh.MeshData = PrimitiveFactory::CreateSphere();
                 mesh.AssetPath = "Primitive::Sphere";
+                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
             }
             if (ImGui::MenuItem("Plane")) {
-                auto entity = m_Context->CreateEntity("Plane");
-                if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
-                entity.AddComponent<ColorComponent>(glm::vec3(0.8f));
-
-                auto& mesh = entity.AddComponent<MeshComponent>();
+                auto newEntity = m_Context->CreateEntity("Plane");
+                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
+                newEntity.AddComponent<ColorComponent>(glm::vec3(0.8f));
+                auto& mesh = newEntity.AddComponent<MeshComponent>();
                 mesh.MeshData = PrimitiveFactory::CreatePlane();
                 mesh.AssetPath = "Primitive::Plane";
+                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
             }
             ImGui::EndMenu();
         }
 
         ImGui::Separator();
 
-        // --- Entités spécifiques ---
         if (ImGui::MenuItem("Camera")) {
-            auto entity = m_Context->CreateEntity("Camera");
-            // entity.AddComponent<CameraComponent>();
+            auto newEntity = m_Context->CreateEntity("Camera");
+            newEntity.AddComponent<CameraComponent>();
+            autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
         }
 
         if (ImGui::BeginMenu("Light")) {
             if (ImGui::MenuItem("Directional Light")) {
-                auto entity = m_Context->CreateEntity("Directional Light");
-
-                // Indispensable pour que le Renderer puisse calculer la direction
-                if (!entity.HasComponent<TransformComponent>()) {
-                    entity.AddComponent<TransformComponent>();
-                }
-
-                // On ajoute le vrai composant
-                entity.AddComponent<DirectionalLightComponent>();
+                auto newEntity = m_Context->CreateEntity("Directional Light");
+                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
+                newEntity.AddComponent<DirectionalLightComponent>();
+                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
             }
             if (ImGui::MenuItem("Point Light")) {
-                auto entity = m_Context->CreateEntity("Point Light");
-                // entity.AddComponent<LightComponent>(LightType::Point);
+                auto newEntity = m_Context->CreateEntity("Point Light");
+                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
             }
             ImGui::EndMenu();
         }
@@ -178,6 +171,12 @@ void SceneHierarchyPanel::OnImGuiRender() {
         ImGui::EndPopup();
     }
     ImGui::End();
+
+    if (m_EntityToDestroy) {
+        m_Context->DestroyEntity(m_EntityToDestroy);
+        if (m_SelectionContext == m_EntityToDestroy) m_SelectionContext = {};
+        m_EntityToDestroy = {};
+    }
 
     ImGui::Begin("Inspector");
     if (m_SelectionContext) {
@@ -192,21 +191,27 @@ void SceneHierarchyPanel::OnImGuiRender() {
 }
 
 void SceneHierarchyPanel::DrawComponents(Entity entity) {
-
     Entity prefabRoot = GetPrefabRoot(entity);
 
     if (prefabRoot) {
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.3f, 0.5f, 1.0f));
         if (ImGui::CollapsingHeader("Prefab Instance", ImGuiTreeNodeFlags_DefaultOpen)) {
 
-            // On affiche le chemin du fichier source
             ImGui::TextDisabled("Source: %s", prefabRoot.GetComponent<PrefabComponent>().PrefabPath.c_str());
 
-            // Fenêtre interne (Child) pour la mini hiérarchie
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
-            ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true);
-            DrawMiniHierarchy(prefabRoot); // On lance le dessin !
-            ImGui::EndChild();
+            // On commence un Child avec un ID fixe pour l'Inspector
+            if (ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true)) {
+
+                // --- LE FIX EST ICI ---
+                // On pousse un ID unique "PrefabInspector" pour que les TreeNodes
+                // à l'intérieur ne calculent pas le même hash que ceux de la liste de gauche.
+                ImGui::PushID("PrefabInspector");
+                DrawMiniHierarchy(prefabRoot);
+                ImGui::PopID();
+
+                ImGui::EndChild();
+            }
             ImGui::PopStyleColor();
         }
         ImGui::PopStyleColor();
@@ -319,30 +324,97 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Create Child Entity")) {
-            Entity child = m_Context->CreateEntity("New Child");
-            m_Context->ParentEntity(child, entity);
+        // --- NOUVEAU : Menu complet de création d'enfants ---
+        if (!isPrefab) {
+            if (ImGui::BeginMenu("Create Child")) {
+                if (ImGui::MenuItem("Empty Entity")) {
+                    Entity child = m_Context->CreateEntity("Empty Entity");
+                    m_Context->ParentEntity(child, entity);
+                }
+
+                ImGui::Separator();
+
+                if (ImGui::BeginMenu("3D Object")) {
+                    if (ImGui::MenuItem("Cube")) {
+                        Entity child = m_Context->CreateEntity("Cube");
+                        if (!child.HasComponent<TransformComponent>()) child.AddComponent<TransformComponent>();
+                        child.AddComponent<ColorComponent>(glm::vec3(0.8f));
+                        auto& mesh = child.AddComponent<MeshComponent>();
+                        mesh.MeshData = PrimitiveFactory::CreateCube();
+                        mesh.AssetPath = "Primitive::Cube";
+                        m_Context->ParentEntity(child, entity);
+                    }
+                    if (ImGui::MenuItem("Sphere")) {
+                        Entity child = m_Context->CreateEntity("Sphere");
+                        if (!child.HasComponent<TransformComponent>()) child.AddComponent<TransformComponent>();
+                        child.AddComponent<ColorComponent>(glm::vec3(0.8f));
+                        auto& mesh = child.AddComponent<MeshComponent>();
+                        mesh.MeshData = PrimitiveFactory::CreateSphere();
+                        mesh.AssetPath = "Primitive::Sphere";
+                        m_Context->ParentEntity(child, entity);
+                    }
+                    if (ImGui::MenuItem("Plane")) {
+                        Entity child = m_Context->CreateEntity("Plane");
+                        if (!child.HasComponent<TransformComponent>()) child.AddComponent<TransformComponent>();
+                        child.AddComponent<ColorComponent>(glm::vec3(0.8f));
+                        auto& mesh = child.AddComponent<MeshComponent>();
+                        mesh.MeshData = PrimitiveFactory::CreatePlane();
+                        mesh.AssetPath = "Primitive::Plane";
+                        m_Context->ParentEntity(child, entity);
+                    }
+                    ImGui::EndMenu();
+                }
+
+                ImGui::Separator();
+
+                if (ImGui::MenuItem("Camera")) {
+                    Entity child = m_Context->CreateEntity("Camera");
+                    child.AddComponent<CameraComponent>();
+                    m_Context->ParentEntity(child, entity);
+                }
+
+                if (ImGui::BeginMenu("Light")) {
+                    if (ImGui::MenuItem("Directional Light")) {
+                        Entity child = m_Context->CreateEntity("Directional Light");
+                        if (!child.HasComponent<TransformComponent>()) child.AddComponent<TransformComponent>();
+                        child.AddComponent<DirectionalLightComponent>();
+                        m_Context->ParentEntity(child, entity);
+                    }
+                    if (ImGui::MenuItem("Point Light")) {
+                        Entity child = m_Context->CreateEntity("Point Light");
+                        m_Context->ParentEntity(child, entity);
+                    }
+                    ImGui::EndMenu();
+                }
+
+                ImGui::EndMenu();
+            }
+        } else {
+            // Si c'est une instance de prefab, on bloque l'ajout d'enfants sauvages
+            ImGui::TextDisabled("Edit Prefab to add children");
         }
 
         ImGui::Separator();
 
         if (ImGui::MenuItem("Delete Entity")) {
-            entityDeleted = true; // Suppression différée pour éviter un crash
+            m_EntityToDestroy = entity; // On le marque pour la fin de la frame !
         }
         ImGui::EndPopup();
     }
 
     if (opened) {
-        // --- NOUVEAU : DESSIN RÉCURSIF DES ENFANTS ---
-        if (entity.HasComponent<RelationshipComponent>()) {
+        if (!isPrefab && hasChildren) {
             entt::entity childID = entity.GetComponent<RelationshipComponent>().FirstChild;
 
             while (childID != entt::null) {
                 Entity child{childID, m_Context.get()};
-                DrawEntityNode(child); // La fonction s'appelle elle-même !
 
-                // On passe au frère suivant
-                childID = child.GetComponent<RelationshipComponent>().NextSibling;
+                // --- LE FIX : On pré-récupère le frère avant le dessin ! ---
+                entt::entity nextSibling = child.GetComponent<RelationshipComponent>().NextSibling;
+
+                DrawEntityNode(child);
+
+                childID = nextSibling; // On avance prudemment
             }
         }
         ImGui::TreePop();
