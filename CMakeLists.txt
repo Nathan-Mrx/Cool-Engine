@@ -49,6 +49,7 @@ set(SOURCES
         src/physics/PhysicsEngine.h
         src/scene/ScriptableEntity.cpp
         src/scene/ScriptableEntity.h
+        src/scripts/PlayerController.h
 )
 
 # Créer l'exécutable avec les sources
