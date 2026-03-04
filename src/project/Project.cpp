@@ -10,7 +10,7 @@ using json = nlohmann::json;
 // --- VARIABLE GLOBALE POUR LE HOT-RELOAD ---
 static void* s_GameModuleHandle = nullptr;
 
-std::shared_ptr<Project> Project::New(const std::string& name, const std::filesystem::path& path) {
+void Project::New(const std::string& name, const std::filesystem::path& path) {
     std::filesystem::path projectFolder = path / name;
 
     try {
@@ -65,10 +65,9 @@ std::shared_ptr<Project> Project::New(const std::string& name, const std::filesy
             projectFile.close();
         }
 
-        // On charge le projet fraîchement créé
-        return Load(projectFilePath);
+        LoadAsync(projectFilePath);
     } catch (const std::exception& e) {
-        return nullptr;
+        std::cerr << "Erreur de création" << std::endl;
     }
 }
 
@@ -223,4 +222,14 @@ void Project::RemoveFromHistory(const std::filesystem::path& path) {
         stream << data.dump(4);
         std::cout << "[Project] Project removed from history: " << path << std::endl;
     }
+}
+
+void Project::LoadAsync(const std::filesystem::path& path) {
+    s_PendingProjectPath = path;
+}
+
+std::filesystem::path Project::ConsumePendingProject() {
+    std::filesystem::path temp = s_PendingProjectPath;
+    s_PendingProjectPath = "";
+    return temp;
 }

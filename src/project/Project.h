@@ -19,7 +19,7 @@ struct ProjectConfig {
 
 class Project {
 public:
-    static std::shared_ptr<Project> New(const std::string& name, const std::filesystem::path& path);
+    static void New(const std::string& name, const std::filesystem::path& path);
     static std::shared_ptr<Project> Load(const std::filesystem::path& path);
     static void SaveActive(const std::filesystem::path& path);
 
@@ -43,7 +43,13 @@ public:
 
     static void RemoveFromHistory(const std::filesystem::path& path);
 
+    // --- NOUVEAU SYSTÈME ASYNCHRONE ---
+    static void LoadAsync(const std::filesystem::path& path);
+    static std::filesystem::path ConsumePendingProject();
+
 private:
     ProjectConfig m_Config;
     inline static std::shared_ptr<Project> s_ActiveProject;
+
+    static inline std::filesystem::path s_PendingProjectPath;
 };

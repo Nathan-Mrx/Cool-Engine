@@ -56,6 +56,9 @@ set(SOURCES
         src/math/Math.h
         src/core/Delegate.cpp
         src/core/Delegate.h
+        src/project/ProjectCompiler.cpp
+        src/project/ProjectCompiler.h
+        src/renderer/stb_image_impl.cpp
 )
 
 # Créer l'exécutable avec les sources

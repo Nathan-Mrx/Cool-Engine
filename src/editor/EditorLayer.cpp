@@ -13,9 +13,22 @@
 #include <math/Math.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include <stb_image.h>
 #include <glm/gtx/matrix_decompose.hpp>
 
 void EditorLayer::OnAttach() {
+    int width, height, channels;
+    stbi_set_flip_vertically_on_load(false); // ImGui préfère le haut en haut !
+    unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4);
+    if (data) {
+        glGenTextures(1, &m_SplashTextureID);
+        glBindTexture(GL_TEXTURE_2D, m_SplashTextureID);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        stbi_image_free(data);
+    }
+
     // 1. Initialisation du premier onglet vierge
     m_Tabs.push_back({ "Untitled", "", std::make_shared<Scene>(), false });
     m_ActiveTabIndex = 0;
@@ -176,6 +189,18 @@ void EditorLayer::CloseProjectInternal() {
 }
 
 void EditorLayer::OnUpdate(float ts) {
+    // --- LECTURE DE LA FILE D'ATTENTE ---
+    std::filesystem::path pending = Project::ConsumePendingProject();
+    if (!pending.empty()) {
+        m_PendingProjectPath = pending;
+        ProjectCompiler::Start(pending.parent_path());
+    }
+
+    // Si on est en train de compiler, on gèle l'Update du reste du moteur !
+    if (ProjectCompiler::IsCompiling() || ProjectCompiler::HasFinished()) {
+        return;
+    }
+
     // --- 1. DÉTECTION DE CHARGEMENT DE PROJET AUTOMATIQUE ---
     static std::shared_ptr<Project> s_LastProject = nullptr;
     auto currentProject = Project::GetActive();
@@ -477,6 +502,14 @@ void EditorLayer::OnUpdate(float ts) {
 
 void EditorLayer::OnImGuiRender() {
     BeginDockspace();
+
+    // --- LE SPLASH SCREEN DE COMPILATION ---
+    if (ProjectCompiler::IsCompiling() || ProjectCompiler::HasFinished()) {
+        DrawSplashScreen();
+        EndDockspace();
+        return; // ON BLOQUE L'AFFICHAGE DU RESTE DE L'ÉDITEUR !
+    }
+
     DrawMenuBar();
 
     UI_Toolbar();
@@ -964,4 +997,59 @@ void EditorLayer::CloseTab(int index) {
 
     m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+}
+
+void EditorLayer::DrawSplashScreen() {
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    if (ImGui::Begin("SplashScreenOverlay", nullptr, flags)) {
+        ImVec2 windowSize = ImGui::GetWindowSize();
+
+        // 1. Affichage de l'image (Centrée en haut)
+        if (m_SplashTextureID) {
+            float imgWidth = 544.0f; float imgHeight = 864.0f; // Tailles originales
+            float ratio = std::min(windowSize.x / imgWidth, (windowSize.y - 250) / imgHeight);
+            ImVec2 size(imgWidth * ratio, imgHeight * ratio);
+            ImGui::SetCursorPos(ImVec2((windowSize.x - size.x) * 0.5f, 20.0f));
+            ImGui::Image((ImTextureID)(uintptr_t)m_SplashTextureID, size);
+        }
+
+        // 2. La console de compilation (En bas)
+        ImGui::SetCursorPos(ImVec2(20.0f, windowSize.y - 220.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.05f, 0.05f, 0.05f, 1.0f));
+        ImGui::BeginChild("CompilationLogs", ImVec2(windowSize.x - 40.0f, 200.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        for (const auto& log : ProjectCompiler::GetLogs()) {
+            ImGui::TextUnformatted(log.c_str());
+        }
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        // 3. Traitement de la fin !
+        if (ProjectCompiler::HasFinished()) {
+            if (ProjectCompiler::GetResult()) {
+                // SUCCÈS : On charge le .so et on rentre dans l'éditeur !
+                ProjectCompiler::Reset();
+                Project::Load(m_PendingProjectPath);
+            } else {
+                // ÉCHEC : On reste bloqué sur l'écran d'erreur
+                ImGui::SetCursorPos(ImVec2(20.0f, windowSize.y - 260.0f));
+                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "COMPILATION FAILED ! Veuillez corriger votre code C++.");
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel & Return to Hub")) {
+                    ProjectCompiler::Reset();
+                    m_PendingProjectPath = "";
+                }
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
 }

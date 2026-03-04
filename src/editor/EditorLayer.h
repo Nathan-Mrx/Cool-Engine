@@ -8,9 +8,13 @@
 #include "panels/ContentBrowserPanel.h"
 #include "panels/HubPanel.h"
 #include "../renderer/Framebuffer.h"
+#include "../project/ProjectCompiler.h"
 
 #include <imgui.h>
 #include <ImGuizmo.h>
+
+#include <stb_image.h>
+#include <stb_image_write.h>
 
 struct EditorCamera {
     glm::vec3 Position = { -300.0f, 0.0f, 100.0f };
@@ -92,5 +96,9 @@ private:
     std::vector<EditorTab> m_Tabs;
     int m_ActiveTabIndex = 0;
     bool m_ForceTabSelection = false;
+
+    void DrawSplashScreen();
+    uint32_t m_SplashTextureID = 0;
+    std::filesystem::path m_PendingProjectPath;
 
 };
