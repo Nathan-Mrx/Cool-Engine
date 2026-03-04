@@ -178,13 +178,15 @@ void SceneHierarchyPanel::OnImGuiRender() {
         m_EntityToDestroy = {};
     }
 
+    // ==========================================
+    // FENÊTRE INSPECTOR
+    // ==========================================
+    ImGui::Begin("Inspector");
+
     if (m_SelectionContext) {
-        // On demande à EnTT si cette entité est toujours en vie !
         if (m_Context->m_Registry.valid((entt::entity)m_SelectionContext)) {
             DrawComponents(m_SelectionContext);
         } else {
-            // L'entité a été détruite en cascade (ex: destruction de son parent)
-            // On vide la sélection pour éviter le crash.
             m_SelectionContext = {};
         }
     }
@@ -466,8 +468,9 @@ void SceneHierarchyPanel::DrawMiniHierarchy(Entity node) {
     bool hasChildren = node.HasComponent<RelationshipComponent>() && node.GetComponent<RelationshipComponent>().FirstChild != entt::null;
     if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf; // Visuel de feuille
 
-    // On dessine le noeud
-    bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)node, flags, "%s", tag.c_str());
+    // --- LE FIX : On évite le piège du booléen ---
+    uint32_t entityID = (uint32_t)(entt::entity)node;
+    bool opened = ImGui::TreeNodeEx((void*)(uint64_t)entityID, flags, "%s", tag.c_str());
 
     // Si on clique, ça devient le vrai SelectionContext du moteur !
     if (ImGui::IsItemClicked()) m_SelectionContext = node;
