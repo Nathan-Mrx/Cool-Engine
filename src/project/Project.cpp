@@ -20,6 +20,17 @@ void Project::New(const std::string& name, const std::filesystem::path& path) {
         std::filesystem::create_directories(projectFolder / "Source");
         std::filesystem::create_directories(projectFolder / "Binaries");
 
+        // On force la résolution du chemin absolu basé sur le répertoire d'exécution (cmake-build-debug)
+        std::filesystem::path engineIniPath = std::filesystem::current_path() / "imgui.ini";
+        std::filesystem::path projectIniPath = projectFolder / "imgui.ini";
+
+        if (std::filesystem::exists(engineIniPath)) {
+            std::filesystem::copy_file(engineIniPath, projectIniPath, std::filesystem::copy_options::overwrite_existing);
+            std::cout << "[Project] Layout ImGui copie avec succes depuis : " << engineIniPath << std::endl;
+        } else {
+            std::cout << "[Project] Info : Aucun imgui.ini trouve a copier depuis : " << engineIniPath << std::endl;
+        }
+
         // 2. Génération automatique du CMakeLists.txt du Jeu !
         std::ofstream cmakeFile(projectFolder / "CMakeLists.txt");
         if (cmakeFile.is_open()) {

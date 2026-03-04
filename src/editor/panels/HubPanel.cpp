@@ -55,7 +55,8 @@ void HubPanel::OnImGuiRender() {
 
                 ImTextureID texID = (ImTextureID)(uintptr_t)GetThumbnailTexture(path);
                 if (ImGui::ImageButton("##thumb", texID, ImVec2(cardWidth, cardWidth * 0.56f), ImVec2(0, 1), ImVec2(1, 0))) {
-                    Project::Load(path);
+                    // --- LE FIX : On utilise LoadAsync au lieu de Load ---
+                    Project::LoadAsync(path);
                 }
 
                 ImGui::TextWrapped("%s", path.stem().string().c_str());
@@ -94,7 +95,8 @@ void HubPanel::OnImGuiRender() {
         if (ImGui::Button("Open Project...", ImVec2(-1, 40))) {
             nfdchar_t* outPath = nullptr;
             if (NFD::OpenDialog(outPath, nullptr, 0, nullptr) == NFD_OKAY) {
-                Project::Load(outPath);
+                // --- LE FIX : On utilise LoadAsync ici aussi ---
+                Project::LoadAsync(outPath);
                 NFD::FreePath(outPath);
             }
         }
