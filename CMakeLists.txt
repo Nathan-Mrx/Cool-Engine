@@ -57,6 +57,7 @@ set(SOURCES
         src/math/Math.h
         src/core/Delegate.cpp
         src/core/Delegate.h
+        src/scripts/RadarScript.h
 )
 
 # Créer l'exécutable avec les sources
@@ -100,3 +101,11 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
         #JPH_PROFILE_ENABLED        # Pour le profilage
         #JPH_FLOATING_POINT_EXCEPTIONS_ENABLED
 )
+
+# --- MODULES DYNAMIQUES ---
+# 1. On force l'exécutable à exporter ses symboles pour le .so
+set_target_properties(GameEngine PROPERTIES ENABLE_EXPORTS TRUE)
+target_link_options(GameEngine PRIVATE "-rdynamic")
+
+# 2. On lie la librairie standard Linux pour dlopen/dlclose
+target_link_libraries(GameEngine PRIVATE ${CMAKE_DL_LIBS})
