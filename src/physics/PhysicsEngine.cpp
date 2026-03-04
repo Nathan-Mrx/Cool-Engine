@@ -220,3 +220,28 @@ void PhysicsEngine::GetBodyTransform(uint32_t bodyID, glm::vec3& outPosition, gl
     outPosition = ToGLM(bodyInterface.GetPosition(id));
     outRotation = ToGLM(bodyInterface.GetRotation(id));
 }
+
+void PhysicsEngine::SetLinearVelocity(uint32_t bodyID, const glm::vec3& velocity) {
+    // On ajoute la sécurité pour vérifier que s_PhysicsData et m_PhysicsSystem existent
+    if (!s_PhysicsData || !s_PhysicsData->m_PhysicsSystem || bodyID == 0xFFFFFFFF) return;
+
+    // Le correctif est ici : on passe bien par s_PhysicsData
+    JPH::BodyInterface& bodyInterface = s_PhysicsData->m_PhysicsSystem->GetBodyInterface();
+    JPH::BodyID id((JPH::uint32)bodyID);
+
+    // On applique la vélocité et on "réveille" le corps au cas où il serait endormi
+    bodyInterface.SetLinearVelocity(id, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+    bodyInterface.ActivateBody(id);
+}
+
+void PhysicsEngine::AddForce(uint32_t bodyID, const glm::vec3& force) {
+    // Sécurités
+    if (!s_PhysicsData || !s_PhysicsData->m_PhysicsSystem || bodyID == 0xFFFFFFFF) return;
+
+    // Le correctif est ici aussi
+    JPH::BodyInterface& bodyInterface = s_PhysicsData->m_PhysicsSystem->GetBodyInterface();
+    JPH::BodyID id((JPH::uint32)bodyID);
+
+    bodyInterface.AddForce(id, JPH::Vec3(force.x, force.y, force.z));
+    bodyInterface.ActivateBody(id);
+}
