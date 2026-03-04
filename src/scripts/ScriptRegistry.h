@@ -17,10 +17,10 @@ public:
 
 #define REGISTER_SCRIPT(ClassName) \
 namespace { \
-        struct ClassName##_Register { \
-            ClassName##_Register() { \
-            ScriptRegistry::Register(#ClassName, [](NativeScriptComponent& nsc) { nsc.Bind<ClassName>(); }); \
-        } \
-    }; \
-    static ClassName##_Register global_##ClassName##_Register_Instance; \
+struct ClassName##_Register { \
+ClassName##_Register() { \
+ScriptRegistry::Register(#ClassName, [](NativeScriptComponent& nsc) { nsc.Bind<ClassName>(); }); \
+} \
+}; \
+static ClassName##_Register global_##ClassName##_Register_Instance; \
 }

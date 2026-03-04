@@ -184,35 +184,29 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 
 void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
     auto& tag = entity.GetComponent<TagComponent>().Tag;
-
-    // 1. Indicateur visuel du script façon Godot
-    std::string displayName = tag;
     bool hasScript = entity.HasComponent<NativeScriptComponent>();
-    if (hasScript) {
-        displayName += " [S]";
-    }
+
+    // Style Godot : petit indicateur [S]
+    std::string displayName = hasScript ? tag + " [S]" : tag;
 
     ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
     flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
 
     bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, "%s", displayName.c_str());
-    if (ImGui::IsItemClicked()) {
-        m_SelectionContext = entity;
-    }
+    if (ImGui::IsItemClicked()) m_SelectionContext = entity;
 
-    // --- NOUVEAU : LE POPUP CONTEXTUEL (Clic Droit sur l'entité) ---
-    bool entityDeleted = false;
-    if (ImGui::BeginPopupContextItem()) {
+    // --- LE FIX : ID UNIQUE POUR LE POPUP ---
+    // On génère un ID unique (ex: "EntityPopup1") pour éviter que les menus se mélangent
+    std::string popupID = "EntityContextPopup" + std::to_string((uint32_t)entity);
 
-        // --- Actions de Scripting ---
+    if (ImGui::BeginPopupContextItem(popupID.c_str())) {
         if (!hasScript) {
             if (ImGui::BeginMenu("Attach Script...")) {
-                // On liste tous les scripts enregistrés automatiquement via ta macro
                 for (auto const& [name, func] : ScriptRegistry::Registry) {
                     if (ImGui::MenuItem(name.c_str())) {
                         entity.AddComponent<NativeScriptComponent>();
                         auto& nsc = entity.GetComponent<NativeScriptComponent>();
-                        func(nsc); // On lie la classe C++
+                        func(nsc);
                         nsc.ScriptName = name;
                     }
                 }
@@ -221,35 +215,20 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
         } else {
             auto& nsc = entity.GetComponent<NativeScriptComponent>();
             ImGui::TextDisabled("Script: %s", nsc.ScriptName.c_str());
-
             if (ImGui::MenuItem("Detach Script")) {
-                entity.RemoveComponent<NativeScriptComponent>();
+                // LE FIX : .template pour aider le compilateur sur Linux
+                entity.template RemoveComponent<NativeScriptComponent>();
             }
         }
-
         ImGui::Separator();
-
-        // --- Actions Standards ---
         if (ImGui::MenuItem("Delete Entity")) {
-            entityDeleted = true;
+            m_Context->DestroyEntity(entity); // Suppression directe ici pour simplifier
+            if (m_SelectionContext == entity) m_SelectionContext = {};
         }
-
         ImGui::EndPopup();
     }
-    // ---------------------------------------------------------------
 
-    if (opened) {
-        // (Ici ira la logique pour afficher les entités enfants plus tard)
-        ImGui::TreePop();
-    }
-
-    // Suppression sécurisée différée
-    if (entityDeleted) {
-        m_Context->DestroyEntity(entity);
-        if (m_SelectionContext == entity) {
-            m_SelectionContext = {};
-        }
-    }
+    if (opened) ImGui::TreePop();
 }
 
 void SceneHierarchyPanel::SetContext(const std::shared_ptr<Scene>& context) {
