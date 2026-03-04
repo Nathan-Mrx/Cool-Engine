@@ -51,6 +51,8 @@ set(SOURCES
         src/scene/ScriptableEntity.h
         src/scripts/PlayerController.h
         src/scripts/ScriptRegistry.h
+        src/core/UUID.cpp
+        src/core/UUID.h
 )
 
 # Créer l'exécutable avec les sources

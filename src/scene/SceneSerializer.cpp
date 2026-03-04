@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
+#include <unordered_map> // Indispensable pour notre mapping d'UUID !
 
 #include "renderer/PrimitiveFactory.h"
 #include "scripts/ScriptRegistry.h"
@@ -18,19 +19,21 @@ void SceneSerializer::Serialize(const std::string& filepath) {
     sceneData["Scene"] = "Untitled";
     json entitiesData = json::array();
 
-    // 1. On crée une vue sur toutes les entités qui ont un nom (donc toutes les entités valides)
+    // 1. On crée une vue sur toutes les entités
     auto view = m_Scene->m_Registry.view<TagComponent>();
 
-    // 2. On itère avec une boucle for classique
     for (auto entityID : view) {
         Entity entity = { entityID, m_Scene.get() };
-
-        // 3. IMPORTANT : on utilise 'continue' au lieu de 'return' dans une boucle
         if (!entity) continue;
 
         json entityJson;
-        entityJson["EntityID"] = (uint32_t)entityID;
 
+        // --- IDENTITÉ (UUID) ---
+        if (entity.HasComponent<IDComponent>()) {
+            entityJson["Entity"] = (uint64_t)entity.GetComponent<IDComponent>().ID;
+        }
+
+        // --- COMPOSANTS STANDARDS ---
         if (entity.HasComponent<TagComponent>()) {
             entityJson["TagComponent"]["Tag"] = entity.GetComponent<TagComponent>().Tag;
         }
@@ -38,10 +41,7 @@ void SceneSerializer::Serialize(const std::string& filepath) {
         if (entity.HasComponent<TransformComponent>()) {
             auto& tc = entity.GetComponent<TransformComponent>();
             entityJson["TransformComponent"]["Location"] = { tc.Location.x, tc.Location.y, tc.Location.z };
-
-            // --- THE FIX: Properly nested Rotation inside TransformComponent ---
             entityJson["TransformComponent"]["Rotation"] = { tc.RotationEuler.x, tc.RotationEuler.y, tc.RotationEuler.z };
-
             entityJson["TransformComponent"]["Scale"]    = { tc.Scale.x, tc.Scale.y, tc.Scale.z };
         }
 
@@ -86,9 +86,25 @@ void SceneSerializer::Serialize(const std::string& filepath) {
 
         if (entity.HasComponent<NativeScriptComponent>()) {
             auto& nsc = entity.GetComponent<NativeScriptComponent>();
-
-            // On a juste besoin de sauvegarder le nom du script (en texte)
             entityJson["NativeScriptComponent"]["ScriptName"] = nsc.ScriptName;
+        }
+
+        // --- HIERARCHIE (RELATIONSHIP) ---
+        if (entity.HasComponent<RelationshipComponent>()) {
+            auto& rel = entity.GetComponent<RelationshipComponent>();
+
+            // Fonction lambda pour extraire l'UUID d'un ID EnTT
+            auto getUUID = [&](entt::entity id) -> uint64_t {
+                if (id == entt::null) return 0;
+                Entity e{ id, m_Scene.get() };
+                if (e.HasComponent<IDComponent>()) return (uint64_t)e.GetComponent<IDComponent>().ID;
+                return 0;
+            };
+
+            entityJson["RelationshipComponent"]["Parent"] = getUUID(rel.Parent);
+            entityJson["RelationshipComponent"]["FirstChild"] = getUUID(rel.FirstChild);
+            entityJson["RelationshipComponent"]["PreviousSibling"] = getUUID(rel.PreviousSibling);
+            entityJson["RelationshipComponent"]["NextSibling"] = getUUID(rel.NextSibling);
         }
 
         entitiesData.push_back(entityJson);
@@ -113,22 +129,34 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
     }
 
     auto entities = sceneData["Entities"];
-    if (entities.is_null()) return true; // Scène vide
+    if (entities.is_null()) return true;
 
+    // Dictionnaire pour relier les UUID sauvegardés aux nouveaux ID en mémoire
+    std::unordered_map<uint64_t, entt::entity> uuidToEntityMap;
+
+    // ==========================================
+    // PASSE 1 : Instanciation et chargement des données
+    // ==========================================
     for (auto& entityJson : entities) {
+
+        // 1. Extraction de l'UUID et du Nom
+        uint64_t uuid = entityJson["Entity"].get<uint64_t>();
         std::string name = "Empty Entity";
         if (entityJson.contains("TagComponent")) {
             name = entityJson["TagComponent"]["Tag"].get<std::string>();
         }
 
-        // Création de l'entité (qui ajoute souvent un Tag et un Transform par défaut)
-        Entity deserializedEntity = m_Scene->CreateEntity(name);
+        // 2. Création de l'entité avec son véritable UUID
+        Entity deserializedEntity = m_Scene->CreateEntityWithUUID(uuid, name);
 
+        // On mémorise son nouvel ID EnTT pour la passe 2
+        uuidToEntityMap[uuid] = deserializedEntity;
+
+        // 3. Chargement des composants classiques
         if (entityJson.contains("TransformComponent")) {
-            auto& tc = deserializedEntity.GetComponent<TransformComponent>(); // Déjà ajouté par CreateEntity
+            auto& tc = deserializedEntity.GetComponent<TransformComponent>();
             auto& jTc = entityJson["TransformComponent"];
 
-            // Sécurité supplémentaire : on vérifie que les clés existent bien avant de les lire
             if (jTc.contains("Location")) {
                 tc.Location = { jTc["Location"][0], jTc["Location"][1], jTc["Location"][2] };
             }
@@ -165,7 +193,6 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
 
             mc.AssetPath = jMc["AssetPath"].get<std::string>();
             if (!mc.AssetPath.empty()) {
-                // --- ROUTAGE DES ASSETS VS PRIMITIVES ---
                 if (mc.AssetPath == "Primitive::Cube") {
                     mc.MeshData = PrimitiveFactory::CreateCube();
                 } else if (mc.AssetPath == "Primitive::Sphere") {
@@ -173,7 +200,6 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
                 } else if (mc.AssetPath == "Primitive::Plane") {
                     mc.MeshData = PrimitiveFactory::CreatePlane();
                 } else {
-                    // C'est un vrai fichier .obj/.fbx
                     mc.MeshData = ModelLoader::LoadModel(mc.AssetPath);
                 }
             }
@@ -213,20 +239,38 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
         if (entityJson.contains("NativeScriptComponent")) {
             auto scriptName = entityJson["NativeScriptComponent"]["ScriptName"].get<std::string>();
 
-            // On vérifie si ce script a bien été compilé et enregistré dans le registre
             if (ScriptRegistry::Registry.find(scriptName) != ScriptRegistry::Registry.end()) {
-
-                // On ajoute le composant à l'entité
                 auto& nsc = deserializedEntity.AddComponent<NativeScriptComponent>();
                 nsc.ScriptName = scriptName;
-
-                // On exécute le pointeur de fonction pour lier la classe C++ (la magie opère ici !)
                 ScriptRegistry::Registry[scriptName](nsc);
-
             } else {
-                std::cout << "[Serializer] Warning: Script '" << scriptName << "' not found in Registry. Did you rename or delete the C++ class?" << std::endl;
+                std::cout << "[Serializer] Warning: Script '" << scriptName << "' not found in Registry." << std::endl;
             }
         }
     }
+
+    // ==========================================
+    // PASSE 2 : Reconstruction de la hiérarchie
+    // ==========================================
+    for (auto& entityJson : entities) {
+        if (entityJson.contains("RelationshipComponent")) {
+            uint64_t entityUUID = entityJson["Entity"].get<uint64_t>();
+            Entity deserializedEntity{ uuidToEntityMap[entityUUID], m_Scene.get() };
+
+            auto& rel = deserializedEntity.AddComponent<RelationshipComponent>();
+
+            // Fonction lambda pour convertir un UUID sauvegardé en vrai ID mémoire actuel
+            auto getEntity = [&](uint64_t id) -> entt::entity {
+                if (id == 0 || uuidToEntityMap.find(id) == uuidToEntityMap.end()) return entt::null;
+                return uuidToEntityMap[id];
+            };
+
+            rel.Parent = getEntity(entityJson["RelationshipComponent"]["Parent"].get<uint64_t>());
+            rel.FirstChild = getEntity(entityJson["RelationshipComponent"]["FirstChild"].get<uint64_t>());
+            rel.PreviousSibling = getEntity(entityJson["RelationshipComponent"]["PreviousSibling"].get<uint64_t>());
+            rel.NextSibling = getEntity(entityJson["RelationshipComponent"]["NextSibling"].get<uint64_t>());
+        }
+    }
+
     return true;
 }

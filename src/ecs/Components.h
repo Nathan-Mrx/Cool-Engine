@@ -15,6 +15,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 
+#include "core/UUID.h"
 #include "scene/ScriptableEntity.h"
 
 // --- STRUCTURES DE DONNÉES DE BASE ---
@@ -266,6 +267,16 @@ struct RelationshipComponent {
     }
 };
 
+struct IDComponent {
+    UUID ID;
+
+    IDComponent() = default;
+    IDComponent(const IDComponent&) = default;
+    IDComponent(UUID id) : ID(id) {}
+
+    void OnImGuiRender() {} // Non modifiable par l'utilisateur
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -280,5 +291,6 @@ using AllComponents = std::tuple<
     RigidBodyComponent,
     BoxColliderComponent,
     NativeScriptComponent,
-    RelationshipComponent
+    RelationshipComponent,
+    IDComponent
 >;

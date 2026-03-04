@@ -6,12 +6,7 @@
 Scene::Scene() {}
 Scene::~Scene() {}
 
-Entity Scene::CreateEntity(const std::string& name) {
-    Entity entity = { m_Registry.create(), this };
-    entity.AddComponent<TagComponent>(name.empty() ? "Entity" : name);
-    entity.AddComponent<TransformComponent>();
-    return entity;
-}
+
 
 void Scene::DestroyEntity(Entity entity) {
     // On utilise l'opérateur de conversion vers entt::entity défini dans Entity.h
@@ -163,4 +158,19 @@ glm::mat4 Scene::GetWorldTransform(Entity entity) {
     }
 
     return transform;
+}
+
+Entity Scene::CreateEntity(const std::string& name) {
+    return CreateEntityWithUUID(UUID(), name); // Génère un nouvel UUID par défaut
+}
+
+Entity Scene::CreateEntityWithUUID(UUID uuid, const std::string& name) {
+    Entity entity = { m_Registry.create(), this };
+
+    entity.AddComponent<IDComponent>(uuid); // <-- L'identité de base
+    entity.AddComponent<TransformComponent>();
+    auto& tag = entity.AddComponent<TagComponent>();
+    tag.Tag = name.empty() ? "Entity" : name;
+
+    return entity;
 }

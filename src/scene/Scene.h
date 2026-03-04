@@ -3,6 +3,8 @@
 #include <string>
 #include <glm/fwd.hpp>
 
+#include "core/UUID.h"
+
 class Entity;
 
 class Scene {
@@ -11,6 +13,8 @@ public:
     ~Scene();
 
     Entity CreateEntity(const std::string& name = std::string());
+    Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
+
     void DestroyEntity(Entity entity);
 
     entt::registry m_Registry; // Accès direct pour le Renderer
@@ -26,6 +30,7 @@ public:
     // Gestion de la hiérarchie
     void ParentEntity(Entity entity, Entity parent);
     glm::mat4 GetWorldTransform(Entity entity);
+
 private:
     friend class Entity;
 };
