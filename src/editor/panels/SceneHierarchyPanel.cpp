@@ -192,14 +192,19 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
     ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
     flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
 
-    bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, "%s", displayName.c_str());
+    // --- LE FIX MAJEUR ---
+    // On force le passage par entt::entity pour ne pas tomber dans le piège du booléen !
+    uint32_t entityID = (uint32_t)(entt::entity)entity;
+
+    // On donne cet ID unique au TreeNode
+    bool opened = ImGui::TreeNodeEx((void*)(uint64_t)entityID, flags, "%s", displayName.c_str());
     if (ImGui::IsItemClicked()) m_SelectionContext = entity;
 
-    // --- LE FIX : ID UNIQUE POUR LE POPUP ---
-    // On génère un ID unique (ex: "EntityPopup1") pour éviter que les menus se mélangent
-    std::string popupID = "EntityContextPopup" + std::to_string((uint32_t)entity);
+    bool entityDeleted = false;
 
-    if (ImGui::BeginPopupContextItem(popupID.c_str())) {
+    // On utilise BeginPopupContextItem SANS ID.
+    // ImGui va automatiquement l'attacher au TreeNode juste au-dessus !
+    if (ImGui::BeginPopupContextItem()) {
         if (!hasScript) {
             if (ImGui::BeginMenu("Attach Script...")) {
                 for (auto const& [name, func] : ScriptRegistry::Registry) {
@@ -216,19 +221,24 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
             auto& nsc = entity.GetComponent<NativeScriptComponent>();
             ImGui::TextDisabled("Script: %s", nsc.ScriptName.c_str());
             if (ImGui::MenuItem("Detach Script")) {
-                // LE FIX : .template pour aider le compilateur sur Linux
                 entity.template RemoveComponent<NativeScriptComponent>();
             }
         }
         ImGui::Separator();
+
         if (ImGui::MenuItem("Delete Entity")) {
-            m_Context->DestroyEntity(entity); // Suppression directe ici pour simplifier
-            if (m_SelectionContext == entity) m_SelectionContext = {};
+            entityDeleted = true; // Suppression différée pour éviter un crash
         }
         ImGui::EndPopup();
     }
 
     if (opened) ImGui::TreePop();
+
+    // On détruit l'entité en toute sécurité en dehors de la logique d'UI
+    if (entityDeleted) {
+        m_Context->DestroyEntity(entity);
+        if (m_SelectionContext == entity) m_SelectionContext = {};
+    }
 }
 
 void SceneHierarchyPanel::SetContext(const std::shared_ptr<Scene>& context) {
