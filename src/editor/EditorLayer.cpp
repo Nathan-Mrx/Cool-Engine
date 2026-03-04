@@ -18,6 +18,22 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 void EditorLayer::OnAttach() {
+    // On crée l'onglet par défaut au lancement
+    m_Tabs.push_back({ "Untitled", "", std::make_shared<Scene>(), false });
+    m_ActiveTabIndex = 0;
+    m_ActiveScene = m_Tabs[0].SceneContext;
+
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+    m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
+
+    m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
+        OpenScene(path);
+    };
+    m_ContentBrowserPanel->OnPrefabOpenCallback = [this](const std::filesystem::path& path)
+    {
+        OpenPrefab(path);
+    };
+
     m_ActiveScene = std::make_shared<Scene>();
     // Utilisation du nom correct défini dans le header
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
@@ -498,8 +514,38 @@ void EditorLayer::OnImGuiRender() {
         m_SceneHierarchyPanel.OnImGuiRender();
         m_ContentBrowserPanel->OnImGuiRender();
 
+        // 1. On enlève le padding pour la fenêtre globale
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-        ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoTitleBar);
+        ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+        // 2. On ajoute un peu d'espace manuel pour que les onglets respirent visuellement
+        ImGui::Dummy(ImVec2(0, 4.0f));
+        ImGui::SetCursorPosX(8.0f); // Décalage à gauche pour le premier onglet
+
+        // 3. LA BARRE D'ONGLETS
+        if (ImGui::BeginTabBar("SceneTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
+            for (int i = 0; i < m_Tabs.size(); i++) {
+                bool isOpen = true;
+                ImGuiTabItemFlags flags = (m_ActiveTabIndex == i && m_ForceTabSelection) ? ImGuiTabItemFlags_SetSelected : 0;
+
+                if (ImGui::BeginTabItem(m_Tabs[i].Name.c_str(), &isOpen, flags)) {
+                    if (m_ActiveTabIndex != i) {
+                        m_ActiveTabIndex = i;
+                        m_ActiveScene = m_Tabs[i].SceneContext;
+                        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+                        m_SceneHierarchyPanel.SetSelectedEntity({});
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                if (!isOpen) {
+                    CloseTab(i);
+                    i--;
+                }
+            }
+            ImGui::EndTabBar();
+        }
+        m_ForceTabSelection = false;
 
         m_ViewportFocused = ImGui::IsWindowFocused();
         m_ViewportHovered = ImGui::IsWindowHovered();
@@ -787,42 +833,43 @@ void EditorLayer::DrawProjectSettings() {
 }
 
 void EditorLayer::SaveScene() {
-    if (!m_CurrentScenePath.empty()) {
-        SceneSerializer serializer(m_ActiveScene);
-        serializer.Serialize(m_CurrentScenePath.string());
-        std::cout << "[Editor] Scene saved to " << m_CurrentScenePath << std::endl;
-    }
-    else {
-        SaveSceneAs();
+    if (m_ActiveTabIndex >= 0 && m_ActiveTabIndex < m_Tabs.size()) {
+        auto& activeTab = m_Tabs[m_ActiveTabIndex];
+        if (!activeTab.Filepath.empty()) {
+            SceneSerializer serializer(activeTab.SceneContext);
+            serializer.Serialize(activeTab.Filepath.string());
+            std::cout << "[Editor] Saved " << (activeTab.IsPrefab ? "Prefab" : "Scene") << " to " << activeTab.Filepath << std::endl;
+        } else {
+            SaveSceneAs();
+        }
     }
 }
 
 void EditorLayer::SaveSceneAs() {
+    if (m_ActiveTabIndex < 0 || m_ActiveTabIndex >= m_Tabs.size()) return;
+    auto& activeTab = m_Tabs[m_ActiveTabIndex];
+
     nfdchar_t* outPath = nullptr;
-    nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+    const char* filterName = activeTab.IsPrefab ? "Cool Engine Prefab" : "Cool Engine Scene";
+    const char* filterExt = activeTab.IsPrefab ? "ceprefab" : "cescene";
+    nfdfilteritem_t filterItem[1] = { { filterName, filterExt } };
 
-    const char* defaultPath = nullptr;
-    if (Project::GetActive()) {
-        defaultPath = Project::GetContentDirectory().string().c_str();
-    }
-
-    if (NFD::SaveDialog(outPath, filterItem, 1, defaultPath, nullptr) == NFD_OKAY) {
-        // --- NOUVEAU : GESTION DE L'EXTENSION ---
+    if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, nullptr) == NFD_OKAY) {
         std::filesystem::path filepath = outPath;
+        std::string ext = activeTab.IsPrefab ? ".ceprefab" : ".cescene";
 
-        // On s'assure que l'extension est bien présente
-        if (filepath.extension() != ".cescene") {
-            filepath += ".cescene";
+        if (filepath.extension() != ext) {
+            filepath += ext;
         }
 
-        m_CurrentScenePath = filepath;
-        // ----------------------------------------
+        activeTab.Filepath = filepath;
+        activeTab.Name = filepath.filename().string();
+        if (activeTab.IsPrefab) activeTab.Name = "[Prefab] " + activeTab.Name;
 
-        SceneSerializer serializer(m_ActiveScene);
-        serializer.Serialize(m_CurrentScenePath.string());
+        SceneSerializer serializer(activeTab.SceneContext);
+        serializer.Serialize(activeTab.Filepath.string());
 
         NFD::FreePath(outPath);
-        std::cout << "[Editor] Scene saved as " << m_CurrentScenePath << std::endl;
     }
 }
 
@@ -898,4 +945,64 @@ void EditorLayer::OnScenePause() {
     } else if (m_SceneState == SceneState::Pause) {
         m_SceneState = SceneState::Play;
     }
+}
+
+void EditorLayer::OpenScene(const std::filesystem::path& path) {
+    // Si déjà ouvert, on focus l'onglet
+    for (int i = 0; i < m_Tabs.size(); i++) {
+        if (m_Tabs[i].Filepath == path) {
+            m_ActiveTabIndex = i;
+            m_ForceTabSelection = true;
+            return;
+        }
+    }
+
+    auto newScene = std::make_shared<Scene>();
+    SceneSerializer serializer(newScene);
+    serializer.Deserialize(path.string());
+
+    m_Tabs.push_back({ path.filename().string(), path, newScene, false });
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ActiveScene = newScene;
+    m_ForceTabSelection = true;
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+}
+
+void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
+    for (int i = 0; i < m_Tabs.size(); i++) {
+        if (m_Tabs[i].Filepath == path) {
+            m_ActiveTabIndex = i;
+            m_ForceTabSelection = true;
+            return;
+        }
+    }
+
+    auto newPrefabScene = std::make_shared<Scene>();
+    SceneSerializer serializer(newPrefabScene);
+    serializer.Deserialize(path.string());
+
+    // Différenciation visuelle pour savoir qu'on édite un Prefab !
+    m_Tabs.push_back({ "[Prefab] " + path.filename().string(), path, newPrefabScene, true });
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ActiveScene = newPrefabScene;
+    m_ForceTabSelection = true;
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+}
+
+void EditorLayer::CloseTab(int index) {
+    if (index < 0 || index >= m_Tabs.size()) return;
+
+    m_Tabs.erase(m_Tabs.begin() + index);
+
+    // Sécurité : toujours garder au moins un onglet ouvert
+    if (m_Tabs.empty()) {
+        m_Tabs.push_back({ "Untitled", "", std::make_shared<Scene>(), false });
+    }
+
+    if (m_ActiveTabIndex >= m_Tabs.size()) {
+        m_ActiveTabIndex = m_Tabs.size() - 1;
+    }
+
+    m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 }

@@ -1,4 +1,7 @@
 #include "../panels/ContentBrowserPanel.h"
+
+#include <fstream>
+
 #include "../../project/Project.h"
 #include <imgui.h>
 
@@ -89,8 +92,14 @@ void ContentBrowserPanel::OnImGuiRender() {
 
                 // --- LOGIQUE D'OUVERTURE ---
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    if (isScene && OnSceneOpenCallback) {
-                        OnSceneOpenCallback(path); // On prévient l'éditeur qu'il faut charger cette scène
+                    if (directoryEntry.is_directory()) {
+                        m_CurrentDirectory /= path.filename();
+                    } else {
+                        if (path.extension() == ".cescene") {
+                            if (OnSceneOpenCallback) OnSceneOpenCallback(path);
+                        } else if (path.extension() == ".ceprefab") {
+                            if (OnPrefabOpenCallback) OnPrefabOpenCallback(path); // <-- NOUVEAU
+                        }
                     }
                 }
 
@@ -108,6 +117,18 @@ void ContentBrowserPanel::OnImGuiRender() {
             ImGui::NextColumn();
             ImGui::PopID();
         }
+    }
+
+    // --- MENU CONTEXTUEL (Clic Droit dans le vide) ---
+    if (ImGui::BeginPopupContextWindow("ContentBrowserContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        if (ImGui::MenuItem("Create Prefab")) {
+            std::filesystem::path newPrefabPath = m_CurrentDirectory / "NewPrefab.ceprefab";
+            // On crée un fichier JSON valide avec une scène vide
+            std::ofstream fout(newPrefabPath);
+            fout << "{ \"Scene\": \"Prefab\", \"Entities\": [] }";
+            fout.close();
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::Columns(1);

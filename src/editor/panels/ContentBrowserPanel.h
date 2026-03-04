@@ -8,6 +8,7 @@ public:
     void OnImGuiRender();
 
     std::function<void(const std::filesystem::path&)> OnSceneOpenCallback;
+    std::function<void(const std::filesystem::path&)> OnPrefabOpenCallback;
 
 private:
     std::filesystem::path m_CurrentDirectory;

@@ -26,6 +26,13 @@ enum class SceneState {
     Pause = 2
 };
 
+struct EditorTab {
+    std::string Name;
+    std::filesystem::path Filepath;
+    std::shared_ptr<Scene> SceneContext;
+    bool IsPrefab = false;
+};
+
 class EditorLayer {
 public:
     void OnAttach();
@@ -43,6 +50,10 @@ private:
     void OnScenePlay();
     void OnSceneStop();
     void OnScenePause();
+
+    void OpenScene(const std::filesystem::path& path);
+    void OpenPrefab(const std::filesystem::path& path);
+    void CloseTab(int index);
 
 private:
     std::shared_ptr<Scene> m_ActiveScene;
@@ -78,5 +89,10 @@ private:
 
     bool m_ShowCollisions = false;
     int m_RenderMode = 0; // 0: Lit, 1: Unlit, 2: Wireframe
+
+    // --- NOUVEAU SYSTÈME D'ONGLETS ---
+    std::vector<EditorTab> m_Tabs;
+    int m_ActiveTabIndex = 0;
+    bool m_ForceTabSelection = false;
 
 };
