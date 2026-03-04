@@ -5,6 +5,8 @@
 #include <GLFW/glfw3.h> // Pour avoir les touches GLFW_KEY_...
 #include <iostream>
 
+#include "ScriptRegistry.h"
+
 class PlayerController : public ScriptableEntity {
 public:
     void OnCreate() override {
@@ -38,3 +40,5 @@ public:
         std::cout << "[PlayerController] Entity destroyed/unpossessed." << std::endl;
     }
 };
+
+REGISTER_SCRIPT(PlayerController)

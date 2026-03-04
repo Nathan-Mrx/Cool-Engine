@@ -4,6 +4,7 @@
 #include <imgui_internal.h>
 
 #include "renderer/PrimitiveFactory.h"
+#include "scripts/ScriptRegistry.h"
 
 // --- RÉFLEXION UI ---
 template <typename T>
@@ -178,39 +179,76 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 
         ImGui::EndPopup();
     }
+
 }
 
 void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
     auto& tag = entity.GetComponent<TagComponent>().Tag;
-    ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
 
-    // On utilise l'adresse mémoire du Tag, qui est strictement unique pour chaque entité
-    void* uniqueID = (void*)&entity.GetComponent<TagComponent>();
-    bool opened = ImGui::TreeNodeEx(uniqueID, flags, "%s", tag.c_str());
-
-    // 1. LE CLIC DROIT DOIT ÊTRE ICI ! (Avant le TreePop)
-    bool entityDeleted = false;
-    if (ImGui::BeginPopupContextItem()) {
-        if (ImGui::MenuItem("Delete Entity")) {
-            entityDeleted = true;
-        }
-        ImGui::EndPopup();
+    // 1. Indicateur visuel du script façon Godot
+    std::string displayName = tag;
+    bool hasScript = entity.HasComponent<NativeScriptComponent>();
+    if (hasScript) {
+        displayName += " [S]";
     }
 
-    // 2. Gestion de la sélection
+    ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
+    flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
+
+    bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entity, flags, "%s", displayName.c_str());
     if (ImGui::IsItemClicked()) {
         m_SelectionContext = entity;
     }
 
-    // 3. Fermeture du noeud
+    // --- NOUVEAU : LE POPUP CONTEXTUEL (Clic Droit sur l'entité) ---
+    bool entityDeleted = false;
+    if (ImGui::BeginPopupContextItem()) {
+
+        // --- Actions de Scripting ---
+        if (!hasScript) {
+            if (ImGui::BeginMenu("Attach Script...")) {
+                // On liste tous les scripts enregistrés automatiquement via ta macro
+                for (auto const& [name, func] : ScriptRegistry::Registry) {
+                    if (ImGui::MenuItem(name.c_str())) {
+                        entity.AddComponent<NativeScriptComponent>();
+                        auto& nsc = entity.GetComponent<NativeScriptComponent>();
+                        func(nsc); // On lie la classe C++
+                        nsc.ScriptName = name;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+        } else {
+            auto& nsc = entity.GetComponent<NativeScriptComponent>();
+            ImGui::TextDisabled("Script: %s", nsc.ScriptName.c_str());
+
+            if (ImGui::MenuItem("Detach Script")) {
+                entity.RemoveComponent<NativeScriptComponent>();
+            }
+        }
+
+        ImGui::Separator();
+
+        // --- Actions Standards ---
+        if (ImGui::MenuItem("Delete Entity")) {
+            entityDeleted = true;
+        }
+
+        ImGui::EndPopup();
+    }
+    // ---------------------------------------------------------------
+
     if (opened) {
+        // (Ici ira la logique pour afficher les entités enfants plus tard)
         ImGui::TreePop();
     }
 
-    // 4. Destruction sécurisée
+    // Suppression sécurisée différée
     if (entityDeleted) {
         m_Context->DestroyEntity(entity);
-        if (m_SelectionContext == entity) m_SelectionContext = {};
+        if (m_SelectionContext == entity) {
+            m_SelectionContext = {};
+        }
     }
 }
 

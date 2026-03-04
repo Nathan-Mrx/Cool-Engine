@@ -231,11 +231,12 @@ struct BoxColliderComponent {
 };
 
 struct NativeScriptComponent {
+    std::string ScriptName = "None";
     ScriptableEntity* Instance = nullptr;
 
     // Pointeurs de fonctions pour allouer et désallouer la mémoire dynamiquement
-    ScriptableEntity* (*InstantiateScript)();
-    void (*DestroyScript)(NativeScriptComponent*);
+    ScriptableEntity* (*InstantiateScript)() = nullptr;
+    void (*DestroyScript)(NativeScriptComponent*) = nullptr;
 
     // Fonction template magique pour lier un script au composant
     template<typename T>
@@ -247,7 +248,6 @@ struct NativeScriptComponent {
         };
     }
 
-    // Pas d'interface ImGui pour le moment, on fera ça proprement façon Godot plus tard !
     void OnImGuiRender() {}
 };
 

@@ -830,24 +830,6 @@ void EditorLayer::OnScenePlay() {
     SceneSerializer serializer(m_ActiveScene);
     serializer.Serialize("TempSceneBackup.cescene");
 
-    // --- TEST SCRIPTING (Temporaire) ---
-    // On cherche une entité nommée "Player" pour lui injecter notre script !
-    auto view = m_ActiveScene->m_Registry.view<TagComponent>();
-    for (auto e : view) {
-        Entity entity = { e, m_ActiveScene.get() };
-        if (entity.GetComponent<TagComponent>().Tag == "Player") {
-
-            // Si elle n'a pas le composant de script, on lui ajoute
-            if (!entity.HasComponent<NativeScriptComponent>()) {
-                entity.AddComponent<NativeScriptComponent>();
-            }
-
-            // On lie notre classe C++ à cette entité !
-            entity.GetComponent<NativeScriptComponent>().Bind<PlayerController>();
-        }
-    }
-    // -----------------------------------
-
     m_ActiveScene->OnScriptStart();
     m_ActiveScene->OnPhysicsStart();
 
