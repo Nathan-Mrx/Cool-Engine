@@ -6,6 +6,7 @@
 #include <iostream>
 
 #include "renderer/PrimitiveFactory.h"
+#include "scripts/ScriptRegistry.h"
 
 using json = nlohmann::json;
 
@@ -81,6 +82,13 @@ void SceneSerializer::Serialize(const std::string& filepath) {
             entityJson["CameraComponent"]["FOV"] = camera.FOV;
             entityJson["CameraComponent"]["NearClip"] = camera.NearClip;
             entityJson["CameraComponent"]["FarClip"] = camera.FarClip;
+        }
+
+        if (entity.HasComponent<NativeScriptComponent>()) {
+            auto& nsc = entity.GetComponent<NativeScriptComponent>();
+
+            // On a juste besoin de sauvegarder le nom du script (en texte)
+            entityJson["NativeScriptComponent"]["ScriptName"] = nsc.ScriptName;
         }
 
         entitiesData.push_back(entityJson);
@@ -200,6 +208,24 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
             camera.FOV = jCamera["FOV"].get<float>();
             camera.NearClip = jCamera["NearClip"].get<float>();
             camera.FarClip = jCamera["FarClip"].get<float>();
+        }
+
+        if (entityJson.contains("NativeScriptComponent")) {
+            auto scriptName = entityJson["NativeScriptComponent"]["ScriptName"].get<std::string>();
+
+            // On vérifie si ce script a bien été compilé et enregistré dans le registre
+            if (ScriptRegistry::Registry.find(scriptName) != ScriptRegistry::Registry.end()) {
+
+                // On ajoute le composant à l'entité
+                auto& nsc = deserializedEntity.AddComponent<NativeScriptComponent>();
+                nsc.ScriptName = scriptName;
+
+                // On exécute le pointeur de fonction pour lier la classe C++ (la magie opère ici !)
+                ScriptRegistry::Registry[scriptName](nsc);
+
+            } else {
+                std::cout << "[Serializer] Warning: Script '" << scriptName << "' not found in Registry. Did you rename or delete the C++ class?" << std::endl;
+            }
         }
     }
     return true;
