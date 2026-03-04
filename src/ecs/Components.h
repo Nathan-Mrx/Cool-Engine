@@ -251,6 +251,21 @@ struct NativeScriptComponent {
     void OnImGuiRender() {}
 };
 
+struct RelationshipComponent {
+    entt::entity Parent = entt::null;
+    entt::entity FirstChild = entt::null;
+    entt::entity PreviousSibling = entt::null;
+    entt::entity NextSibling = entt::null;
+
+    RelationshipComponent() = default;
+    RelationshipComponent(const RelationshipComponent&) = default;
+
+    void OnImGuiRender() {
+        // Pour l'instant, on n'affiche rien dans l'Inspector.
+        // La hiérarchie se gérera visuellement dans l'arbre !
+    }
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -264,5 +279,6 @@ using AllComponents = std::tuple<
     DirectionalLightComponent,
     RigidBodyComponent,
     BoxColliderComponent,
-    NativeScriptComponent
+    NativeScriptComponent,
+    RelationshipComponent
 >;

@@ -59,7 +59,18 @@ void SceneHierarchyPanel::OnImGuiRender() {
     auto view = m_Context->m_Registry.view<TagComponent>();
     for (auto entityID : view) {
         Entity entity{ entityID, m_Context.get() };
-        DrawEntityNode(entity);
+
+        // Est-ce un objet racine ?
+        bool isRoot = true;
+        if (entity.HasComponent<RelationshipComponent>()) {
+            if (entity.GetComponent<RelationshipComponent>().Parent != entt::null) {
+                isRoot = false; // Il a un parent, on ne le dessine pas ici !
+            }
+        }
+
+        if (isRoot) {
+            DrawEntityNode(entity);
+        }
     }
 
     // Le clic droit dans le vide de la hiérarchie
@@ -224,6 +235,14 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
                 entity.template RemoveComponent<NativeScriptComponent>();
             }
         }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Create Child Entity")) {
+            Entity child = m_Context->CreateEntity("New Child");
+            m_Context->ParentEntity(child, entity);
+        }
+
         ImGui::Separator();
 
         if (ImGui::MenuItem("Delete Entity")) {
@@ -232,7 +251,21 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
         ImGui::EndPopup();
     }
 
-    if (opened) ImGui::TreePop();
+    if (opened) {
+        // --- NOUVEAU : DESSIN RÉCURSIF DES ENFANTS ---
+        if (entity.HasComponent<RelationshipComponent>()) {
+            entt::entity childID = entity.GetComponent<RelationshipComponent>().FirstChild;
+
+            while (childID != entt::null) {
+                Entity child{childID, m_Context.get()};
+                DrawEntityNode(child); // La fonction s'appelle elle-même !
+
+                // On passe au frère suivant
+                childID = child.GetComponent<RelationshipComponent>().NextSibling;
+            }
+        }
+        ImGui::TreePop();
+    }
 
     // On détruit l'entité en toute sécurité en dehors de la logique d'UI
     if (entityDeleted) {

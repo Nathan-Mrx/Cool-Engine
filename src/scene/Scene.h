@@ -1,6 +1,7 @@
 #pragma once
 #include <entt/entt.hpp>
 #include <string>
+#include <glm/fwd.hpp>
 
 class Entity;
 
@@ -21,6 +22,10 @@ public:
     void OnScriptStart();
     void OnScriptStop();
     void OnUpdateScripts(float ts);
+
+    // Gestion de la hiérarchie
+    void ParentEntity(Entity entity, Entity parent);
+    glm::mat4 GetWorldTransform(Entity entity);
 private:
     friend class Entity;
 };

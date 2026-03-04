@@ -112,3 +112,55 @@ void Scene::OnScriptStop() {
         }
     }
 }
+
+void Scene::ParentEntity(Entity entity, Entity parent) {
+    // 1. On s'assure que les deux ont le composant
+    if (!entity.HasComponent<RelationshipComponent>()) entity.AddComponent<RelationshipComponent>();
+    if (!parent.HasComponent<RelationshipComponent>()) parent.AddComponent<RelationshipComponent>();
+
+    auto& rel = entity.GetComponent<RelationshipComponent>();
+    auto& parentRel = parent.GetComponent<RelationshipComponent>();
+
+    // 2. On définit le parent
+    rel.Parent = parent;
+
+    // 3. On l'ajoute à la liste des enfants du parent
+    if (parentRel.FirstChild == entt::null) {
+        // C'est le tout premier enfant !
+        parentRel.FirstChild = entity;
+    } else {
+        // Il a déjà des enfants, on cherche le dernier "frère" de la liste
+        entt::entity current = parentRel.FirstChild;
+        auto* currentRel = &m_Registry.get<RelationshipComponent>(current);
+
+        while (currentRel->NextSibling != entt::null) {
+            current = currentRel->NextSibling;
+            currentRel = &m_Registry.get<RelationshipComponent>(current);
+        }
+
+        // On attache notre entité à la fin de la fratrie
+        currentRel->NextSibling = entity;
+        rel.PreviousSibling = current;
+    }
+}
+
+glm::mat4 Scene::GetWorldTransform(Entity entity) {
+    glm::mat4 transform(1.0f);
+
+    // Matrice locale
+    if (entity.HasComponent<TransformComponent>()) {
+        auto& tc = entity.GetComponent<TransformComponent>();
+        transform = glm::translate(glm::mat4(1.0f), tc.Location) * glm::toMat4(tc.Rotation) * glm::scale(glm::mat4(1.0f), tc.Scale);
+    }
+
+    // Si on a un parent, on multiplie notre matrice locale par la matrice globale du parent (Magie de l'algèbre !)
+    if (entity.HasComponent<RelationshipComponent>()) {
+        entt::entity parentID = entity.GetComponent<RelationshipComponent>().Parent;
+        if (parentID != entt::null) {
+            Entity parent{parentID, this};
+            transform = GetWorldTransform(parent) * transform; // Appel récursif !
+        }
+    }
+
+    return transform;
+}
