@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <dlfcn.h> // Indispensable pour dlopen/dlclose !
+#include <imgui.h>
 
 using json = nlohmann::json;
 
@@ -131,6 +132,11 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
         std::cout << "[Project] Aucun GameModule.so trouve. (C'est normal si le jeu n'a pas encore ete compile !)" << std::endl;
     }
 
+    static std::string s_ProjectIniPath;
+    s_ProjectIniPath = (project->m_Config.ProjectDirectory / "imgui.ini").string();
+    ImGui::GetIO().IniFilename = s_ProjectIniPath.c_str();
+    ImGui::LoadIniSettingsFromDisk(s_ProjectIniPath.c_str());
+
     AddToRecentProjects(absolutePath);
     return project;
 }
@@ -155,10 +161,13 @@ void Project::SaveActive(const std::filesystem::path& path) {
 
 static const std::string EDITOR_CONFIG_FILE = "editor_config.json";
 
-void Project::Unload()
-{
+void Project::Unload() {
     s_ActiveProject = nullptr;
-    std::cout << "[Project] Project unloaded." << std::endl;
+
+    // Retour au layout global du moteur
+    static std::string s_EngineIniPath = (std::filesystem::current_path() / "imgui.ini").string();
+    ImGui::GetIO().IniFilename = s_EngineIniPath.c_str();
+    ImGui::LoadIniSettingsFromDisk(s_EngineIniPath.c_str());
 }
 
 std::vector<std::filesystem::path> Project::GetRecentProjects() {
