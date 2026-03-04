@@ -95,9 +95,17 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
     file >> data;
 
     std::shared_ptr<Project> project = std::make_shared<Project>();
-    project->m_Config.Name = data.value("Name", "Untitled");
-    project->m_Config.Version = data.value("Version", "0.0.1");
-    project->m_Config.StartScene = data.value("StartScene", "Scenes/Default.cescene");
+
+    // --- LE FIX : Support des deux formats (Ancien buggué et Nouveau propre) ---
+    if (data.contains("Project")) {
+        project->m_Config.Name = data["Project"].value("Name", "Untitled");
+        project->m_Config.Version = data["Project"].value("Version", "0.0.1");
+        project->m_Config.StartScene = data["Project"].value("StartScene", "Scenes/Default.cescene");
+    } else {
+        project->m_Config.Name = data.value("Name", "Untitled");
+        project->m_Config.Version = data.value("Version", "0.0.1");
+        project->m_Config.StartScene = data.value("StartScene", "Scenes/Default.cescene");
+    }
 
     std::filesystem::path projectDir = absolutePath.parent_path();
     project->m_Config.ProjectDirectory = projectDir;
@@ -108,19 +116,16 @@ std::shared_ptr<Project> Project::Load(const std::filesystem::path& path) {
     s_ActiveProject = project;
 
     // ===============================================================
-    // CHARGEMENT À CHAUD DU MODULE DU JEU (.so) - FAÇON UNREAL !
+    // CHARGEMENT À CHAUD DU MODULE DU JEU (.so)
     // ===============================================================
     std::string modulePath = (project->m_Config.BinariesDirectory / "GameModule.so").string();
 
     if (std::filesystem::exists(modulePath)) {
-        // Si on recharge le projet (Hot-Reload), on ferme l'ancienne librairie
         if (s_GameModuleHandle) {
             dlclose(s_GameModuleHandle);
             s_GameModuleHandle = nullptr;
         }
 
-        // On charge la nouvelle librairie dynamique en mémoire
-        // RTLD_NOW force la résolution immédiate, RTLD_GLOBAL expose les symboles
         s_GameModuleHandle = dlopen(modulePath.c_str(), RTLD_NOW | RTLD_GLOBAL);
 
         if (s_GameModuleHandle) {
@@ -145,9 +150,11 @@ void Project::SaveActive(const std::filesystem::path& path) {
     if (!s_ActiveProject) return;
 
     nlohmann::json data;
-    data["Project"]["Name"] = s_ActiveProject->m_Config.Name;
-    data["Project"]["Version"] = s_ActiveProject->m_Config.Version;
-    data["Project"]["StartScene"] = s_ActiveProject->m_Config.StartScene;
+    // --- LE FIX EST ICI : On sauvegarde à la racine (sans le bloc "Project") ---
+    // Cela correspond parfaitement à la logique de New() et Load() !
+    data["Name"] = s_ActiveProject->m_Config.Name;
+    data["Version"] = s_ActiveProject->m_Config.Version;
+    data["StartScene"] = s_ActiveProject->m_Config.StartScene;
 
     std::ofstream stream(path);
     if (stream.is_open()) {
