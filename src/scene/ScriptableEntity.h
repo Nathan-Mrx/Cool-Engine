@@ -16,6 +16,9 @@ public:
         return m_Entity.HasComponent<T>();
     }
 
+    // Permet de chercher "Enfant", "Parent/Enfant", ou même "../Voisin"
+    Entity GetNode(const std::string& path);
+
 protected:
     // Ces fonctions seront surchargées par tes scripts de jeu (ex: PlayerController)
     virtual void OnCreate() {}
