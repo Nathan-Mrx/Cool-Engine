@@ -55,6 +55,8 @@ set(SOURCES
         src/core/UUID.h
         src/math/Math.cpp
         src/math/Math.h
+        src/core/Delegate.cpp
+        src/core/Delegate.h
 )
 
 # Créer l'exécutable avec les sources
