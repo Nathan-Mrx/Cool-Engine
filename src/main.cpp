@@ -11,6 +11,9 @@
 #include <stb_image_write.h>
 
 #include "renderer/Renderer.h"
+#include "scripts/ScriptRegistry.h"
+
+std::unordered_map<std::string, std::function<void(NativeScriptComponent&)>> ScriptRegistry::Registry;
 
 void ShowSplashScreen(GLFWwindow*& splashWindow) {
     // 1. On force un profil de compatibilité pour utiliser glBegin/glEnd (plus simple pour un splash)

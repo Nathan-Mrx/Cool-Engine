@@ -6,7 +6,7 @@
 
 class ScriptRegistry {
 public:
-    static inline std::unordered_map<std::string, std::function<void(NativeScriptComponent&)>> Registry;
+    static std::unordered_map<std::string, std::function<void(NativeScriptComponent&)>> Registry;
 
     // Cette fonction sera appelée automatiquement par notre macro !
     static void Register(const std::string& name, std::function<void(NativeScriptComponent&)> func) {

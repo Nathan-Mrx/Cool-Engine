@@ -49,7 +49,6 @@ set(SOURCES
         src/physics/PhysicsEngine.h
         src/scene/ScriptableNode.cpp
         src/scene/ScriptableNode.h
-        src/scripts/PlayerController.h
         src/scripts/ScriptRegistry.h
         src/core/UUID.cpp
         src/core/UUID.h
@@ -57,7 +56,6 @@ set(SOURCES
         src/math/Math.h
         src/core/Delegate.cpp
         src/core/Delegate.h
-        src/scripts/RadarScript.h
 )
 
 # Créer l'exécutable avec les sources

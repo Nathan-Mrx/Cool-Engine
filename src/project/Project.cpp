@@ -39,6 +39,10 @@ std::shared_ptr<Project> Project::New(const std::string& name, const std::filesy
             cmakeFile << ")\n\n";
             cmakeFile << "# --- COMPILATION DU MODULE (.so) ---\n";
             cmakeFile << "add_library(GameModule SHARED ${GENERATED_CPP})\n";
+            cmakeFile << "target_include_directories(GameModule PRIVATE \n";
+            cmakeFile << "    ${ENGINE_DIR}/src\n";
+            cmakeFile << "    ${ENGINE_DIR}/cmake-build-debug/vcpkg_installed/x64-linux/include\n";
+            cmakeFile << ")\n";
             cmakeFile << "target_include_directories(GameModule PRIVATE ${ENGINE_DIR}/src)\n";
             cmakeFile << "set_target_properties(GameModule PROPERTIES \n";
             cmakeFile << "    PREFIX \"\" # Pour générer GameModule.so au lieu de libGameModule.so\n";

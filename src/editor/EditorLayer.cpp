@@ -12,8 +12,6 @@
 #include <stb_image_write.h>
 #include <math/Math.h>
 
-#include "../scripts/PlayerController.h"
-
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
 
