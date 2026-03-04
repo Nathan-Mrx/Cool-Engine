@@ -178,9 +178,15 @@ void SceneHierarchyPanel::OnImGuiRender() {
         m_EntityToDestroy = {};
     }
 
-    ImGui::Begin("Inspector");
     if (m_SelectionContext) {
-        DrawComponents(m_SelectionContext);
+        // On demande à EnTT si cette entité est toujours en vie !
+        if (m_Context->m_Registry.valid((entt::entity)m_SelectionContext)) {
+            DrawComponents(m_SelectionContext);
+        } else {
+            // L'entité a été détruite en cascade (ex: destruction de son parent)
+            // On vide la sélection pour éviter le crash.
+            m_SelectionContext = {};
+        }
     }
 
     if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered()) {
@@ -201,13 +207,19 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
 
-            ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true);
+            // On vérifie le retour du BeginChild
+            if (ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true)) {
 
-            ImGui::PushID("PrefabInspector");
-            DrawMiniHierarchy(prefabRoot);
-            ImGui::PopID();
+                ImGui::PushID("PrefabInspector");
+                DrawMiniHierarchy(prefabRoot);
+                ImGui::PopID();
 
-            ImGui::EndChild(); // EndChild doit TOUJOURS être appelé !
+            } // Fin du 'if' ICI !
+
+            // --- LE FIX IMGUI ---
+            // EndChild doit absolument être en dehors du 'if', il faut l'appeler à chaque frame !
+            ImGui::EndChild();
+
             ImGui::PopStyleColor();
         }
         ImGui::PopStyleColor();

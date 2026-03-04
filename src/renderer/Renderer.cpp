@@ -98,14 +98,24 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
 
     // --- 2. RENDU DES MESHES ---
     auto view = scene->m_Registry.view<TransformComponent, MeshComponent, ColorComponent>();
-    for (auto entity : view) {
-        auto [transform, mesh, color] = view.get<TransformComponent, MeshComponent, ColorComponent>(entity);
+    for (auto entityID : view) {
+        auto [transform, mesh, color] = view.get<TransformComponent, MeshComponent, ColorComponent>(entityID);
         if (mesh.MeshData) {
-            s_Data->MainShader->SetVec3("uColor", color.Color);
-            s_Data->MainShader->SetMat4("uModel", transform.GetTransform());
 
-            // --- NOUVEAU : On envoie l'identifiant numérique de l'entité au Shader ---
-            s_Data->MainShader->SetInt("uEntityID", (int)entity);
+            // --- LE FIX HIERARCHIE EST ICI ---
+            // On crée un objet Entity temporaire pour pouvoir interroger la Scene
+            Entity entityObj{ entityID, scene };
+
+            // On récupère la vraie position mathématique dans le monde (Parent x Enfant)
+            glm::mat4 globalTransform = scene->GetWorldTransform(entityObj);
+
+            s_Data->MainShader->SetVec3("uColor", color.Color);
+
+            // On envoie la matrice GLOBALE à la carte graphique, au lieu de 'transform.GetTransform()'
+            s_Data->MainShader->SetMat4("uModel", globalTransform);
+
+            // On envoie l'identifiant numérique de l'entité au Shader
+            s_Data->MainShader->SetInt("uEntityID", (int)entityID);
 
             mesh.MeshData->Draw();
         }
