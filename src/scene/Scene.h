@@ -17,6 +17,10 @@ public:
     void OnPhysicsStart();
     void OnPhysicsStop();
     void OnUpdatePhysics(float ts);
+
+    void OnScriptStart();
+    void OnScriptStop();
+    void OnUpdateScripts(float ts);
 private:
     friend class Entity;
 };

@@ -47,6 +47,8 @@ set(SOURCES
         src/renderer/TextureLoader.h
         src/physics/PhysicsEngine.cpp
         src/physics/PhysicsEngine.h
+        src/scene/ScriptableEntity.cpp
+        src/scene/ScriptableEntity.h
 )
 
 # Créer l'exécutable avec les sources

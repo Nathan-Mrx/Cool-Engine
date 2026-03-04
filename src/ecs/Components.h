@@ -15,6 +15,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 
+#include "scene/ScriptableEntity.h"
+
 // --- STRUCTURES DE DONNÉES DE BASE ---
 
 struct Vector3 {
@@ -228,6 +230,27 @@ struct BoxColliderComponent {
     }
 };
 
+struct NativeScriptComponent {
+    ScriptableEntity* Instance = nullptr;
+
+    // Pointeurs de fonctions pour allouer et désallouer la mémoire dynamiquement
+    ScriptableEntity* (*InstantiateScript)();
+    void (*DestroyScript)(NativeScriptComponent*);
+
+    // Fonction template magique pour lier un script au composant
+    template<typename T>
+    void Bind() {
+        InstantiateScript = []() { return static_cast<ScriptableEntity*>(new T()); };
+        DestroyScript = [](NativeScriptComponent* nsc) {
+            delete nsc->Instance;
+            nsc->Instance = nullptr;
+        };
+    }
+
+    // Pas d'interface ImGui pour le moment, on fera ça proprement façon Godot plus tard !
+    void OnImGuiRender() {}
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -240,5 +263,6 @@ using AllComponents = std::tuple<
     MeshComponent,
     DirectionalLightComponent,
     RigidBodyComponent,
-    BoxColliderComponent
+    BoxColliderComponent,
+    NativeScriptComponent
 >;

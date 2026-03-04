@@ -73,3 +73,42 @@ void Scene::OnUpdatePhysics(float ts) {
         }
     }
 }
+
+void Scene::OnScriptStart() {
+    auto view = m_Registry.view<NativeScriptComponent>();
+    for (auto entity : view) {
+        auto& nsc = view.get<NativeScriptComponent>(entity);
+
+        // Si un script a bien été lié à cette entité
+        if (nsc.InstantiateScript) {
+            nsc.Instance = nsc.InstantiateScript();
+
+            // On injecte secrètement l'entité actuelle dans la classe C++
+            nsc.Instance->m_Entity = Entity{ entity, this };
+
+            // On déclenche le "BeginPlay"
+            nsc.Instance->OnCreate();
+        }
+    }
+}
+
+void Scene::OnUpdateScripts(float ts) {
+    auto view = m_Registry.view<NativeScriptComponent>();
+    for (auto entity : view) {
+        auto& nsc = view.get<NativeScriptComponent>(entity);
+        if (nsc.Instance) {
+            nsc.Instance->OnUpdate(ts);
+        }
+    }
+}
+
+void Scene::OnScriptStop() {
+    auto view = m_Registry.view<NativeScriptComponent>();
+    for (auto entity : view) {
+        auto& nsc = view.get<NativeScriptComponent>(entity);
+        if (nsc.Instance) {
+            nsc.Instance->OnDestroy();
+            nsc.DestroyScript(&nsc); // Désallocation propre de la mémoire
+        }
+    }
+}
