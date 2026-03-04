@@ -5,6 +5,9 @@
 #include "../../project/Project.h"
 #include <imgui.h>
 
+#include "scene/Entity.h"
+#include "scene/SceneSerializer.h"
+
 ContentBrowserPanel::ContentBrowserPanel() {}
 
 void ContentBrowserPanel::OnImGuiRender() {
@@ -121,10 +124,13 @@ void ContentBrowserPanel::OnImGuiRender() {
     if (ImGui::BeginPopupContextWindow("ContentBrowserContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if (ImGui::MenuItem("Create Prefab")) {
             std::filesystem::path newPrefabPath = m_CurrentDirectory / "NewPrefab.ceprefab";
-            // On crée un fichier JSON valide avec une scène vide
-            std::ofstream fout(newPrefabPath);
-            fout << "{ \"Scene\": \"Prefab\", \"Entities\": [] }";
-            fout.close();
+
+            // --- LE FIX : On crée une vraie scène avec une racine par défaut ---
+            auto tempScene = std::make_shared<Scene>();
+            tempScene->CreateEntity("NewPrefab Root"); // La racine garantie !
+
+            SceneSerializer serializer(tempScene);
+            serializer.Serialize(newPrefabPath.string());
         }
         ImGui::EndPopup();
     }

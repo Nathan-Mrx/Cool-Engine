@@ -277,6 +277,16 @@ struct IDComponent {
     void OnImGuiRender() {} // Non modifiable par l'utilisateur
 };
 
+struct PrefabComponent {
+    std::string PrefabPath; // Le chemin du fichier .ceprefab d'origine
+
+    PrefabComponent() = default;
+    PrefabComponent(const PrefabComponent&) = default;
+    PrefabComponent(const std::string& path) : PrefabPath(path) {}
+
+    void OnImGuiRender() {} // Géré manuellement dans le panneau
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -292,5 +302,6 @@ using AllComponents = std::tuple<
     BoxColliderComponent,
     NativeScriptComponent,
     RelationshipComponent,
-    IDComponent
+    IDComponent,
+    PrefabComponent
 >;

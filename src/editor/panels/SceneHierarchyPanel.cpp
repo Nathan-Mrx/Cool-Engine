@@ -92,7 +92,25 @@ void SceneHierarchyPanel::OnImGuiRender() {
     if (ImGui::BeginPopupContextWindow("SceneHierarchyContextWindow", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
 
         if (ImGui::MenuItem("Create Empty Entity")) {
-            m_Context->CreateEntity("Empty Entity");
+            Entity newEntity = m_Context->CreateEntity("Empty Entity");
+
+            // --- SÉCURITÉ PREFAB : Forcer le parentage ---
+            if (m_IsPrefabScene) {
+                Entity root = {};
+
+                // FIX : On itère sur toutes les entités via TagComponent au lieu de .each()
+                auto view = m_Context->m_Registry.view<TagComponent>();
+                for (auto entityID : view) {
+                    Entity e{ entityID, m_Context.get() };
+
+                    // On cherche l'entité qui n'a pas de parent (et qui n'est pas celle qu'on vient de créer)
+                    if (e != newEntity && (!e.HasComponent<RelationshipComponent>() || e.GetComponent<RelationshipComponent>().Parent == entt::null)) {
+                        root = e;
+                    }
+                }
+
+                if (root) m_Context->ParentEntity(newEntity, root); // Paf ! Attachée de force à la racine !
+            }
         }
 
         ImGui::Separator();
@@ -174,6 +192,28 @@ void SceneHierarchyPanel::OnImGuiRender() {
 }
 
 void SceneHierarchyPanel::DrawComponents(Entity entity) {
+
+    Entity prefabRoot = GetPrefabRoot(entity);
+
+    if (prefabRoot) {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.3f, 0.5f, 1.0f));
+        if (ImGui::CollapsingHeader("Prefab Instance", ImGuiTreeNodeFlags_DefaultOpen)) {
+
+            // On affiche le chemin du fichier source
+            ImGui::TextDisabled("Source: %s", prefabRoot.GetComponent<PrefabComponent>().PrefabPath.c_str());
+
+            // Fenêtre interne (Child) pour la mini hiérarchie
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+            ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true);
+            DrawMiniHierarchy(prefabRoot); // On lance le dessin !
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
     // 1. Dessin des composants existants
     std::apply([&](auto... args) {
         (DrawComponentUI<decltype(args)>(entity, m_Context->m_Registry), ...);
@@ -215,15 +255,27 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
     // Style Godot : petit indicateur [S]
     std::string displayName = hasScript ? tag + " [S]" : tag;
 
+    // Est-ce que cette entité (ou son parent caché) est sélectionnée ?
+    bool isSelected = (m_SelectionContext == entity) || (GetPrefabRoot(m_SelectionContext) == entity);
     ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
     flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
+
+    bool isPrefab = entity.HasComponent<PrefabComponent>();
+    bool hasChildren = entity.HasComponent<RelationshipComponent>() && entity.GetComponent<RelationshipComponent>().FirstChild != entt::null;
 
     // --- LE FIX MAJEUR ---
     // On force le passage par entt::entity pour ne pas tomber dans le piège du booléen !
     uint32_t entityID = (uint32_t)(entt::entity)entity;
 
+    if (isPrefab || !hasChildren) {
+        flags |= ImGuiTreeNodeFlags_Leaf;
+    }
+
     // On donne cet ID unique au TreeNode
+    if (isPrefab) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
     bool opened = ImGui::TreeNodeEx((void*)(uint64_t)entityID, flags, "%s", displayName.c_str());
+    if (isPrefab) ImGui::PopStyleColor();
+
     if (ImGui::IsItemClicked()) m_SelectionContext = entity;
 
     if (ImGui::BeginDragDropTarget()) {
@@ -308,3 +360,47 @@ void SceneHierarchyPanel::SetContext(const std::shared_ptr<Scene>& context) {
     m_SelectionContext = {}; // On réinitialise la sélection lors du changement de scène
 }
 
+Entity SceneHierarchyPanel::GetPrefabRoot(Entity entity) {
+    if (!entity) return {};
+
+    // Si l'entité elle-même est la racine
+    if (entity.HasComponent<PrefabComponent>()) return entity;
+
+    // Sinon on remonte l'arbre des parents jusqu'à trouver la racine
+    if (entity.HasComponent<RelationshipComponent>()) {
+        entt::entity parentID = entity.GetComponent<RelationshipComponent>().Parent;
+        if (parentID != entt::null) {
+            Entity parent{parentID, m_Context.get()};
+            return GetPrefabRoot(parent); // Appel récursif
+        }
+    }
+    return {};
+}
+
+void SceneHierarchyPanel::DrawMiniHierarchy(Entity node) {
+    auto& tag = node.GetComponent<TagComponent>().Tag;
+
+    // Options de l'arbre
+    ImGuiTreeNodeFlags flags = ((m_SelectionContext == node) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+    bool hasChildren = node.HasComponent<RelationshipComponent>() && node.GetComponent<RelationshipComponent>().FirstChild != entt::null;
+    if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf; // Visuel de feuille
+
+    // On dessine le noeud
+    bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)node, flags, "%s", tag.c_str());
+
+    // Si on clique, ça devient le vrai SelectionContext du moteur !
+    if (ImGui::IsItemClicked()) m_SelectionContext = node;
+
+    if (opened) {
+        if (hasChildren) {
+            entt::entity childID = node.GetComponent<RelationshipComponent>().FirstChild;
+            while (childID != entt::null) {
+                Entity child{childID, m_Context.get()};
+                DrawMiniHierarchy(child); // Rendu récursif
+                childID = child.GetComponent<RelationshipComponent>().NextSibling;
+            }
+        }
+        ImGui::TreePop();
+    }
+}

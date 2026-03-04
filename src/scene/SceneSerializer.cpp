@@ -107,6 +107,10 @@ void SceneSerializer::Serialize(const std::string& filepath) {
             entityJson["RelationshipComponent"]["NextSibling"] = getUUID(rel.NextSibling);
         }
 
+        if (entity.HasComponent<PrefabComponent>()) {
+            entityJson["PrefabComponent"]["PrefabPath"] = entity.GetComponent<PrefabComponent>().PrefabPath;
+        }
+
         entitiesData.push_back(entityJson);
     }
 
@@ -247,10 +251,15 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
                 std::cout << "[Serializer] Warning: Script '" << scriptName << "' not found in Registry." << std::endl;
             }
         }
+
+        if (entityJson.contains("PrefabComponent")) {
+            auto& pc = deserializedEntity.AddComponent<PrefabComponent>();
+            pc.PrefabPath = entityJson["PrefabComponent"]["PrefabPath"].get<std::string>();
+        }
     }
 
     // ==========================================
-    // PASSE 2 : Reconstruction de la hiérarchie
+    // PASSE 2 : Reconstruction de la hiérarchie (SCÈNES NORMALES)
     // ==========================================
     for (auto& entityJson : entities) {
         if (entityJson.contains("RelationshipComponent")) {
@@ -259,7 +268,6 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
 
             auto& rel = deserializedEntity.AddComponent<RelationshipComponent>();
 
-            // Fonction lambda pour convertir un UUID sauvegardé en vrai ID mémoire actuel
             auto getEntity = [&](uint64_t id) -> entt::entity {
                 if (id == 0 || uuidToEntityMap.find(id) == uuidToEntityMap.end()) return entt::null;
                 return uuidToEntityMap[id];
@@ -389,6 +397,10 @@ Entity SceneSerializer::DeserializePrefab(const std::string& filepath) {
             // S'il n'y a pas de composant hiérarchie du tout, c'est une racine implicite
             if (!rootEntity) rootEntity = newEntity;
         }
+    }
+
+    if (rootEntity) {
+        rootEntity.AddComponent<PrefabComponent>(filepath);
     }
 
     return rootEntity;

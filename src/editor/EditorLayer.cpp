@@ -502,6 +502,9 @@ void EditorLayer::OnImGuiRender() {
                         m_ActiveScene = m_Tabs[i].SceneContext;
                         m_SceneHierarchyPanel.SetContext(m_ActiveScene);
                         m_SceneHierarchyPanel.SetSelectedEntity({});
+
+                        // --- LE FIX EST ICI ---
+                        m_SceneHierarchyPanel.SetIsPrefabScene(m_Tabs[i].IsPrefab);
                     }
                     ImGui::EndTabItem();
                 }
