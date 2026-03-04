@@ -384,21 +384,50 @@ void EditorLayer::OnUpdate(float ts) {
         );
     }
 
-    // --- RENDU DE L'OUTLINE ORANGE (SILHOUETTE) ---
     Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-    if (selectedEntity && selectedEntity.HasComponent<MeshComponent>()) {
-        auto& transform = selectedEntity.GetComponent<TransformComponent>();
-        auto& mesh = selectedEntity.GetComponent<MeshComponent>();
+    if (selectedEntity) {
 
-        if (mesh.MeshData) {
-            // Étape 1 : Le masque
-            Renderer::BeginOutlineMask(transform.GetTransform());
-            mesh.MeshData->Draw();
+        // 1. On collecte tous les meshes de l'entité et de ses enfants
+        std::vector<std::pair<glm::mat4, MeshComponent*>> meshesToOutline;
 
-            // Étape 2 : L'outline via le fil de fer épais
-            // On utilise la MÊME matrice, sans aucun Scale !
-            Renderer::BeginOutlineDraw(transform.GetTransform(), glm::vec3(1.0f, 0.5f, 0.0f));
-            mesh.MeshData->Draw();
+        // Fonction récursive
+        auto collectMeshes = [&](Entity e, auto& self) -> void {
+            if (!e) return;
+
+            if (e.HasComponent<MeshComponent>()) {
+                // On stocke la matrice GLOBALE et le mesh
+                meshesToOutline.push_back({ m_ActiveScene->GetWorldTransform(e), &e.GetComponent<MeshComponent>() });
+            }
+
+            if (e.HasComponent<RelationshipComponent>()) {
+                entt::entity childID = e.GetComponent<RelationshipComponent>().FirstChild;
+                while (childID != entt::null) {
+                    Entity child{ childID, m_ActiveScene.get() };
+                    self(child, self); // On descend dans l'arbre
+                    childID = child.GetComponent<RelationshipComponent>().NextSibling;
+                }
+            }
+        };
+
+        // On lance la collecte depuis la racine sélectionnée
+        collectMeshes(selectedEntity, collectMeshes);
+
+        if (!meshesToOutline.empty()) {
+            // Étape 1 : Le masque (On dessine TOUS les masques d'abord)
+            for (auto& [transform, mesh] : meshesToOutline) {
+                if (mesh->MeshData) {
+                    Renderer::BeginOutlineMask(transform);
+                    mesh->MeshData->Draw();
+                }
+            }
+
+            // Étape 2 : L'outline via le fil de fer épais (Sur TOUT le groupe)
+            for (auto& [transform, mesh] : meshesToOutline) {
+                if (mesh->MeshData) {
+                    Renderer::BeginOutlineDraw(transform, glm::vec3(1.0f, 0.5f, 0.0f));
+                    mesh->MeshData->Draw();
+                }
+            }
 
             // Étape 3 : Nettoyage
             Renderer::EndOutline();
@@ -558,7 +587,15 @@ void EditorLayer::OnImGuiRender() {
                 if (pixelData != -1) {
                     if (m_ActiveScene->m_Registry.valid((entt::entity)pixelData)) {
                         Entity clickedEntity((entt::entity)pixelData, m_ActiveScene.get());
-                        m_SceneHierarchyPanel.SetSelectedEntity(clickedEntity);
+
+                        // --- LE FIX UNREAL (Sélection globale de l'Actor) ---
+                        // Si on clique sur un enfant de Prefab, on sélectionne sa racine !
+                        Entity prefabRoot = m_SceneHierarchyPanel.GetPrefabRoot(clickedEntity);
+                        if (prefabRoot) {
+                            m_SceneHierarchyPanel.SetSelectedEntity(prefabRoot);
+                        } else {
+                            m_SceneHierarchyPanel.SetSelectedEntity(clickedEntity);
+                        }
                     }
                 } else {
                     m_SceneHierarchyPanel.SetSelectedEntity({});

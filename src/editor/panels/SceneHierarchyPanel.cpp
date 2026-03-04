@@ -200,18 +200,14 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
             ImGui::TextDisabled("Source: %s", prefabRoot.GetComponent<PrefabComponent>().PrefabPath.c_str());
 
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
-            // On commence un Child avec un ID fixe pour l'Inspector
-            if (ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true)) {
 
-                // --- LE FIX EST ICI ---
-                // On pousse un ID unique "PrefabInspector" pour que les TreeNodes
-                // à l'intérieur ne calculent pas le même hash que ceux de la liste de gauche.
-                ImGui::PushID("PrefabInspector");
-                DrawMiniHierarchy(prefabRoot);
-                ImGui::PopID();
+            ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true);
 
-                ImGui::EndChild();
-            }
+            ImGui::PushID("PrefabInspector");
+            DrawMiniHierarchy(prefabRoot);
+            ImGui::PopID();
+
+            ImGui::EndChild(); // EndChild doit TOUJOURS être appelé !
             ImGui::PopStyleColor();
         }
         ImGui::PopStyleColor();
@@ -262,7 +258,7 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
 
     // Est-ce que cette entité (ou son parent caché) est sélectionnée ?
     bool isSelected = (m_SelectionContext == entity) || (GetPrefabRoot(m_SelectionContext) == entity);
-    ImGuiTreeNodeFlags flags = ((m_SelectionContext == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
+    ImGuiTreeNodeFlags flags = (isSelected ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
     flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
 
     bool isPrefab = entity.HasComponent<PrefabComponent>();

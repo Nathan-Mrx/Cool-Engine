@@ -15,15 +15,15 @@ public:
 
     void SetSelectedEntity(Entity entity) { m_SelectionContext = entity; }
 
-    // --- NOUVELLES FONCTIONS POUR LES PREFABS ---
     Entity GetPrefabRoot(Entity entity);
-    void DrawMiniHierarchy(Entity node);
 
     void SetIsPrefabScene(bool isPrefab) { m_IsPrefabScene = isPrefab; }
 
 private:
     void DrawEntityNode(Entity entity);
     void DrawComponents(Entity entity);
+
+    void DrawMiniHierarchy(Entity node);
 
 private:
     std::shared_ptr<Scene> m_Context;
