@@ -10,6 +10,7 @@
 #include "renderer/Renderer.h"
 #include "scene/SceneSerializer.h"
 #include <stb_image_write.h>
+#include <math/Math.h>
 
 #include "../scripts/PlayerController.h"
 
@@ -312,23 +313,28 @@ void EditorLayer::OnUpdate(float ts) {
         auto cameraView = m_ActiveScene->m_Registry.view<TransformComponent, CameraComponent>();
         bool cameraFound = false;
 
-        for (auto entity : cameraView) {
-            auto [transform, camera] = cameraView.get<TransformComponent, CameraComponent>(entity);
+        for (auto entityID : cameraView) {
+            Entity entity{ entityID, m_ActiveScene.get() };
+            auto& camera = entity.GetComponent<CameraComponent>();
 
             if (camera.Primary) {
-                // 1. On applique les paramètres de la caméra (FOV, Near, Far)
+                // --- LE FIX : On décompose la position GLOBALE de la caméra ---
+                glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(entity);
+                glm::vec3 globalPos, globalScale;
+                glm::quat globalRot;
+                Math::DecomposeTransform(globalTransform, globalPos, globalRot, globalScale);
+
                 projection = glm::perspectiveLH(glm::radians(camera.FOV), aspectRatio, camera.NearClip, camera.FarClip);
 
-                // 2. On calcule la direction dans laquelle la caméra regarde.
-                // En Left-Handed (façon Unreal), le "Forward" est souvent l'axe X (1,0,0) et le "Up" l'axe Z (0,0,1)
-                glm::vec3 forward = glm::normalize(transform.Rotation * glm::vec3(1.0f, 0.0f, 0.0f));
-                glm::vec3 up      = glm::normalize(transform.Rotation * glm::vec3(0.0f, 0.0f, 1.0f));
+                // On utilise la rotation globale pour trouver l'avant et le haut
+                glm::vec3 forward = glm::normalize(globalRot * glm::vec3(1.0f, 0.0f, 0.0f));
+                glm::vec3 up      = glm::normalize(globalRot * glm::vec3(0.0f, 0.0f, 1.0f));
 
-                view = glm::lookAtLH(transform.Location, transform.Location + forward, up);
-                cameraPosition = transform.Location;
+                view = glm::lookAtLH(globalPos, globalPos + forward, up);
+                cameraPosition = globalPos;
 
                 cameraFound = true;
-                break; // On a trouvé la caméra primaire, on arrête de chercher
+                break;
             }
         }
 
@@ -346,36 +352,47 @@ void EditorLayer::OnUpdate(float ts) {
     Renderer::DrawGrid(m_ShowGrid);
     Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
 
-    // --- NOUVEAU : DESSIN DES COLLISIONS (Si activé) ---
+    // --- NOUVEAU : RENDU DES COLLISIONS (Avec Hiérarchie) ---
     if (m_ShowCollisions) {
-        auto view = m_ActiveScene->m_Registry.view<TransformComponent, BoxColliderComponent>();
-        for (auto entity : view) {
-            auto [tc, bc] = view.get<TransformComponent, BoxColliderComponent>(entity);
+        auto view = m_ActiveScene->m_Registry.view<BoxColliderComponent>();
+        for (auto entityID : view) {
+            Entity entity{ entityID, m_ActiveScene.get() };
+            auto& bc = entity.GetComponent<BoxColliderComponent>();
 
-            // On construit la matrice de la boîte en prenant en compte la position, la rotation, l'offset et le scale !
-            glm::mat4 boxTransform = glm::translate(glm::mat4(1.0f), tc.Location)
-                                   * glm::toMat4(tc.Rotation)
+            // On récupère la vraie matrice globale
+            glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(entity);
+
+            // On ajoute l'offset et la taille locale par-dessus
+            glm::mat4 boxTransform = globalTransform
                                    * glm::translate(glm::mat4(1.0f), bc.Offset)
-                                   * glm::scale(glm::mat4(1.0f), tc.Scale * bc.HalfSize);
+                                   * glm::scale(glm::mat4(1.0f), bc.HalfSize);
 
-            // On dessine la boîte en Vert Fluo !
             Renderer::DrawDebugBox(boxTransform, glm::vec3(0.1f, 0.9f, 0.1f));
         }
     }
 
-    auto lightView = m_ActiveScene->m_Registry.view<TransformComponent, DirectionalLightComponent>();
-    for (auto entity : lightView) {
-        auto [transform, light] = lightView.get<TransformComponent, DirectionalLightComponent>(entity);
+    auto lightView = m_ActiveScene->m_Registry.view<DirectionalLightComponent>();
+    for (auto entityID : lightView) {
+        Entity entity{ entityID, m_ActiveScene.get() };
 
-        glm::vec3 lightDirection = glm::normalize(transform.Rotation * glm::vec3(0.0f, -1.0f, 0.0f));
-        glm::vec3 rightAxis = transform.GetRightVector();
-        glm::vec3 upAxis    = transform.GetForwardVector();
+        // --- LE FIX : Position et Rotation Globales de la lumière ---
+        glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(entity);
+        glm::vec3 globalPos, globalScale;
+        glm::quat globalRot;
+        Math::DecomposeTransform(globalTransform, globalPos, globalRot, globalScale);
+
+        // On crée un transform temporaire juste pour utiliser tes fonctions mathématiques
+        TransformComponent tempTc;
+        tempTc.Location = globalPos;
+        tempTc.Rotation = globalRot;
+
+        glm::vec3 lightDirection = glm::normalize(globalRot * glm::vec3(0.0f, -1.0f, 0.0f));
 
         Renderer::DrawDebugArrow(
-            transform.Location,
+            tempTc.Location,
             lightDirection,
-            rightAxis,
-            upAxis,
+            tempTc.GetRightVector(),
+            tempTc.GetForwardVector(),
             glm::vec3(1.0f, 0.9f, 0.1f),
             view, projection,
             50.0f
@@ -403,25 +420,27 @@ void EditorLayer::OnUpdate(float ts) {
         }
     }
 
-    // --- NOUVEAU : RENDU DU FRUSTUM DE LA CAMÉRA SÉLECTIONNÉE ---
-    // On ne le dessine que si on a cliqué sur la caméra dans l'éditeur
+    // --- NOUVEAU : RENDU DU FRUSTUM AVEC HIERARCHIE ---
     if (m_SceneState == SceneState::Edit && selectedEntity && selectedEntity.HasComponent<CameraComponent>()) {
-        auto& tc = selectedEntity.GetComponent<TransformComponent>();
         auto& cc = selectedEntity.GetComponent<CameraComponent>();
 
-        // 1. On recrée les matrices exactes de cette caméra
+        // 1. On récupère la matrice globale
+        glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(selectedEntity);
+        glm::vec3 globalPos, globalScale;
+        glm::quat globalRot;
+        Math::DecomposeTransform(globalTransform, globalPos, globalRot, globalScale);
+
+        // 2. On recrée les matrices exactes
         float aspect = m_ViewportSize.x / m_ViewportSize.y;
         glm::mat4 camProj = glm::perspectiveLH(glm::radians(cc.FOV), aspect, cc.NearClip, cc.FarClip);
 
-        glm::vec3 forward = glm::normalize(tc.Rotation * glm::vec3(1.0f, 0.0f, 0.0f));
-        glm::vec3 up      = glm::normalize(tc.Rotation * glm::vec3(0.0f, 0.0f, 1.0f));
-        glm::mat4 camView = glm::lookAtLH(tc.Location, tc.Location + forward, up);
+        glm::vec3 forward = glm::normalize(globalRot * glm::vec3(1.0f, 0.0f, 0.0f));
+        glm::vec3 up      = glm::normalize(globalRot * glm::vec3(0.0f, 0.0f, 1.0f));
+        glm::mat4 camView = glm::lookAtLH(globalPos, globalPos + forward, up);
 
-        // 2. L'astuce magique : L'inverse de Projection * Vue
-        // Cela transforme notre "DebugBox" de 1x1x1 en une immense pyramide de vision !
+        // 3. L'inverse de Projection * Vue globale
         glm::mat4 frustumTransform = glm::inverse(camProj * camView);
 
-        // 3. On dessine la ligne en blanc pur
         Renderer::DrawDebugBox(frustumTransform, glm::vec3(1.0f, 1.0f, 1.0f));
     }
 
@@ -577,39 +596,60 @@ void EditorLayer::OnImGuiRender() {
         }
 
         // --- 3. RENDU DU GIZMO 3D ---
-        Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-        if (selectedEntity && m_GizmoType != -1) {
+        // Si une entité est sélectionnée dans la hiérarchie et qu'un outil est actif
+        if (m_SceneHierarchyPanel.GetSelectedEntity() && m_GizmoType != -1) {
+            Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
-            ImGuizmo::SetOrthographic(false);
+            // 1. On configure ImGuizmo pour dessiner par-dessus la fenêtre Viewport actuelle
             ImGuizmo::SetDrawlist();
             ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, ImGui::GetWindowWidth(), ImGui::GetWindowHeight());
 
-            float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
-            glm::mat4 projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
-            glm::mat4 view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+            // 2. On recalcule la matrice de vue et projection de la caméra Éditeur
+            // (Sécurité pour éviter une division par zéro si la fenêtre est trop petite)
+            if (m_ViewportSize.y > 0.0f) {
+                float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
+                glm::mat4 cameraProjection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
+                glm::mat4 cameraView = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
 
-            auto& tc = selectedEntity.GetComponent<TransformComponent>();
-            glm::mat4 transform = tc.GetTransform();
+                // 3. On donne au Gizmo la VRAIE position globale de l'objet dans le monde
+                glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(selectedEntity);
 
-            ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection),
-                                 (ImGuizmo::OPERATION)m_GizmoType,
-                                 (ImGuizmo::MODE)m_GizmoMode,
-                                 glm::value_ptr(transform));
+                // 4. Le Gizmo (ta souris) modifie cette matrice globale
+                ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+                                     (ImGuizmo::OPERATION)m_GizmoType, (ImGuizmo::MODE)m_GizmoMode, glm::value_ptr(globalTransform));
 
-            if (ImGuizmo::IsUsing()) {
-                glm::vec3 scale;
-                glm::quat rotation;
-                glm::vec3 translation;
-                glm::vec3 skew;
-                glm::vec4 perspective;
+                if (ImGuizmo::IsUsing()) {
+                    // 5. On part du principe que la matrice locale = globale (cas sans parent)
+                    glm::mat4 localTransform = globalTransform;
 
-                glm::decompose(transform, scale, rotation, translation, skew, perspective);
+                    // --- LA MAGIE DES LOCAL SPACES EST ICI ---
+                    if (selectedEntity.HasComponent<RelationshipComponent>()) {
+                        entt::entity parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
+                        if (parentID != entt::null) {
+                            Entity parent{ parentID, m_ActiveScene.get() };
 
-                tc.Location = translation;
-                tc.Rotation = rotation;
-                tc.Scale = scale;
+                            // On récupère la position globale du parent
+                            glm::mat4 parentGlobal = m_ActiveScene->GetWorldTransform(parent);
 
-                tc.RotationEuler = glm::degrees(glm::eulerAngles(rotation));
+                            // On multiplie l'INVERSE du parent par le nouvel enfant global pour trouver le local !
+                            localTransform = glm::inverse(parentGlobal) * globalTransform;
+                        }
+                    }
+
+                    // 6. On extrait les données de la matrice locale calculée
+                    glm::vec3 translation, scale;
+                    glm::quat rotation;
+                    Math::DecomposeTransform(localTransform, translation, rotation, scale);
+
+                    // 7. On met à jour le TransformComponent avec les vraies valeurs locales
+                    auto& tc = selectedEntity.GetComponent<TransformComponent>();
+                    tc.Location = translation;
+                    tc.Rotation = rotation;
+
+                    // On met à jour l'Euler pour que ton Inspector (UI) affiche les bons angles
+                    tc.RotationEuler = glm::degrees(glm::eulerAngles(rotation));
+                    tc.Scale = scale;
+                }
             }
         }
 

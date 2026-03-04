@@ -53,6 +53,8 @@ set(SOURCES
         src/scripts/ScriptRegistry.h
         src/core/UUID.cpp
         src/core/UUID.h
+        src/math/Math.cpp
+        src/math/Math.h
 )
 
 # Créer l'exécutable avec les sources
