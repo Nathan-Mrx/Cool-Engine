@@ -84,4 +84,37 @@ private:
     int GetNextId() { return m_NextId++; }
 
     ed::PinId m_NewNodeLinkPinId = 0;
+
+    // --- NOUVEAU : Auto-Casting GLSL ---
+    std::string GetGLSLType(PinType type) {
+        if (type == PinType::Vec2) return "vec2";
+        if (type == PinType::Vec3) return "vec3";
+        if (type == PinType::Vec4) return "vec4";
+        return "float";
+    }
+
+    std::string CastGLSL(const std::string& var, PinType from, PinType to) {
+        if (from == to) return var;
+        if (from == PinType::Float) {
+            if (to == PinType::Vec2) return "vec2(" + var + ")";
+            if (to == PinType::Vec3) return "vec3(" + var + ")";
+            if (to == PinType::Vec4) return "vec4(" + var + ")";
+        }
+        if (from == PinType::Vec2) {
+            if (to == PinType::Float) return "(" + var + ".x)";
+            if (to == PinType::Vec3) return "vec3(" + var + ", 0.0)";
+            if (to == PinType::Vec4) return "vec4(" + var + ", 0.0, 1.0)";
+        }
+        if (from == PinType::Vec3) {
+            if (to == PinType::Float) return "(" + var + ".x)";
+            if (to == PinType::Vec2) return "(" + var + ".xy)";
+            if (to == PinType::Vec4) return "vec4(" + var + ", 1.0)";
+        }
+        if (from == PinType::Vec4) {
+            if (to == PinType::Float) return "(" + var + ".x)";
+            if (to == PinType::Vec2) return "(" + var + ".xy)";
+            if (to == PinType::Vec3) return "(" + var + ".xyz)";
+        }
+        return var;
+    }
 };
