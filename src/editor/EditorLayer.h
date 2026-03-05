@@ -16,6 +16,8 @@
 #include <stb_image.h>
 #include <stb_image_write.h>
 
+#include "panels/MaterialEditorPanel.h"
+
 struct EditorCamera {
     glm::vec3 Position = { -300.0f, 0.0f, 100.0f };
     glm::vec3 Front = { 1.0f, 0.0f, -0.2f };
@@ -100,5 +102,8 @@ private:
     void DrawSplashScreen();
     uint32_t m_SplashTextureID = 0;
     std::filesystem::path m_PendingProjectPath;
+
+    std::unique_ptr<MaterialEditorPanel> m_MaterialEditorPanel;
+    bool m_ShowMaterialEditor = false;
 
 };

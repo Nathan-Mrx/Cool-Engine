@@ -14,6 +14,7 @@ find_package(NFD CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(ImGuizmo CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
+find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
 
 # Lister tous les fichiers sources du moteur
 set(SOURCES
@@ -59,6 +60,8 @@ set(SOURCES
         src/project/ProjectCompiler.cpp
         src/project/ProjectCompiler.h
         src/renderer/stb_image_impl.cpp
+        src/editor/panels/MaterialEditorPanel.cpp
+        src/editor/panels/MaterialEditorPanel.h
 )
 
 # Créer l'exécutable avec les sources
@@ -78,6 +81,7 @@ target_link_libraries(GameEngine PRIVATE
         nfd::nfd
         assimp::assimp
         imguizmo::imguizmo
+        unofficial::imgui-node-editor::imgui-node-editor
         Jolt::Jolt)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
