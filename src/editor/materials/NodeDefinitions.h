@@ -4,9 +4,8 @@
 // ==========================================
 // 1. MASTER NODE
 // ==========================================
+CEMAT_NODE()
 struct BaseMaterialNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(BaseMaterialNodeDef)
-
     std::string GetName() const override { return "Base Material"; }
     std::string GetCategory() const override { return "Master"; }
     ImColor GetColor() const override { return ImColor(30, 80, 50, 255); }
@@ -24,9 +23,8 @@ struct BaseMaterialNodeDef : public IMaterialNodeDef {
 // ==========================================
 // 2. CONSTANTES & VARIABLES
 // ==========================================
+CEMAT_NODE()
 struct ColorNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(ColorNodeDef)
-
     std::string GetName() const override { return "Color"; }
     std::string GetCategory() const override { return "Constants"; }
     ImColor GetColor() const override { return ImColor(120, 100, 30, 255); }
@@ -36,9 +34,8 @@ struct ColorNodeDef : public IMaterialNodeDef {
     }
 };
 
+CEMAT_NODE()
 struct FloatNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(FloatNodeDef)
-
     std::string GetName() const override { return "Float"; }
     std::string GetCategory() const override { return "Constants"; }
     ImColor GetColor() const override { return ImColor(120, 100, 30, 255); }
@@ -51,9 +48,8 @@ struct FloatNodeDef : public IMaterialNodeDef {
 // ==========================================
 // 3. TEXTURES
 // ==========================================
+CEMAT_NODE()
 struct Texture2DNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(Texture2DNodeDef)
-
     std::string GetName() const override { return "Texture2D"; }
     std::string GetCategory() const override { return "Texture"; }
     ImColor GetColor() const override { return ImColor(120, 40, 40, 255); }
@@ -73,8 +69,8 @@ struct Texture2DNodeDef : public IMaterialNodeDef {
 // 4. MATHÉMATIQUES
 // ==========================================
 #define MATH_NODE(ClassName, NodeName) \
+CEMAT_NODE() \
 struct ClassName : public IMaterialNodeDef { \
-    CEMAT_NODE(ClassName) \
     std::string GetName() const override { return NodeName; } \
     std::string GetCategory() const override { return "Math"; } \
     ImColor GetColor() const override { return ImColor(30, 70, 100, 255); } \
@@ -89,9 +85,8 @@ MATH_NODE(MultiplyNodeDef, "Multiply")
 MATH_NODE(AddNodeDef, "Add")
 MATH_NODE(SubtractNodeDef, "Subtract")
 
+CEMAT_NODE()
 struct MixNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(MixNodeDef)
-
     std::string GetName() const override { return "Mix"; }
     std::string GetCategory() const override { return "Math"; }
     ImColor GetColor() const override { return ImColor(30, 70, 100, 255); }
@@ -104,9 +99,8 @@ struct MixNodeDef : public IMaterialNodeDef {
     }
 };
 
+CEMAT_NODE()
 struct ClampNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(ClampNodeDef)
-
     std::string GetName() const override { return "Clamp"; }
     std::string GetCategory() const override { return "Math"; }
     ImColor GetColor() const override { return ImColor(30, 70, 100, 255); }
@@ -119,9 +113,8 @@ struct ClampNodeDef : public IMaterialNodeDef {
     }
 };
 
+CEMAT_NODE()
 struct PowNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(PowNodeDef)
-
     std::string GetName() const override { return "Pow"; }
     std::string GetCategory() const override { return "Math"; }
     ImColor GetColor() const override { return ImColor(30, 70, 100, 255); }
@@ -136,9 +129,8 @@ struct PowNodeDef : public IMaterialNodeDef {
 // ==========================================
 // 5. UVS & COORDONNÉES
 // ==========================================
+CEMAT_NODE()
 struct TexCoordsNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(TexCoordsNodeDef)
-
     std::string GetName() const override { return "TexCoords"; }
     std::string GetCategory() const override { return "UVs"; }
     ImColor GetColor() const override { return ImColor(120, 50, 50, 255); }
@@ -148,9 +140,8 @@ struct TexCoordsNodeDef : public IMaterialNodeDef {
     }
 };
 
+CEMAT_NODE()
 struct TilingAndOffsetNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(TilingAndOffsetNodeDef)
-
     std::string GetName() const override { return "TilingAndOffset"; }
     std::string GetCategory() const override { return "UVs"; }
     ImColor GetColor() const override { return ImColor(120, 50, 50, 255); }
@@ -170,9 +161,8 @@ struct TilingAndOffsetNodeDef : public IMaterialNodeDef {
     }
 };
 
+CEMAT_NODE()
 struct PannerNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(PannerNodeDef)
-
     std::string GetName() const override { return "Panner"; }
     std::string GetCategory() const override { return "UVs"; }
     ImColor GetColor() const override { return ImColor(120, 50, 50, 255); }
@@ -193,9 +183,8 @@ struct PannerNodeDef : public IMaterialNodeDef {
 // ==========================================
 // 6. ANIMATION & TEMPS
 // ==========================================
+CEMAT_NODE()
 struct TimeNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(TimeNodeDef)
-
     std::string GetName() const override { return "Time"; }
     std::string GetCategory() const override { return "Animation"; }
     ImColor GetColor() const override { return ImColor(80, 40, 120, 255); }
@@ -208,12 +197,11 @@ struct TimeNodeDef : public IMaterialNodeDef {
 // ==========================================
 // 7. UTILITAIRES
 // ==========================================
+CEMAT_NODE()
 struct RerouteNodeDef : public IMaterialNodeDef {
-    CEMAT_NODE(RerouteNodeDef)
-
     std::string GetName() const override { return "Reroute"; }
     std::string GetCategory() const override { return "Utility"; }
-    ImColor GetColor() const override { return ImColor(45, 55, 65, 255); } // Invisible de toute façon dans le rendu
+    ImColor GetColor() const override { return ImColor(45, 55, 65, 255); }
 
     void Initialize(MaterialNode& node, int& nextId) const override {
         node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "", ed::PinKind::Input, PinType::Float });

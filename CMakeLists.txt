@@ -63,9 +63,19 @@ set(SOURCES
         src/editor/panels/MaterialEditorPanel.cpp
         src/editor/panels/MaterialEditorPanel.h
         src/editor/materials/MaterialGraph.h
-        src/editor/materials/MaterialNodeRegistry.cpp
+        src/editor/materials/MaterialNodeRegistry.generated.cpp
         src/editor/materials/MaterialNodeRegistry.h
         src/editor/materials/NodeDefinitions.h
+)
+
+# --- COOL HEADER TOOL (Génération de code pré-build) ---
+set(MATERIAL_REGISTRY_OUT "${CMAKE_SOURCE_DIR}/src/editor/materials/MaterialNodeRegistry.generated.cpp")
+
+add_custom_command(
+        OUTPUT ${MATERIAL_REGISTRY_OUT}
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/CoolHeaderTool.py --materials ${CMAKE_SOURCE_DIR}/src/editor/materials ${MATERIAL_REGISTRY_OUT}
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/materials/NodeDefinitions.h
+        COMMENT "CoolHeaderTool: Generation du registre des noeuds de materiaux..."
 )
 
 # Créer l'exécutable avec les sources
