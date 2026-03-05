@@ -558,8 +558,8 @@ std::string MaterialEditorPanel::CompileMaterial() {
 
     // --- VARIABLES D'ENTRÉE (Depuis default.vert) ---
     shaderCode << "in vec3 vFragPos;\n";
-    shaderCode << "in vec3 vNormal;\n"; // LE FIX EST ICI : Plus de tiret du bas !
-    shaderCode << "in vec2 aTexCoords;\n\n"; // En préparation pour les textures
+    shaderCode << "in vec3 vNormal;\n";
+    shaderCode << "in vec2 vTexCoords;\n\n";
 
     // --- UNIFORMS (Lumière et Éditeur) ---
     shaderCode << "uniform vec3 uLightColor;\n";
