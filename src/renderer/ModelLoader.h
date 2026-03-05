@@ -12,7 +12,9 @@ public:
         std::cout << "[Cool Engine] Loading asset: " << path << std::endl;
         Assimp::Importer importer;
         // On demande à Assimp de trianguler les faces et de calculer les normales si absentes
-        const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals);
+        // Ajoute aiProcess_FlipUVs à la fin des options !
+        const aiScene* scene = importer.ReadFile(path,
+            aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
 
         if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
             std::cerr << "ASSIMP ERROR: " << importer.GetErrorString() << std::endl;

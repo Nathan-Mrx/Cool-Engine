@@ -68,103 +68,93 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             // === DEBUT DU NOEUD ===
             ed::BeginNode(node.ID);
             ImGui::Text("%s", node.Name.c_str());
-            ImGui::Dummy(ImVec2(0, 5)); // Petit espace sous le titre
+            ImGui::Dummy(ImVec2(0, 5)); // Espace sous le titre
 
-            // ====================================================
-            // COLONNE 1 : GAUCHE (Inputs & Interface)
-            // ====================================================
-            ImGui::BeginGroup();
+            // Création d'un tableau invisible à 2 colonnes
+            if (ImGui::BeginTable("node_table", 2, ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableNextRow();
 
-            // 1. Dessiner les entrées
-            for (auto& input : node.Inputs) {
-                ed::BeginPin(input.ID, input.Kind);
-                ImGui::Text("-> %s", input.Name.c_str());
-                ed::EndPin();
+                // ==========================================
+                // COLONNE 1 : GAUCHE (Inputs + Interface)
+                // ==========================================
+                ImGui::TableSetColumnIndex(0);
 
-                bool isConnected = false;
-                for (auto& link : m_Links) {
-                    if (link.EndPinID == input.ID) { isConnected = true; break; }
+                for (auto& input : node.Inputs) {
+                    ed::BeginPin(input.ID, input.Kind);
+                    ImGui::Text("-> %s", input.Name.c_str());
+                    ed::EndPin();
+
+                    // Champ texte si non connecté
+                    bool isConnected = false;
+                    for (auto& link : m_Links) { if (link.EndPinID == input.ID) { isConnected = true; break; } }
+
+                    if (!isConnected) {
+                        ImGui::SameLine();
+                        ImGui::PushID((int)input.ID.Get());
+                        if (input.Type == PinType::Float) {
+                            ImGui::PushItemWidth(60.0f);
+                            ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
+                            ImGui::PopItemWidth();
+                        } else if (input.Type == PinType::Vec3) {
+                            ImGui::PushItemWidth(60.0f);
+                            ImGui::ColorEdit3("##v", &input.Vec3Value[0], ImGuiColorEditFlags_NoInputs);
+                            ImGui::PopItemWidth();
+                        }
+                        ImGui::PopID();
+                    }
                 }
 
-                if (!isConnected) {
-                    ImGui::SameLine();
-                    ImGui::PushID((int)input.ID.Get());
-                    if (input.Type == PinType::Float) {
-                        ImGui::PushItemWidth(60.0f);
-                        ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
-                        ImGui::PopItemWidth();
-                    } else if (input.Type == PinType::Vec3) {
-                        ImGui::PushItemWidth(60.0f);
-                        ImGui::ColorEdit3("##v", &input.Vec3Value[0], ImGuiColorEditFlags_NoInputs);
-                        ImGui::PopItemWidth();
-                    }
-                    ImGui::PopID();
-                }
-            }
-
-            // 2. Dessiner l'UI centrale (Couleur, Texture...)
-            ImGui::PushID((int)node.ID.Get());
-            if (node.Name == "Color") {
-                ImGui::PushItemWidth(120.0f);
-                ImGui::ColorEdit4("##val", &node.ColorValue[0], ImGuiColorEditFlags_NoInputs);
-                ImGui::PopItemWidth();
-            }
-            else if (node.Name == "Float") { // Au cas où tu aurais encore un noeud Float pur
-                ImGui::PushItemWidth(80.0f);
-                ImGui::DragFloat("##val", &node.FloatValue, 0.01f);
-                ImGui::PopItemWidth();
-            }
-            else if (node.Name == "Texture2D") {
-                ImGui::PushItemWidth(120.0f);
-                if (node.TexturePath.empty()) {
-                    ImGui::Button("Drop Texture Here", ImVec2(120, 30));
-                } else {
-                    if (node.TextureID == 0) {
-                        node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
-                    }
-                    if (node.TextureID != 0) {
-                        // --- FIX DE LA MINIATURE : On retourne les UVs d'ImGui ! ---
-                        // Les deux derniers ImVec2(0,1) et (1,0) forcent l'image à se lire à l'envers
-                        ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
+                // UI Centrale du Noeud
+                ImGui::PushID((int)node.ID.Get());
+                if (node.Name == "Color") {
+                    ImGui::PushItemWidth(120.0f);
+                    ImGui::ColorEdit4("##val", &node.ColorValue[0], ImGuiColorEditFlags_NoInputs);
+                    ImGui::PopItemWidth();
+                } else if (node.Name == "Float") {
+                    ImGui::PushItemWidth(80.0f);
+                    ImGui::DragFloat("##val", &node.FloatValue, 0.01f);
+                    ImGui::PopItemWidth();
+                } else if (node.Name == "Texture2D") {
+                    ImGui::PushItemWidth(120.0f);
+                    if (node.TexturePath.empty()) {
+                        ImGui::Button("Drop Texture", ImVec2(120, 30));
                     } else {
-                        ImGui::TextColored(ImVec4(1,0,0,1), "Load Failed");
-                    }
-                }
-
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                        std::filesystem::path path = (const char*)payload->Data;
-                        if (path.extension() == ".png" || path.extension() == ".jpg") {
-                            node.TexturePath = path.string();
-                            node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                        if (node.TextureID == 0) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                        if (node.TextureID != 0) {
+                            // LE FIX EST ICI : On utilise l'affichage standard d'ImGui !
+                            ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
                         }
                     }
-                    ImGui::EndDragDropTarget();
+                    // Le Drag & Drop
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                            std::filesystem::path path = (const char*)p->Data;
+                            if (path.extension() == ".png" || path.extension() == ".jpg") {
+                                node.TexturePath = path.string();
+                                node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                            }
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+                    ImGui::PopItemWidth();
                 }
-                ImGui::PopItemWidth();
+                ImGui::PopID();
+
+                // ==========================================
+                // COLONNE 2 : DROITE (Outputs)
+                // ==========================================
+                ImGui::TableSetColumnIndex(1);
+
+                for (auto& output : node.Outputs) {
+                    // Petite astuce pour coller le texte de sortie tout à droite du noeud
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(output.Name.c_str()).x - 25.0f);
+                    ed::BeginPin(output.ID, output.Kind);
+                    ImGui::Text("%s ->", output.Name.c_str());
+                    ed::EndPin();
+                }
+
+                ImGui::EndTable();
             }
-            ImGui::PopID();
-
-            ImGui::EndGroup(); // FIN DE LA COLONNE GAUCHE
-
-            // ====================================================
-            // ESPACEMENT CENTRAL
-            // ====================================================
-            if (!node.Outputs.empty()) {
-                ImGui::SameLine(0, 20.0f); // 20 pixels d'écart entre les inputs et les outputs
-            }
-
-            // ====================================================
-            // COLONNE 2 : DROITE (Outputs)
-            // ====================================================
-            ImGui::BeginGroup();
-            for (auto& output : node.Outputs) {
-                ed::BeginPin(output.ID, output.Kind);
-                ImGui::Text("%s ->", output.Name.c_str()); // La flèche à droite !
-                ed::EndPin();
-            }
-            ImGui::EndGroup(); // FIN DE LA COLONNE DROITE
-
             ed::EndNode();
             // === FIN DU NOEUD ===
         }
