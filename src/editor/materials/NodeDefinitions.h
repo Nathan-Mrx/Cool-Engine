@@ -68,22 +68,44 @@ struct Texture2DNodeDef : public IMaterialNodeDef {
 // ==========================================
 // 4. MATHÉMATIQUES
 // ==========================================
-#define MATH_NODE(ClassName, NodeName) \
-CEMAT_NODE() \
-struct ClassName : public IMaterialNodeDef { \
-    std::string GetName() const override { return NodeName; } \
-    std::string GetCategory() const override { return "Math"; } \
-    ImColor GetColor() const override { return ImColor(30, 70, 100, 255); } \
-    void Initialize(MaterialNode& node, int& nextId) const override { \
-        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Float }); \
-        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Float }); \
-        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float }); \
-    } \
+CEMAT_NODE()
+struct MultiplyNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Multiply"; }
+    std::string GetCategory() const override { return "Math"; }
+    ImColor GetColor() const override { return ImColor(30, 70, 100, 255); }
+
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Float });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float });
+    }
 };
 
-MATH_NODE(MultiplyNodeDef, "Multiply")
-MATH_NODE(AddNodeDef, "Add")
-MATH_NODE(SubtractNodeDef, "Subtract")
+CEMAT_NODE()
+struct AddNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Add"; }
+    std::string GetCategory() const override { return "Math"; }
+    ImColor GetColor() const override { return ImColor(30, 70, 100, 255); }
+
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Float });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float });
+    }
+};
+
+CEMAT_NODE()
+struct SubtractNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Subtract"; }
+    std::string GetCategory() const override { return "Math"; }
+    ImColor GetColor() const override { return ImColor(30, 70, 100, 255); }
+
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Float });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float });
+    }
+};
 
 CEMAT_NODE()
 struct MixNodeDef : public IMaterialNodeDef {

@@ -36,15 +36,15 @@ public:
         GetRegistry()[def->GetName()] = def;
     }
 
-    static MaterialNode CreateNode(const std::string& name, int& nextId) {
-        MaterialNode node;
-        node.ID = ed::NodeId(nextId++);
-        node.Name = name;
-
+    // On passe le noeud en référence pour pouvoir retourner un succès/échec
+    static bool CreateNode(const std::string& name, int& nextId, MaterialNode& outNode) {
         if (GetRegistry().find(name) != GetRegistry().end()) {
-            GetRegistry()[name]->Initialize(node, nextId);
+            outNode.ID = ed::NodeId(nextId++);
+            outNode.Name = name;
+            GetRegistry()[name]->Initialize(outNode, nextId);
+            return true;
         }
-        return node;
+        return false; // Le noeud n'existe pas dans le moteur !
     }
 
     static ImColor GetNodeColor(const std::string& name) {
