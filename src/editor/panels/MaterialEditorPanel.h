@@ -61,7 +61,7 @@ public:
 private:
     void BuildDefaultNodes();
 
-    void SpawnNode(const std::string& type, ImVec2 position);
+    MaterialNode* SpawnNode(const std::string& type, ImVec2 position);
     ImVec2 m_ContextPopupPos;
 
     MaterialPin* FindPin(ed::PinId id);
@@ -81,4 +81,6 @@ private:
     // Générateur d'ID unique
     int m_NextId = 1;
     int GetNextId() { return m_NextId++; }
+
+    ed::PinId m_NewNodeLinkPinId = 0;
 };

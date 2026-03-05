@@ -113,97 +113,175 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         }
 
         // =========================================================
-        // 3. LOGIQUE DE CRÉATION DE CÂBLE (Drag & Drop avec Validation)
+        // 3. LOGIQUE DE CRÉATION DE CÂBLE
         // =========================================================
+        bool openNodeMenu = false; // Drapeau pour ouvrir le menu
+
         if (ed::BeginCreate(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 2.0f)) {
             ed::PinId startPinId = 0, endPinId = 0;
 
+            // Si on relie deux connecteurs
             if (ed::QueryNewLink(&startPinId, &endPinId)) {
+                // ... (Ton code de validation Règle 1, 2, 3 et 4 RESTE ICI, ne le supprime pas)
                 auto startPin = FindPin(startPinId);
                 auto endPin = FindPin(endPinId);
 
                 if (startPin && endPin) {
-                    // Règle 1 : Pas de connexion sur soi-même ou sur le même noeud
-                    if (startPin == endPin || startPin->NodeID == endPin->NodeID) {
-                        ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); // Croix rouge !
-                    }
-                    // Règle 2 : Pas de Input->Input ou Output->Output
-                    else if (startPin->Kind == endPin->Kind) {
-                        ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); // Croix rouge !
-                    }
-                    // Regle 3 : Typage strict
-                    else if (startPin->Type != endPin->Type) {
-                        // On refuse de brancher un Float dans un Vec3 sans conversion !
-                        ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f);
-                    }
-                    // Si toutes les règles sont respectées, on propose un lien vert
+                    if (startPin == endPin || startPin->NodeID == endPin->NodeID) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
+                    else if (startPin->Kind == endPin->Kind) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
+                    else if (startPin->Type != endPin->Type) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
                     else {
-                        // Le survol est valide, si on relâche la souris on accepte !
                         if (ed::AcceptNewItem(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), 2.0f)) {
-
-                            // On s'assure que startPin est toujours l'Output, et endPin l'Input
-                            // (l'utilisateur peut tirer le câble à l'envers !)
                             if (startPin->Kind == ed::PinKind::Input) {
                                 std::swap(startPin, endPin);
                                 std::swap(startPinId, endPinId);
                             }
-
-                            // Règle 4 : Un Input ne peut avoir qu'un seul câble !
-                            // On détruit tout câble existant qui serait déjà branché sur cet Input.
                             m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
-                                [endPinId](const MaterialLink& link) { return link.EndPinID == endPinId; }),
-                                m_Links.end());
-
-                            // On enregistre le nouveau câble parfait
+                                [endPinId](const MaterialLink& link) { return link.EndPinID == endPinId; }), m_Links.end());
                             m_Links.push_back({ ed::LinkId(GetNextId()), startPinId, endPinId });
                         }
                     }
+                }
+            }
+
+            // --- NOUVEAU : Si on lâche un câble dans le vide ! ---
+            ed::PinId newNodePinId = 0;
+            if (ed::QueryNewNode(&newNodePinId)) {
+                if (ed::AcceptNewItem()) {
+                    m_NewNodeLinkPinId = newNodePinId;
+                    m_ContextPopupPos = ed::ScreenToCanvas(ImGui::GetMousePos());
+                    openNodeMenu = true; // On signale qu'il faut ouvrir le menu contextuel
                 }
             }
         }
         ed::EndCreate();
 
         // =========================================================
-        // 4. LOGIQUE DE SUPPRESSION DE CÂBLE (Alt + Clic)
+        // 4. LOGIQUE DE SUPPRESSION (Câbles ET Noeuds !)
         // =========================================================
         if (ed::BeginDelete()) {
+            // Suppression des câbles (Alt+Clic ou Suppr)
             ed::LinkId deletedLinkId = 0;
             while (ed::QueryDeletedLink(&deletedLinkId)) {
                 if (ed::AcceptDeletedItem()) {
                     m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
-                        [deletedLinkId](const MaterialLink& link) { return link.ID == deletedLinkId; }),
-                        m_Links.end());
+                        [deletedLinkId](const MaterialLink& link) { return link.ID == deletedLinkId; }), m_Links.end());
+                }
+            }
+
+            // --- NOUVEAU : Suppression des Noeuds (Touche Suppr) ---
+            ed::NodeId deletedNodeId = 0;
+            while (ed::QueryDeletedNode(&deletedNodeId)) {
+                // On empêche la suppression du Base Material !
+                auto node = FindNode(deletedNodeId);
+                if (node && node->Name == "Base Material") {
+                    ed::RejectDeletedItem();
+                } else if (ed::AcceptDeletedItem()) {
+                    // 1. On supprime tous les câbles branchés à ce noeud pour éviter les crashs
+                    m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
+                        [this, deletedNodeId](const MaterialLink& link) {
+                            MaterialPin* p1 = FindPin(link.StartPinID);
+                            MaterialPin* p2 = FindPin(link.EndPinID);
+                            return (p1 && p1->NodeID == deletedNodeId) || (p2 && p2->NodeID == deletedNodeId);
+                        }), m_Links.end());
+
+                    // 2. On supprime le noeud de la mémoire
+                    m_Nodes.erase(std::remove_if(m_Nodes.begin(), m_Nodes.end(),
+                        [deletedNodeId](const MaterialNode& n) { return n.ID == deletedNodeId; }), m_Nodes.end());
                 }
             }
         }
         ed::EndDelete();
 
         // =========================================================
-        // 5. MENU CONTEXTUEL (CLIC DROIT)
+        // 6. RACCOURCIS SOURIS SUR LES PINS (Alt + Clic)
         // =========================================================
-        // On "suspend" l'éditeur nodal pour dessiner une fenêtre ImGui standard par-dessus
+        ed::PinId hoveredPin = ed::GetHoveredPin();
+        if (hoveredPin) {
+            // Si on clique gauche sur une Pin en survol...
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+
+                // Si la touche ALT est enfoncée, on coupe tout !
+                if (ImGui::GetIO().KeyAlt) {
+                    m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
+                        [hoveredPin](const MaterialLink& link) {
+                            return link.StartPinID == hoveredPin || link.EndPinID == hoveredPin;
+                        }), m_Links.end());
+                }
+            }
+        }
+
+        // =========================================================
+        // 5. MENU CONTEXTUEL & AUTO-CONNEXION
+        // =========================================================
         ed::Suspend();
 
+        // Clic droit classique dans le vide
         if (ed::ShowBackgroundContextMenu()) {
-            ImGui::OpenPopup("CreateNewNode");
-            // On traduit les pixels de l'écran en coordonnées du monde nodal !
+            m_NewNodeLinkPinId = 0; // Ce n'est pas un Drag&Drop
             m_ContextPopupPos = ed::ScreenToCanvas(ImGui::GetMousePos());
+            ImGui::OpenPopup("CreateNewNode");
+        }
+
+        // Si on a lâché un câble dans le vide
+        if (openNodeMenu) {
+            ImGui::OpenPopup("CreateNewNode");
         }
 
         if (ImGui::BeginPopup("CreateNewNode")) {
             ImGui::TextDisabled("Create Node");
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Texture2D")) { SpawnNode("Texture2D", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Multiply"))  { SpawnNode("Multiply", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Float"))     { SpawnNode("Float", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Clamp"))     { SpawnNode("Clamp", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Power"))       { SpawnNode("Pow", m_ContextPopupPos); }
+            MaterialNode* spawnedNode = nullptr;
 
+            if (ImGui::MenuItem("Color"))     { spawnedNode = SpawnNode("Color", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Texture2D")) { spawnedNode = SpawnNode("Texture2D", m_ContextPopupPos); }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Multiply"))  { spawnedNode = SpawnNode("Multiply", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Add"))       { spawnedNode = SpawnNode("Add", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Subtract"))  { spawnedNode = SpawnNode("Subtract", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Mix"))       { spawnedNode = SpawnNode("Mix", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Clamp"))     { spawnedNode = SpawnNode("Clamp", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Pow"))       { spawnedNode = SpawnNode("Pow", m_ContextPopupPos); }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Float"))     { spawnedNode = SpawnNode("Float", m_ContextPopupPos); }
+
+            // --- NOUVEAU : AUTO-CONNEXION INTELLIGENTE ---
+            if (spawnedNode && m_NewNodeLinkPinId.Get() != 0) {
+                MaterialPin* startPin = FindPin(m_NewNodeLinkPinId);
+                if (startPin) {
+                    MaterialPin* targetPin = nullptr;
+                    // On cherche une broche compatible sur le nouveau noeud (Même Type : Float, Vec3...)
+                    if (startPin->Kind == ed::PinKind::Output) {
+                        for (auto& pin : spawnedNode->Inputs) {
+                            if (pin.Type == startPin->Type) { targetPin = &pin; break; }
+                        }
+                    } else {
+                        for (auto& pin : spawnedNode->Outputs) {
+                            if (pin.Type == startPin->Type) { targetPin = &pin; break; }
+                        }
+                    }
+
+                    // Si on a trouvé une broche compatible, on les relie !
+                    if (targetPin) {
+                        auto inputPinId = (targetPin->Kind == ed::PinKind::Input) ? targetPin->ID : startPin->ID;
+                        auto outputPinId = (targetPin->Kind == ed::PinKind::Output) ? targetPin->ID : startPin->ID;
+
+                        // Sécurité : on débranche l'ancien câble si l'entrée était déjà occupée
+                        m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
+                            [inputPinId](const MaterialLink& link) { return link.EndPinID == inputPinId; }), m_Links.end());
+
+                        m_Links.push_back({ ed::LinkId(GetNextId()), outputPinId, inputPinId });
+                    }
+                }
+                m_NewNodeLinkPinId = 0; // Reset
+            }
             ImGui::EndPopup();
+        } else {
+            // Si le joueur ferme le menu sans rien créer (en cliquant ailleurs)
+            m_NewNodeLinkPinId = 0;
         }
 
-        // On rend la main à l'éditeur nodal
         ed::Resume();
 
         // =========================================================
@@ -236,7 +314,7 @@ MaterialPin* MaterialEditorPanel::FindPin(ed::PinId id) {
     return nullptr;
 }
 
-void MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
+MaterialNode* MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
     MaterialNode newNode;
     newNode.ID = GetNextId();
     newNode.Name = type;
@@ -285,6 +363,8 @@ void MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
 
     m_Nodes.push_back(newNode);
     ed::SetNodePosition(newNode.ID, position);
+
+    return &m_Nodes.back();
 }
 
 void MaterialEditorPanel::Save(const std::filesystem::path& path) {
