@@ -2,7 +2,8 @@
 
 MaterialEditorPanel::MaterialEditorPanel() {
     ed::Config config;
-    config.SettingsFile = "MaterialEditor.json"; // Sauvegarde la position de tes noeuds !
+    // --- LE KILL SWITCH : On coupe le lien avec le fichier corrompu ! ---
+    config.SettingsFile = nullptr;
     m_Context = ed::CreateEditor(&config);
 }
 
@@ -13,50 +14,54 @@ MaterialEditorPanel::~MaterialEditorPanel() {
 void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     if (!isOpen) return;
 
-    ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
-
-    // --- LE FIX : On enlève les marges pour que la grille touche les bords ---
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-
     if (ImGui::Begin("Material Editor", &isOpen)) {
+
+        // --- TEXTE DE DIAGNOSTIC ---
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[DEBUG] Material Editor Actif ! Taille : %.1f x %.1f", avail.x, avail.y);
+
+        // Sécurité anti-crash
+        if (avail.x < 100.0f) avail.x = 800.0f;
+        if (avail.y < 100.0f) avail.y = 600.0f;
 
         ed::SetCurrentEditor(m_Context);
 
-        // 0,0 indique qu'on remplit 100% de la fenêtre disponible
-        ed::Begin("My Material Graph", ImVec2(0.0f, 0.0f));
+        // On utilise la taille sécurisée
+        ed::Begin("My Material Graph", avail);
 
         // Noeud 1
-        ed::BeginNode(1);
+        ed::BeginNode(ed::NodeId(1));
             ImGui::Text("Base Material");
             ImGui::Separator();
-            ed::BeginPin(2, ed::PinKind::Input);
+            ed::BeginPin(ed::PinId(2), ed::PinKind::Input);
                 ImGui::Text("-> Base Color");
             ed::EndPin();
-            ed::BeginPin(3, ed::PinKind::Input);
+            ed::BeginPin(ed::PinId(3), ed::PinKind::Input);
                 ImGui::Text("-> Roughness");
             ed::EndPin();
         ed::EndNode();
 
         // Noeud 2
-        ed::BeginNode(4);
+        ed::BeginNode(ed::NodeId(4));
             ImGui::Text("Color");
             ImGui::Separator();
-            ed::BeginPin(5, ed::PinKind::Output);
+            ed::BeginPin(ed::PinId(5), ed::PinKind::Output);
                 ImGui::Text("RGB ->");
             ed::EndPin();
         ed::EndNode();
 
-        // --- LE FIX MAGIQUE : Placement et Focus de la caméra ---
+        // --- PLACEMENT FORCÉ (On zappe la caméra capricieuse) ---
+        ed::SetNodePosition(ed::NodeId(1), ImVec2(400, 100));
+        ed::SetNodePosition(ed::NodeId(4), ImVec2(50, 100));
+
         if (m_FirstFrame) {
-            ed::SetNodePosition(1, ImVec2(250, 100)); // On le met à droite
-            ed::SetNodePosition(4, ImVec2(50, 100));  // On le met à gauche
-            ed::NavigateToContent(); // Ordre à la caméra de cadrer tous les noeuds
+            ed::NavigateToContent(0.0f); // Recadrage instantané
             m_FirstFrame = false;
         }
 
         ed::End();
-        ed::SetCurrentEditor(nullptr); // Très bonne pratique de nettoyage
+        ed::SetCurrentEditor(nullptr);
     }
+
     ImGui::End();
-    ImGui::PopStyleVar();
 }
