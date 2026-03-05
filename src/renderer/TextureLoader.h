@@ -8,7 +8,8 @@ class TextureLoader {
 public:
     static uint32_t LoadTexture(const std::string& path) {
         int width, height, channels;
-        stbi_set_flip_vertically_on_load(true); 
+        stbi_set_flip_vertically_on_load(false);
+
         unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 4);
 
         if (!data) {

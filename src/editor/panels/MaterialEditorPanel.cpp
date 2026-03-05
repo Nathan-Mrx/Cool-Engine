@@ -65,27 +65,30 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         // 1. DESSINER LES NOEUDS DYNAMIQUEMENT
         // =========================================================
         for (auto& node : m_Nodes) {
+            // === DEBUT DU NOEUD ===
             ed::BeginNode(node.ID);
             ImGui::Text("%s", node.Name.c_str());
-            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 5)); // Petit espace sous le titre
 
+            // ====================================================
+            // COLONNE 1 : GAUCHE (Inputs & Interface)
+            // ====================================================
+            ImGui::BeginGroup();
+
+            // 1. Dessiner les entrées
             for (auto& input : node.Inputs) {
-                // 1. On dessine la pastille de connexion
                 ed::BeginPin(input.ID, input.Kind);
                 ImGui::Text("-> %s", input.Name.c_str());
                 ed::EndPin();
 
-                // 2. --- L'UI MAGIQUE FAÇON UNREAL ENGINE ---
                 bool isConnected = false;
                 for (auto& link : m_Links) {
                     if (link.EndPinID == input.ID) { isConnected = true; break; }
                 }
 
-                // S'il n'y a aucun câble, on affiche un champ texte direct !
                 if (!isConnected) {
                     ImGui::SameLine();
-                    ImGui::PushID((int)input.ID.Get()); // Sécurité anti-bug de clics
-
+                    ImGui::PushID((int)input.ID.Get());
                     if (input.Type == PinType::Float) {
                         ImGui::PushItemWidth(60.0f);
                         ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
@@ -99,39 +102,40 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 }
             }
 
+            // 2. Dessiner l'UI centrale (Couleur, Texture...)
             ImGui::PushID((int)node.ID.Get());
             if (node.Name == "Color") {
                 ImGui::PushItemWidth(120.0f);
                 ImGui::ColorEdit4("##val", &node.ColorValue[0], ImGuiColorEditFlags_NoInputs);
                 ImGui::PopItemWidth();
             }
+            else if (node.Name == "Float") { // Au cas où tu aurais encore un noeud Float pur
+                ImGui::PushItemWidth(80.0f);
+                ImGui::DragFloat("##val", &node.FloatValue, 0.01f);
+                ImGui::PopItemWidth();
+            }
             else if (node.Name == "Texture2D") {
                 ImGui::PushItemWidth(120.0f);
-
-                // 1. L'affichage dynamique
                 if (node.TexturePath.empty()) {
                     ImGui::Button("Drop Texture Here", ImVec2(120, 30));
                 } else {
-                    // Si on a un chemin mais pas encore l'image en RAM (sécurité)
                     if (node.TextureID == 0) {
                         node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
                     }
-
-                    // On dessine l'image avec ImGui !
                     if (node.TextureID != 0) {
-                        ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120));
+                        // --- FIX DE LA MINIATURE : On retourne les UVs d'ImGui ! ---
+                        // Les deux derniers ImVec2(0,1) et (1,0) forcent l'image à se lire à l'envers
+                        ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
                     } else {
                         ImGui::TextColored(ImVec4(1,0,0,1), "Load Failed");
                     }
                 }
 
-                // 2. Le glisser-déposer
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                         std::filesystem::path path = (const char*)payload->Data;
                         if (path.extension() == ".png" || path.extension() == ".jpg") {
                             node.TexturePath = path.string();
-                            // On charge l'image en RAM instantanément lors du drop !
                             node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
                         }
                     }
@@ -141,12 +145,28 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             }
             ImGui::PopID();
 
+            ImGui::EndGroup(); // FIN DE LA COLONNE GAUCHE
+
+            // ====================================================
+            // ESPACEMENT CENTRAL
+            // ====================================================
+            if (!node.Outputs.empty()) {
+                ImGui::SameLine(0, 20.0f); // 20 pixels d'écart entre les inputs et les outputs
+            }
+
+            // ====================================================
+            // COLONNE 2 : DROITE (Outputs)
+            // ====================================================
+            ImGui::BeginGroup();
             for (auto& output : node.Outputs) {
                 ed::BeginPin(output.ID, output.Kind);
-                ImGui::Text("%s ->", output.Name.c_str());
+                ImGui::Text("%s ->", output.Name.c_str()); // La flèche à droite !
                 ed::EndPin();
             }
+            ImGui::EndGroup(); // FIN DE LA COLONNE DROITE
+
             ed::EndNode();
+            // === FIN DU NOEUD ===
         }
 
         // =========================================================
