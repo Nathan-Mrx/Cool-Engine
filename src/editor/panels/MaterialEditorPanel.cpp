@@ -7,11 +7,77 @@
 
 #include "renderer/TextureLoader.h"
 
+static void DrawPinIcon(PinType type, bool connected) {
+    ImVec2 size(18, 14); // Plus large pour faire rentrer la flèche
+
+    if (ImGui::IsRectVisible(size)) {
+        ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        // Centre du cercle un peu décalé à gauche
+        ImVec2 center = ImVec2(cursorPos.x + 6, cursorPos.y + 7);
+
+        ImVec4 color;
+        switch (type) {
+        case PinType::Float: color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); break;
+        case PinType::Vec2:  color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f); break;
+        case PinType::Vec3:  color = ImVec4(0.2f, 0.4f, 0.9f, 1.0f); break;
+        case PinType::Vec4:  color = ImVec4(0.8f, 0.2f, 0.8f, 1.0f); break;
+        }
+        ImU32 color32 = ImGui::GetColorU32(color);
+
+        if (connected) {
+            drawList->AddCircleFilled(center, 5.0f, color32);
+        } else {
+            drawList->AddCircle(center, 5.0f, color32, 0, 2.0f);
+            drawList->AddCircleFilled(center, 3.0f, ImGui::GetColorU32(ImVec4(color.x, color.y, color.z, 0.2f)));
+        }
+
+        // --- NOUVEAU : La petite pointe du triangle (flèche) ---
+        ImVec2 p1(cursorPos.x + 12, cursorPos.y + 3);
+        ImVec2 p2(cursorPos.x + 12, cursorPos.y + 11);
+        ImVec2 p3(cursorPos.x + 17, cursorPos.y + 7);
+        drawList->AddTriangleFilled(p1, p2, p3, color32);
+    }
+    ImGui::Dummy(size);
+}
+
+
 MaterialEditorPanel::MaterialEditorPanel() {
     ed::Config config;
     // --- LE KILL SWITCH (Bloque la corruption de caméra) ---
     config.SettingsFile = nullptr;
     m_Context = ed::CreateEditor(&config);
+
+    // =========================================================
+    // --- NOUVEAU : LE THÈME VISUEL (Façon Unreal Engine) ---
+    // =========================================================
+    ed::SetCurrentEditor(m_Context);
+    ed::Style& style = ed::GetStyle();
+
+    // Formes et épaisseurs
+    style.NodeRounding = 8.0f;
+    style.PinRounding = 4.0f;
+    style.LinkStrength = 4.0f;          // Câbles plus lisses et courbés
+    style.NodeBorderWidth = 1.5f;
+    style.HoveredNodeBorderWidth = 2.5f;
+    style.SelectedNodeBorderWidth = 3.0f;
+    style.PinBorderWidth = 1.0f;
+
+    // Palette de Couleurs "Dark Mode Professionnel"
+    style.Colors[ed::StyleColor_Bg]                 = ImColor(30, 30, 30, 255);
+    style.Colors[ed::StyleColor_Grid]               = ImColor(50, 50, 50, 100);
+    style.Colors[ed::StyleColor_NodeBg]             = ImColor(45, 48, 51, 255);
+    style.Colors[ed::StyleColor_NodeBorder]         = ImColor(30, 30, 30, 255);
+    style.Colors[ed::StyleColor_HovNodeBorder]  = ImColor(80, 120, 200, 255);
+    style.Colors[ed::StyleColor_SelNodeBorder]  = ImColor(255, 165, 0, 255);
+    style.Colors[ed::StyleColor_HovLinkBorder]  = ImColor(80, 120, 200, 255);
+    style.Colors[ed::StyleColor_SelLinkBorder]  = ImColor(255, 165, 0, 255);
+    style.Colors[ed::StyleColor_PinRect]            = ImColor(80, 120, 200, 255);
+    style.Colors[ed::StyleColor_PinRectBorder]      = ImColor(80, 120, 200, 255);
+
+    ed::SetCurrentEditor(nullptr);
+    // =========================================================
 
     BuildDefaultNodes();
 }
@@ -67,103 +133,175 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         for (auto& node : m_Nodes) {
             // === DEBUT DU NOEUD ===
             ed::BeginNode(node.ID);
-            ImGui::Text("%s", node.Name.c_str());
-            ImGui::Dummy(ImVec2(0, 5)); // Espace sous le titre
 
-            // Création d'un tableau invisible à 2 colonnes
-            if (ImGui::BeginTable("node_table", 2, ImGuiTableFlags_SizingFixedFit)) {
-                ImGui::TableNextRow();
+            // ==========================================
+            // 1. LE TEXTE DU HEADER (Remonté)
+            // ==========================================
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            // On remonte le curseur de 4 pixels pour mieux centrer le texte dans la couleur !
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 4.0f);
+            ImGui::TextUnformatted(node.Name.c_str());
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 6)); // Espace sous le titre
 
-                // ==========================================
-                // COLONNE 1 : GAUCHE (Inputs + Interface)
-                // ==========================================
-                ImGui::TableSetColumnIndex(0);
+            // ==========================================
+            // COLONNE 1 : GAUCHE (Inputs + Interface)
+            // ==========================================
+            ImGui::BeginGroup();
+            for (auto& input : node.Inputs) {
+                bool isConnected = false;
+                for (auto& link : m_Links) { if (link.EndPinID == input.ID) { isConnected = true; break; } }
 
-                for (auto& input : node.Inputs) {
-                    ed::BeginPin(input.ID, input.Kind);
-                    ImGui::Text("-> %s", input.Name.c_str());
-                    ed::EndPin();
+                ed::BeginPin(input.ID, input.Kind);
+                DrawPinIcon(input.Type, isConnected);
+                ImGui::SameLine(0, 6);
+                ImGui::TextUnformatted(input.Name.c_str());
+                ed::EndPin();
 
-                    // Champ texte si non connecté
-                    bool isConnected = false;
-                    for (auto& link : m_Links) { if (link.EndPinID == input.ID) { isConnected = true; break; } }
-
-                    if (!isConnected) {
-                        ImGui::SameLine();
-                        ImGui::PushID((int)input.ID.Get());
-                        if (input.Type == PinType::Float) {
-                            ImGui::PushItemWidth(60.0f);
-                            ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
-                            ImGui::PopItemWidth();
-                        } else if (input.Type == PinType::Vec3) {
-                            ImGui::PushItemWidth(60.0f);
-                            ImGui::ColorEdit3("##v", &input.Vec3Value[0], ImGuiColorEditFlags_NoInputs);
-                            ImGui::PopItemWidth();
-                        }
-                        ImGui::PopID();
+                if (!isConnected) {
+                    ImGui::SameLine(0, 6);
+                    ImGui::PushID((int)input.ID.Get());
+                    if (input.Type == PinType::Float) {
+                        ImGui::PushItemWidth(60.0f);
+                        ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
+                        ImGui::PopItemWidth();
+                    } else if (input.Type == PinType::Vec3) {
+                        ImGui::PushItemWidth(60.0f);
+                        ImGui::ColorEdit3("##v", &input.Vec3Value[0], ImGuiColorEditFlags_NoInputs);
+                        ImGui::PopItemWidth();
                     }
+                    ImGui::PopID();
                 }
-
-                // UI Centrale du Noeud
-                ImGui::PushID((int)node.ID.Get());
-                if (node.Name == "Color") {
-                    ImGui::PushItemWidth(120.0f);
-                    ImGui::ColorEdit4("##val", &node.ColorValue[0], ImGuiColorEditFlags_NoInputs);
-                    ImGui::PopItemWidth();
-                } else if (node.Name == "Float") {
-                    ImGui::PushItemWidth(80.0f);
-                    ImGui::DragFloat("##val", &node.FloatValue, 0.01f);
-                    ImGui::PopItemWidth();
-                } else if (node.Name == "Texture2D") {
-                    ImGui::PushItemWidth(120.0f);
-                    if (node.TexturePath.empty()) {
-                        ImGui::Button("Drop Texture", ImVec2(120, 30));
-                    } else {
-                        if (node.TextureID == 0) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
-                        if (node.TextureID != 0) {
-                            // LE FIX EST ICI : On utilise l'affichage standard d'ImGui !
-                            ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
-                        }
-                    }
-                    // Le Drag & Drop
-                    if (ImGui::BeginDragDropTarget()) {
-                        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                            std::filesystem::path path = (const char*)p->Data;
-                            if (path.extension() == ".png" || path.extension() == ".jpg") {
-                                node.TexturePath = path.string();
-                                node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
-                            }
-                        }
-                        ImGui::EndDragDropTarget();
-                    }
-                    ImGui::PopItemWidth();
-                }
-                ImGui::PopID();
-
-                // ==========================================
-                // COLONNE 2 : DROITE (Outputs)
-                // ==========================================
-                ImGui::TableSetColumnIndex(1);
-
-                for (auto& output : node.Outputs) {
-                    // Petite astuce pour coller le texte de sortie tout à droite du noeud
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(output.Name.c_str()).x - 25.0f);
-                    ed::BeginPin(output.ID, output.Kind);
-                    ImGui::Text("%s ->", output.Name.c_str());
-                    ed::EndPin();
-                }
-
-                ImGui::EndTable();
             }
+
+            // ... UI Centrale (Garde ton code existant pour Color, Float, Texture2D...) ...
+            ImGui::PushID((int)node.ID.Get());
+            if (node.Name == "Color") {
+                ImGui::PushItemWidth(120.0f);
+                ImGui::ColorEdit4("##val", &node.ColorValue[0], ImGuiColorEditFlags_NoInputs);
+                ImGui::PopItemWidth();
+            } else if (node.Name == "Float") {
+                ImGui::PushItemWidth(80.0f);
+                ImGui::DragFloat("##val", &node.FloatValue, 0.01f);
+                ImGui::PopItemWidth();
+            } else if (node.Name == "Texture2D") {
+                ImGui::PushItemWidth(120.0f);
+                if (node.TexturePath.empty()) {
+                    ImGui::Button("Drop Texture", ImVec2(120, 30));
+                } else {
+                    if (node.TextureID == 0) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                    if (node.TextureID != 0) {
+                        ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
+                    }
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                        std::filesystem::path path = (const char*)p->Data;
+                        if (path.extension() == ".png" || path.extension() == ".jpg") {
+                            node.TexturePath = path.string();
+                            node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::PopItemWidth();
+            }
+            ImGui::PopID();
+            // ... Fin UI Centrale ...
+
+            ImGui::EndGroup(); // FIN COLONNE GAUCHE
+
+            // ==========================================
+            // COLONNE 2 : DROITE (Outputs Alignés à droite !)
+            // ==========================================
+            if (!node.Outputs.empty()) {
+                ImGui::SameLine(0, 20.0f);
+
+                ImGui::BeginGroup();
+
+                // 1. On calcule le texte le plus long pour pouvoir aligner les autres
+                float maxOutputWidth = 0.0f;
+                for (auto& output : node.Outputs) {
+                    float w = ImGui::CalcTextSize(output.Name.c_str()).x;
+                    if (w > maxOutputWidth) maxOutputWidth = w;
+                }
+
+                // 2. On dessine avec un décalage dynamique (padding)
+                for (auto& output : node.Outputs) {
+                    bool isConnected = false;
+                    for (auto& link : m_Links) { if (link.StartPinID == output.ID) { isConnected = true; break; } }
+
+                    float textWidth = ImGui::CalcTextSize(output.Name.c_str()).x;
+                    float padding = maxOutputWidth - textWidth; // L'espace vide à combler à gauche du texte
+
+                    ed::BeginPin(output.ID, output.Kind);
+
+                    // On pousse le texte vers la droite s'il est plus court que le max
+                    if (padding > 0) {
+                        ImGui::Dummy(ImVec2(padding, 0));
+                        ImGui::SameLine(0, 0);
+                    }
+
+                    ImGui::TextUnformatted(output.Name.c_str());
+                    ImGui::SameLine(0, 6);
+                    DrawPinIcon(output.Type, isConnected);
+                    ed::EndPin();
+                }
+                ImGui::EndGroup(); // FIN COLONNE DROITE
+            }
+
             ed::EndNode();
+
+            // ==========================================
+            // 2. LE DESSIN MAGIQUE DU HEADER (En arrière-plan)
+            // ==========================================
+            // On utilise IsItemVisible() car on ne peut connaître la taille du noeud qu'APRÈS ed::EndNode()
+            if (ImGui::IsItemVisible()) {
+                ImVec2 nodeMin = ImGui::GetItemRectMin(); // Coin haut-gauche du noeud à l'écran
+                ImVec2 nodeMax = ImGui::GetItemRectMax(); // Coin bas-droite
+
+                auto drawList = ed::GetNodeBackgroundDrawList(node.ID);
+
+                // La hauteur de la zone colorée (Taille du texte + marges)
+                float headerHeight = ImGui::GetTextLineHeight() + 12.0f;
+                ImVec2 headerMax = ImVec2(nodeMax.x, nodeMin.y + headerHeight);
+
+                // On choisit une couleur d'entête stylisée selon le type du noeud
+                ImColor headerColor(45, 55, 65, 255); // Gris par défaut
+                if (node.Name == "Base Material") headerColor = ImColor(30, 80, 50, 255); // Vert pour le Master
+                else if (node.Name == "Texture2D") headerColor = ImColor(120, 40, 40, 255); // Rouge pour l'Asset
+                else if (node.Name == "Multiply" || node.Name == "Add" || node.Name == "Clamp" || node.Name == "Pow") headerColor = ImColor(30, 70, 100, 255); // Bleu Math
+                else if (node.Name == "Color" || node.Name == "Float") headerColor = ImColor(120, 100, 30, 255); // Jaune Variables
+
+                // On dessine le rectangle plein, en arrondissant SEULEMENT les coins du haut !
+                drawList->AddRectFilled(nodeMin, headerMax, headerColor, ed::GetStyle().NodeRounding, ImDrawFlags_RoundCornersTop);
+
+                // Ligne fine noire pour délimiter le titre du contenu du noeud
+                drawList->AddLine(ImVec2(nodeMin.x, headerMax.y), headerMax, ImColor(30, 30, 30, 255), 2.0f);
+            }
             // === FIN DU NOEUD ===
         }
 
         // =========================================================
-        // 2. DESSINER LES CÂBLES EXISTANTS
+        // 2. DESSINER LES CÂBLES EXISTANTS AVEC LEURS COULEURS !
         // =========================================================
         for (auto& link : m_Links) {
-            ed::Link(link.ID, link.StartPinID, link.EndPinID);
+            MaterialPin* startPin = FindPin(link.StartPinID);
+
+            // Couleur par défaut (Gris clair)
+            ImVec4 linkColor = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+
+            if (startPin) {
+                switch (startPin->Type) {
+                case PinType::Float: linkColor = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); break; // Vert (Float)
+                case PinType::Vec2:  linkColor = ImVec4(0.8f, 0.8f, 0.2f, 1.0f); break; // Jaune (UVs)
+                case PinType::Vec3:  linkColor = ImVec4(0.2f, 0.4f, 0.9f, 1.0f); break; // Bleu (Couleur / Normale)
+                case PinType::Vec4:  linkColor = ImVec4(0.8f, 0.2f, 0.8f, 1.0f); break; // Violet (Texture Complète)
+                }
+            }
+
+            // On dessine le câble avec sa couleur et une belle épaisseur (2.5f)
+            ed::Link(link.ID, link.StartPinID, link.EndPinID, linkColor, 2.5f);
         }
 
         // =========================================================
@@ -171,7 +309,7 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         // =========================================================
         bool openNodeMenu = false; // Drapeau pour ouvrir le menu
 
-        if (ed::BeginCreate(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 2.0f)) {
+        if (ed::BeginCreate(ImVec4(0.3f, 0.5f, 0.8f, 1.0f), 2.5f)) {
             ed::PinId startPinId = 0, endPinId = 0;
 
             // Si on relie deux connecteurs
@@ -758,3 +896,4 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
 
     return "val_" + std::to_string(sourceId);
 }
+
