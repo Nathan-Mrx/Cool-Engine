@@ -13,4 +13,5 @@ public:
 
 private:
     ed::EditorContext* m_Context = nullptr;
+    bool m_FirstFrame = true;
 };

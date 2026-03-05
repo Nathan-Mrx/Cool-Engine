@@ -36,6 +36,7 @@ void EditorLayer::OnAttach() {
 
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
     m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
+    m_MaterialEditorPanel = std::make_unique<MaterialEditorPanel>();
 
     // 2. Connexion des callbacks du Content Browser !
     m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
@@ -550,7 +551,10 @@ void EditorLayer::OnImGuiRender() {
 
     DrawMenuBar();
 
-    UI_Toolbar();
+    bool isSceneTabActive = (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene);
+    if (isSceneTabActive) {
+        UI_Toolbar();
+    }
 
     // --- RACCOURCIS CLAVIER ---
     bool control = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
