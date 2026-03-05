@@ -32,9 +32,17 @@ enum class SceneState {
     Pause = 2
 };
 
+enum class TabType {
+    Scene,
+    Material
+};
+
 struct EditorTab {
     std::string Name;
     std::filesystem::path Filepath;
+    TabType Type = TabType::Scene; // Le type définit quels panneaux s'affichent !
+
+    // Données spécifiques à la scène
     std::shared_ptr<Scene> SceneContext;
     bool IsPrefab = false;
 };
@@ -105,5 +113,7 @@ private:
 
     std::unique_ptr<MaterialEditorPanel> m_MaterialEditorPanel;
     bool m_ShowMaterialEditor = false;
+
+    void OpenMaterial(const std::filesystem::path& path);
 
 };

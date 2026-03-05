@@ -101,6 +101,8 @@ void ContentBrowserPanel::OnImGuiRender() {
                         OnSceneOpenCallback(path);
                     } else if (isPrefab && OnPrefabOpenCallback) {
                         OnPrefabOpenCallback(path);
+                    } else if (path.extension() == ".cemat" && OnMaterialOpenCallback) {
+                        OnMaterialOpenCallback(path);
                     }
                 }
 
@@ -131,6 +133,12 @@ void ContentBrowserPanel::OnImGuiRender() {
 
             SceneSerializer serializer(tempScene);
             serializer.Serialize(newPrefabPath.string());
+        }
+        if (ImGui::MenuItem("New Material")) {
+            std::filesystem::path newMatPath = m_CurrentDirectory / "NewMaterial.cemat";
+            std::ofstream f(newMatPath);
+            f << "{ \"Type\": \"MaterialGraph\" }"; // Fichier JSON basique
+            f.close();
         }
         ImGui::EndPopup();
     }
