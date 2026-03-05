@@ -12,48 +12,11 @@
 #include "../../renderer/Framebuffer.h"
 #include "../../renderer/Mesh.h"
 #include "../../renderer/Shader.h"
+#include "../materials/MaterialGraph.h"
+
 
 namespace ed = ax::NodeEditor;
 
-// --- LES STRUCTURES DE DONNÉES DU GRAPHE ---
-enum class PinType {
-    Float,
-    Vec2,
-    Vec3,
-    Vec4
-};
-
-struct MaterialPin {
-    ed::PinId ID;
-    ed::NodeId NodeID;
-    std::string Name;
-    ed::PinKind Kind;
-    PinType Type;
-
-    // --- NOUVEAU : Valeurs par défaut si le pin n'est pas branché ---
-    float FloatValue = 0.0f;
-    glm::vec3 Vec3Value = {1.0f, 1.0f, 1.0f};
-    glm::vec2 Vec2Value = { 1.0f, 1.0f };
-};
-
-struct MaterialNode {
-    ed::NodeId ID;
-    std::string Name;
-    std::vector<MaterialPin> Inputs;
-    std::vector<MaterialPin> Outputs;
-
-    float FloatValue = 1.0f;
-    glm::vec4 ColorValue = {1.0f, 1.0f, 1.0f, 1.0f};
-
-    std::string TexturePath = "";
-    unsigned int TextureID = 0;
-};
-
-struct MaterialLink {
-    ed::LinkId ID;
-    ed::PinId StartPinID;
-    ed::PinId EndPinID;
-};
 
 class MaterialEditorPanel {
 public:
@@ -68,7 +31,6 @@ public:
 private:
     void BuildDefaultNodes();
 
-    MaterialNode* SpawnNode(const std::string& type, ImVec2 position);
     ImVec2 m_ContextPopupPos;
 
     MaterialPin* FindPin(ed::PinId id);

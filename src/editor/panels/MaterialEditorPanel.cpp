@@ -11,6 +11,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <filesystem>
 
+#include "editor/materials/MaterialNodeRegistry.h"
+
 static void DrawPinIcon(PinType type, bool connected) {
     ImVec2 size(24, 14); // Plus large pour la marge
 
@@ -96,25 +98,14 @@ MaterialEditorPanel::~MaterialEditorPanel() {
 }
 
 void MaterialEditorPanel::BuildDefaultNodes() {
-    MaterialNode baseNode;
-    baseNode.ID = GetNextId();
-    baseNode.Name = "Base Material";
+    m_Nodes.clear();
+    m_Links.clear();
+    m_NextId = 1; // On reset l'ID
 
-    // Le setup PBR standard !
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Base Color", ed::PinKind::Input, PinType::Vec3 });
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Normal", ed::PinKind::Input, PinType::Vec3 });
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Metallic", ed::PinKind::Input, PinType::Float });
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Roughness", ed::PinKind::Input, PinType::Float });
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Specular", ed::PinKind::Input, PinType::Float });
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "AO", ed::PinKind::Input, PinType::Float });
+    // Création via le Registre !
+    MaterialNode baseNode = MaterialNodeRegistry::CreateNode("Base Material", m_NextId);
+    ed::SetNodePosition(baseNode.ID, ImVec2(400, 0));
     m_Nodes.push_back(baseNode);
-
-    // --- INITIALISATION DE LA PREVIEW 3D ---
-    FramebufferSpecification fbSpec;
-    fbSpec.Width = 512;
-    fbSpec.Height = 512;
-    m_PreviewFramebuffer = std::make_shared<Framebuffer>(fbSpec);
-    m_PreviewMesh = PrimitiveFactory::CreateSphere(64, 64); // Une sphère bien lisse
 }
 
 void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
@@ -464,11 +455,7 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 ImVec2 headerMax = ImVec2(nodeMax.x, nodeMin.y + headerHeight);
 
                 // On choisit une couleur d'entête stylisée selon le type du noeud
-                ImColor headerColor(45, 55, 65, 255); // Gris par défaut
-                if (node.Name == "Base Material") headerColor = ImColor(30, 80, 50, 255); // Vert pour le Master
-                else if (node.Name == "Texture2D") headerColor = ImColor(120, 40, 40, 255); // Rouge pour l'Asset
-                else if (node.Name == "Multiply" || node.Name == "Add" || node.Name == "Clamp" || node.Name == "Pow") headerColor = ImColor(30, 70, 100, 255); // Bleu Math
-                else if (node.Name == "Color" || node.Name == "Float") headerColor = ImColor(120, 100, 30, 255); // Jaune Variables
+                ImColor headerColor = MaterialNodeRegistry::GetNodeColor(node.Name);
 
                 // On dessine le rectangle plein, en arrondissant SEULEMENT les coins du haut !
                 drawList->AddRectFilled(nodeMin, headerMax, headerColor, ed::GetStyle().NodeRounding, ImDrawFlags_RoundCornersTop);
@@ -615,74 +602,47 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             ImGui::OpenPopup("CreateNewNode");
         }
 
-        if (ImGui::BeginPopup("CreateNewNode")) {
-            ImGui::TextDisabled("Create Node");
-            ImGui::Separator();
+        if (ImGui::BeginPopup("NodeContextMenu")) {
+            auto popupPos = ImGui::GetMousePosOnOpeningCurrentPopup();
+            m_ContextPopupPos = ed::ScreenToCanvas(popupPos);
 
-            MaterialNode* spawnedNode = nullptr;
+            // On trie les noeuds du registre par catégorie
+            std::map<std::string, std::vector<std::shared_ptr<IMaterialNodeDef>>> categorizedNodes;
+            for (const auto& [name, def] : MaterialNodeRegistry::GetRegistry()) {
+                categorizedNodes[def->GetCategory()].push_back(def);
+            }
 
-            if (ImGui::MenuItem("Add Reroute Node")) { spawnedNode = SpawnNode("Reroute", m_ContextPopupPos); }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Color"))     { spawnedNode = SpawnNode("Color", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Texture2D")) { spawnedNode = SpawnNode("Texture2D", m_ContextPopupPos); }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Multiply"))  { spawnedNode = SpawnNode("Multiply", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Add"))       { spawnedNode = SpawnNode("Add", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Subtract"))  { spawnedNode = SpawnNode("Subtract", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Mix"))       { spawnedNode = SpawnNode("Mix", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Clamp"))     { spawnedNode = SpawnNode("Clamp", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Pow"))       { spawnedNode = SpawnNode("Pow", m_ContextPopupPos); }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Float"))     { spawnedNode = SpawnNode("Float", m_ContextPopupPos); }
-            ImGui::Separator();
-            if (ImGui::MenuItem("TexCoords"))       { spawnedNode = SpawnNode("TexCoords", m_ContextPopupPos); }
-            if (ImGui::MenuItem("Tiling & Offset")) { spawnedNode = SpawnNode("TilingAndOffset", m_ContextPopupPos); }
+            // On génère les sous-menus
+            for (const auto& [category, nodes] : categorizedNodes) {
+                if (ImGui::BeginMenu(category.c_str())) {
+                    for (const auto& def : nodes) {
+                        if (ImGui::MenuItem(def->GetName().c_str())) {
+                            // On crée le nœud !
+                            MaterialNode newNode = MaterialNodeRegistry::CreateNode(def->GetName(), m_NextId);
+                            ed::SetNodePosition(newNode.ID, m_ContextPopupPos);
+                            m_Nodes.push_back(newNode);
 
+                            // Auto-Connexion Intelligente (Si on a tiré un fil dans le vide)
+                            if (m_NewNodeLinkPinId.Get() != 0) {
+                                MaterialPin* startPin = FindPin(m_NewNodeLinkPinId);
+                                if (startPin) {
+                                    MaterialPin* targetPin = nullptr;
+                                    auto& pinsList = (startPin->Kind == ed::PinKind::Output) ? m_Nodes.back().Inputs : m_Nodes.back().Outputs;
+                                    for (auto& pin : pinsList) {
+                                        if (pin.Type == startPin->Type) { targetPin = &pin; break; }
+                                    }
+                                    if (!targetPin && !pinsList.empty()) targetPin = &pinsList[0]; // Fallback
 
-            // --- NOUVEAU : AUTO-CONNEXION INTELLIGENTE ---
-            if (spawnedNode && m_NewNodeLinkPinId.Get() != 0) {
-                MaterialPin* startPin = FindPin(m_NewNodeLinkPinId);
-                if (startPin) {
-
-                    // Si on vient de créer un Reroute, on force ses types immédiatement !
-                    if (spawnedNode->Name == "Reroute") {
-                        spawnedNode->Inputs[0].Type = startPin->Type;
-                        spawnedNode->Outputs[0].Type = startPin->Type;
-                    }
-
-                    MaterialPin* targetPin = nullptr;
-                    // On cherche une broche compatible sur le nouveau noeud (Même Type : Float, Vec3...)
-                    if (startPin->Kind == ed::PinKind::Output) {
-                        for (auto& pin : spawnedNode->Inputs) {
-                            auto& pinsList = (startPin->Kind == ed::PinKind::Output) ? spawnedNode->Inputs : spawnedNode->Outputs;
-                            for (auto& pin : pinsList) {
-                                if (pin.Type == startPin->Type) { targetPin = &pin; break; }
+                                    if (targetPin) {
+                                        m_Links.push_back({ ed::LinkId(m_NextId++), startPin->ID, targetPin->ID });
+                                    }
+                                }
+                                m_NewNodeLinkPinId = 0;
                             }
-                            if (!targetPin && !pinsList.empty()) targetPin = &pinsList[0]; // Fallback intelligent
-                        }
-                    } else {
-                        for (auto& pin : spawnedNode->Outputs) {
-                            auto& pinsList = (startPin->Kind == ed::PinKind::Output) ? spawnedNode->Inputs : spawnedNode->Outputs;
-                            for (auto& pin : pinsList) {
-                                if (pin.Type == startPin->Type) { targetPin = &pin; break; }
-                            }
-                            if (!targetPin && !pinsList.empty()) targetPin = &pinsList[0]; // Fallback intelligent
                         }
                     }
-
-                    // Si on a trouvé une broche compatible, on les relie !
-                    if (targetPin) {
-                        auto inputPinId = (targetPin->Kind == ed::PinKind::Input) ? targetPin->ID : startPin->ID;
-                        auto outputPinId = (targetPin->Kind == ed::PinKind::Output) ? targetPin->ID : startPin->ID;
-
-                        // Sécurité : on débranche l'ancien câble si l'entrée était déjà occupée
-                        m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
-                            [inputPinId](const MaterialLink& link) { return link.EndPinID == inputPinId; }), m_Links.end());
-
-                        m_Links.push_back({ ed::LinkId(GetNextId()), outputPinId, inputPinId });
-                    }
+                    ImGui::EndMenu();
                 }
-                m_NewNodeLinkPinId = 0; // Reset
             }
             ImGui::EndPopup();
         } else {
@@ -720,68 +680,6 @@ MaterialPin* MaterialEditorPanel::FindPin(ed::PinId id) {
         }
     }
     return nullptr;
-}
-
-MaterialNode* MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
-    MaterialNode newNode;
-    newNode.ID = GetNextId();
-    newNode.Name = type;
-
-    if (type == "Texture2D") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Input, PinType::Vec2 });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGBA", ed::PinKind::Output, PinType::Vec4 });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGB", ed::PinKind::Output, PinType::Vec3 });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "R", ed::PinKind::Output, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "G", ed::PinKind::Output, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Output, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Output, PinType::Float });
-    } else if (type == "Color") {
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGBA", ed::PinKind::Output, PinType::Vec4 });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGB", ed::PinKind::Output, PinType::Vec3 });
-    } else if (type == "Float") {
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Value", ed::PinKind::Output, PinType::Float });
-    } else if (type == "Multiply" || type == "Add" || type == "Subtract") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Float });
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Float });
-    } else if (type == "Mix") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Float });
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Float });
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Alpha", ed::PinKind::Input, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Float });
-    } else if (type == "Clamp") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Value", ed::PinKind::Input, PinType::Float });
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Min", ed::PinKind::Input, PinType::Float });
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Max", ed::PinKind::Input, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Float });
-    } else if (type == "Pow") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Base", ed::PinKind::Input, PinType::Float });
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Exp", ed::PinKind::Input, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Float });
-    } else if (type == "Reroute") {
-        // Par défaut on le met en Float, mais il changera dynamiquement de type !
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "", ed::PinKind::Input, PinType::Float });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "", ed::PinKind::Output, PinType::Float });
-    } else if (type == "TexCoords") {
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Output, PinType::Vec2 });
-    } else if (type == "TilingAndOffset") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Input, PinType::Vec2 });
-
-        MaterialPin tiling = { ed::PinId(GetNextId()), newNode.ID, "Tiling", ed::PinKind::Input, PinType::Vec2 };
-        tiling.Vec2Value = { 1.0f, 1.0f }; // Tiling par défaut à 1,1
-        newNode.Inputs.push_back(tiling);
-
-        MaterialPin offset = { ed::PinId(GetNextId()), newNode.ID, "Offset", ed::PinKind::Input, PinType::Vec2 };
-        offset.Vec2Value = { 0.0f, 0.0f }; // Offset par défaut à 0,0
-        newNode.Inputs.push_back(offset);
-
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Output, PinType::Vec2 });
-    }
-
-    m_Nodes.push_back(newNode);
-    ed::SetNodePosition(newNode.ID, position);
-
-    return &m_Nodes.back();
 }
 
 void MaterialEditorPanel::Save(const std::filesystem::path& path) {

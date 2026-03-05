@@ -62,6 +62,10 @@ set(SOURCES
         src/renderer/stb_image_impl.cpp
         src/editor/panels/MaterialEditorPanel.cpp
         src/editor/panels/MaterialEditorPanel.h
+        src/editor/materials/MaterialGraph.h
+        src/editor/materials/MaterialNodeRegistry.cpp
+        src/editor/materials/MaterialNodeRegistry.h
+        src/editor/materials/NodeDefinitions.h
 )
 
 # Créer l'exécutable avec les sources
