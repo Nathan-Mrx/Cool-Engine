@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
 namespace ed = ax::NodeEditor;
@@ -23,6 +24,10 @@ struct MaterialPin {
     std::string Name;
     ed::PinKind Kind;
     PinType Type;
+
+    // --- NOUVEAU : Valeurs par défaut si le pin n'est pas branché ---
+    float FloatValue = 0.0f;
+    glm::vec3 Vec3Value = {1.0f, 1.0f, 1.0f};
 };
 
 struct MaterialNode {
@@ -33,6 +38,8 @@ struct MaterialNode {
 
     float FloatValue = 1.0f;
     glm::vec4 ColorValue = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    std::string TexturePath = "";
 };
 
 struct MaterialLink {

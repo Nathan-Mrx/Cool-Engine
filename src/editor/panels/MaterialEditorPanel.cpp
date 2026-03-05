@@ -22,9 +22,13 @@ void MaterialEditorPanel::BuildDefaultNodes() {
     MaterialNode baseNode;
     baseNode.ID = GetNextId();
     baseNode.Name = "Base Material";
+    // Le setup PBR standard !
     baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Base Color", ed::PinKind::Input, PinType::Vec3 });
-    // Roughness a besoin d'un simple Float (0.0 à 1.0) !
+    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Normal", ed::PinKind::Input, PinType::Vec3 });
+    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Metallic", ed::PinKind::Input, PinType::Float });
     baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Roughness", ed::PinKind::Input, PinType::Float });
+    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Specular", ed::PinKind::Input, PinType::Float });
+    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "AO", ed::PinKind::Input, PinType::Float });
     m_Nodes.push_back(baseNode);
 }
 
@@ -64,9 +68,33 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             ImGui::Separator();
 
             for (auto& input : node.Inputs) {
+                // 1. On dessine la pastille de connexion
                 ed::BeginPin(input.ID, input.Kind);
                 ImGui::Text("-> %s", input.Name.c_str());
                 ed::EndPin();
+
+                // 2. --- L'UI MAGIQUE FAÇON UNREAL ENGINE ---
+                bool isConnected = false;
+                for (auto& link : m_Links) {
+                    if (link.EndPinID == input.ID) { isConnected = true; break; }
+                }
+
+                // S'il n'y a aucun câble, on affiche un champ texte direct !
+                if (!isConnected) {
+                    ImGui::SameLine();
+                    ImGui::PushID((int)input.ID.Get()); // Sécurité anti-bug de clics
+
+                    if (input.Type == PinType::Float) {
+                        ImGui::PushItemWidth(60.0f);
+                        ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
+                        ImGui::PopItemWidth();
+                    } else if (input.Type == PinType::Vec3) {
+                        ImGui::PushItemWidth(60.0f);
+                        ImGui::ColorEdit3("##v", &input.Vec3Value[0], ImGuiColorEditFlags_NoInputs);
+                        ImGui::PopItemWidth();
+                    }
+                    ImGui::PopID();
+                }
             }
 
             for (auto& output : node.Outputs) {
@@ -169,6 +197,8 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             if (ImGui::MenuItem("Texture2D")) { SpawnNode("Texture2D", m_ContextPopupPos); }
             if (ImGui::MenuItem("Multiply"))  { SpawnNode("Multiply", m_ContextPopupPos); }
             if (ImGui::MenuItem("Float"))     { SpawnNode("Float", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Clamp"))     { SpawnNode("Clamp", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Power"))       { SpawnNode("Pow", m_ContextPopupPos); }
 
             ImGui::EndPopup();
         }
@@ -229,6 +259,28 @@ void MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
         newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Vec3 });
         newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Vec3 });
         newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
+    } else if (type == "Clamp") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Value", ed::PinKind::Input, PinType::Float });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Min", ed::PinKind::Input, PinType::Float });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Max", ed::PinKind::Input, PinType::Float });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Float });
+    } else if (type == "Pow") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Base", ed::PinKind::Input, PinType::Float });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Exp", ed::PinKind::Input, PinType::Float });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Float });
+    } else if (type == "Mix") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Alpha", ed::PinKind::Input, PinType::Float });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
+    } else if (type == "Add") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
+    } else if (type == "Subtract") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
     }
 
     m_Nodes.push_back(newNode);
@@ -256,10 +308,16 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
         // --- NOUVEAU : Sauvegarde des valeurs du noeud ---
         nodeJson["FloatValue"] = node.FloatValue;
         nodeJson["ColorValue"] = { node.ColorValue.r, node.ColorValue.g, node.ColorValue.b, node.ColorValue.a };
+        nodeJson["TexturePath"] = node.TexturePath;
 
         for (auto& pin : node.Inputs) {
-            // --- NOUVEAU : Sauvegarde du PinType ---
-            nodeJson["Inputs"].push_back({ {"ID", (int)pin.ID.Get()}, {"Name", pin.Name}, {"Type", (int)pin.Type} });
+            nodeJson["Inputs"].push_back({
+                {"ID", (int)pin.ID.Get()},
+                {"Name", pin.Name},
+                {"Type", (int)pin.Type},
+                {"FloatValue", pin.FloatValue},
+                {"Vec3Value", {pin.Vec3Value.r, pin.Vec3Value.g, pin.Vec3Value.b}}
+            });
         }
         for (auto& pin : node.Outputs) {
             // --- NOUVEAU : Sauvegarde du PinType ---
@@ -319,12 +377,24 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
                 nodeJson["ColorValue"][3] // L'Alpha (A)
             };
         }
+        if (nodeJson.contains("TexturePath")) node.TexturePath = nodeJson["TexturePath"].get<std::string>();
 
         if (nodeJson.contains("Inputs")) {
             for (auto& pinJson : nodeJson["Inputs"]) {
-                // On lit le Type s'il existe, sinon on met Vec3 par défaut pour la rétrocompatibilité
                 PinType pType = pinJson.contains("Type") ? (PinType)pinJson["Type"].get<int>() : PinType::Vec3;
-                node.Inputs.push_back({ ed::PinId(pinJson["ID"].get<int>()), node.ID, pinJson["Name"].get<std::string>(), ed::PinKind::Input, pType });
+
+                MaterialPin newPin;
+                newPin.ID = ed::PinId(pinJson["ID"].get<int>());
+                newPin.NodeID = node.ID;
+                newPin.Name = pinJson["Name"].get<std::string>();
+                newPin.Kind = ed::PinKind::Input;
+                newPin.Type = pType;
+
+                // On récupère tes valeurs tapées à la main !
+                if (pinJson.contains("FloatValue")) newPin.FloatValue = pinJson["FloatValue"].get<float>();
+                if (pinJson.contains("Vec3Value")) newPin.Vec3Value = { pinJson["Vec3Value"][0], pinJson["Vec3Value"][1], pinJson["Vec3Value"][2] };
+
+                node.Inputs.push_back(newPin);
             }
         }
         if (nodeJson.contains("Outputs")) {
@@ -390,6 +460,13 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << "uniform int uEntityID;\n";
     shaderCode << "uniform int uRenderMode;\n\n";
 
+    // --- NOUVEAU : Déclaration des Sampler2D (Les textures) ---
+    for (auto& node : m_Nodes) {
+        if (node.Name == "Texture2D" && !node.TexturePath.empty()) {
+            shaderCode << "uniform sampler2D u_Tex_" << node.ID.Get() << ";\n";
+        }
+    }
+
     shaderCode << "void main() {\n";
 
     std::unordered_set<int> visitedNodes;
@@ -440,10 +517,23 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
     }
 
     // Valeurs par défaut si rien n'est branché
+    // --- LECTURE DES VALEURS MANUELLES ---
     MaterialPin* myInputPin = FindPin(inputPinId);
     if (!connectedLink) {
-        if (myInputPin && myInputPin->Type == PinType::Float) return "0.0";
-        if (myInputPin && myInputPin->Type == PinType::Vec2)  return "vec2(0.0)";
+        if (myInputPin) {
+            std::stringstream ss; // Sécurité pour formater les chiffres (éviter les virgules européennes)
+            if (myInputPin->Type == PinType::Float) {
+                ss << myInputPin->FloatValue;
+                return ss.str();
+            }
+            if (myInputPin->Type == PinType::Vec3) {
+                ss << "vec3(" << myInputPin->Vec3Value.r << ", "
+                              << myInputPin->Vec3Value.g << ", "
+                              << myInputPin->Vec3Value.b << ")";
+                return ss.str();
+            }
+            if (myInputPin->Type == PinType::Vec2) return "vec2(0.0)";
+        }
         return "vec3(0.0)";
     }
 
@@ -487,8 +577,26 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
             std::string alpha = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
             bodyBuilder << "    vec3 val_" << sourceId << " = mix(" << a << ", " << b << ", " << alpha << ");\n";
         }
+        else if (sourceNode->Name == "Clamp") {
+            std::string val = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            std::string minV = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
+            std::string maxV = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
+            bodyBuilder << "    float val_" << sourceId << " = clamp(" << val << ", " << minV << ", " << maxV << ");\n";
+        }
+        else if (sourceNode->Name == "Pow") {
+            std::string base = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            std::string exp = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
+            bodyBuilder << "    float val_" << sourceId << " = pow(" << base << ", " << exp << ");\n";
+        }
         else if (sourceNode->Name == "Texture2D") {
-            bodyBuilder << "    vec4 tex_" << sourceId << " = vec4(1.0, 1.0, 1.0, 1.0);\n";
+            std::string uv = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            if (uv == "vec2(0.0)") uv = "vTexCoords"; // Si pas de noeud UV branché, on prend les UVs du modèle 3D !
+
+            if (sourceNode->TexturePath.empty()) {
+                bodyBuilder << "    vec4 tex_" << sourceId << " = vec4(1.0, 0.0, 1.0, 1.0);\n"; // Rose d'erreur si pas d'image
+            } else {
+                bodyBuilder << "    vec4 tex_" << sourceId << " = texture(u_Tex_" << sourceId << ", " << uv << ");\n";
+            }
         }
         bodyBuilder << "\n";
     }
