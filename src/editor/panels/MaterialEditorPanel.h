@@ -9,6 +9,10 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
+#include "../../renderer/Framebuffer.h"
+#include "../../renderer/Mesh.h"
+#include "../../renderer/Shader.h"
+
 namespace ed = ax::NodeEditor;
 
 // --- LES STRUCTURES DE DONNÉES DU GRAPHE ---
@@ -119,4 +123,10 @@ private:
         }
         return var;
     }
+
+    std::shared_ptr<Framebuffer> m_PreviewFramebuffer;
+    std::shared_ptr<Mesh> m_PreviewMesh;
+    std::shared_ptr<Shader> m_PreviewShader;
+
+    void CompilePreviewShader();
 };

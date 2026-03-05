@@ -14,6 +14,10 @@ public:
     Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices);
     void Draw();
 
+    // --- NOUVEAU : Les getters pour la preview ---
+    unsigned int GetVAO() const { return m_VAO; }
+    unsigned int GetIndicesCount() const { return (unsigned int)m_Indices.size(); }
+
 private:
     void SetupMesh();
 

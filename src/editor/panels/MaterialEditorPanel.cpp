@@ -7,6 +7,10 @@
 
 #include "renderer/TextureLoader.h"
 
+#include "../../renderer/PrimitiveFactory.h"
+#include <glm/gtc/matrix_transform.hpp>
+#include <filesystem>
+
 static void DrawPinIcon(PinType type, bool connected) {
     ImVec2 size(24, 14); // Plus large pour la marge
 
@@ -95,6 +99,7 @@ void MaterialEditorPanel::BuildDefaultNodes() {
     MaterialNode baseNode;
     baseNode.ID = GetNextId();
     baseNode.Name = "Base Material";
+
     // Le setup PBR standard !
     baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Base Color", ed::PinKind::Input, PinType::Vec3 });
     baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Normal", ed::PinKind::Input, PinType::Vec3 });
@@ -103,6 +108,13 @@ void MaterialEditorPanel::BuildDefaultNodes() {
     baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Specular", ed::PinKind::Input, PinType::Float });
     baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "AO", ed::PinKind::Input, PinType::Float });
     m_Nodes.push_back(baseNode);
+
+    // --- INITIALISATION DE LA PREVIEW 3D ---
+    FramebufferSpecification fbSpec;
+    fbSpec.Width = 512;
+    fbSpec.Height = 512;
+    m_PreviewFramebuffer = std::make_shared<Framebuffer>(fbSpec);
+    m_PreviewMesh = PrimitiveFactory::CreateSphere(64, 64); // Une sphère bien lisse
 }
 
 void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
@@ -128,6 +140,79 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (avail.x < 100.0f) avail.x = 800.0f;
         if (avail.y < 100.0f) avail.y = 600.0f;
+
+        // ========================================================
+        // --- 1. RENDU DE LA SPHERE DANS LE FRAMEBUFFER ---
+        // ========================================================
+        if (m_PreviewFramebuffer) {
+            m_PreviewFramebuffer->Bind();
+
+            // --- LE FIX DU ZOOM EST ICI ---
+            // On force OpenGL à dessiner à l'échelle exacte de notre petite image
+            glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
+
+            glEnable(GL_DEPTH_TEST);
+            glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            if (m_PreviewShader && m_PreviewMesh) {
+                m_PreviewShader->Use();
+
+                // Setup de la Caméra (Aspect Ratio dynamique)
+                float aspect = (float)m_PreviewFramebuffer->GetSpecification().Width / (float)m_PreviewFramebuffer->GetSpecification().Height;
+                glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+                glm::vec3 camPos = glm::vec3(0.0f, 0.0f, 2.5f);
+                glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+                m_PreviewShader->SetMat4("uProjection", proj);
+                m_PreviewShader->SetMat4("uView", view);
+
+                // Animation : On fait tourner la sphère doucement pour admirer le PBR !
+                static float rot = 0.0f;
+                rot += 0.005f;
+                glm::mat4 model = glm::rotate(glm::mat4(1.0f), rot, glm::vec3(0, 1, 0));
+                m_PreviewShader->SetMat4("uModel", model);
+
+                // Météo et Lumière
+                m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
+                m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
+                m_PreviewShader->SetVec3("uViewPos", camPos);
+
+                // Branchement des textures en RAM Vidéo
+                int slot = 0;
+                for (auto& node : m_Nodes) {
+                    if (node.Name == "Texture2D" && node.TextureID != 0) {
+                        glActiveTexture(GL_TEXTURE0 + slot);
+                        glBindTexture(GL_TEXTURE_2D, node.TextureID);
+                        m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
+                        slot++;
+                    }
+                }
+
+                // Appel de dessin OpenGL
+                glBindVertexArray(m_PreviewMesh->GetVAO());
+                glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
+                glBindVertexArray(0);
+            }
+            m_PreviewFramebuffer->Unbind();
+        }
+
+        // ========================================================
+        // --- 2. LA FENÊTRE IMGUI DU VIEWPORT ---
+        // ========================================================
+        ImGui::Begin("Material Preview");
+
+        // ON RENOMME EN previewAvail !
+        ImVec2 previewAvail = ImGui::GetContentRegionAvail();
+
+        if (previewAvail.x > 0 && previewAvail.y > 0 &&
+           (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
+            m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
+           }
+
+        ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
+        ImGui::End();
+        // ========================================================
 
         ed::SetCurrentEditor(m_Context);
         ed::Begin("My Material Graph", avail);
@@ -736,6 +821,8 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
     file << data.dump(4);
 
     ed::SetCurrentEditor(nullptr);
+
+    CompilePreviewShader();
 }
 
 void MaterialEditorPanel::Load(const std::filesystem::path& path) {
@@ -827,6 +914,8 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
         }
     }
     ed::SetCurrentEditor(nullptr);
+
+    CompilePreviewShader();
 }
 
 // --- FONCTION UTILITAIRE ---
@@ -1111,4 +1200,20 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
         return CastGLSL(rawResult, outputPin->Type, myInputPin->Type);
     }
     return rawResult;
+}
+
+void MaterialEditorPanel::CompilePreviewShader() {
+    std::string fragCode = CompileMaterial();
+    if (fragCode.empty()) return;
+
+    // On s'assure que le dossier cache existe
+    std::filesystem::create_directories(".ce_cache");
+    std::string tempPath = ".ce_cache/preview_material.frag";
+
+    std::ofstream out(tempPath);
+    out << fragCode;
+    out.close();
+
+    // On génère le shader live !
+    m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.c_str());
 }
