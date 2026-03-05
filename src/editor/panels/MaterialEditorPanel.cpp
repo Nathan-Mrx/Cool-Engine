@@ -136,6 +136,62 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         // 1. DESSINER LES NOEUDS DYNAMIQUEMENT
         // =========================================================
         for (auto& node : m_Nodes) {
+
+            // ==========================================
+            // RENDU SPÉCIAL POUR REROUTE NODE (Unreal Style)
+            // ==========================================
+            if (node.Name == "Reroute") {
+                // 1. On rend la boîte de fond et les bordures totalement invisibles !
+                ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0, 0, 0, 0));
+                ed::PushStyleColor(ed::StyleColor_NodeBorder, ImVec4(0, 0, 0, 0));
+
+                ed::BeginNode(node.ID);
+
+                bool isConnectedIn = false;
+                for (auto& link : m_Links) if (link.EndPinID == node.Inputs[0].ID) { isConnectedIn = true; break; }
+                bool isConnectedOut = false;
+                for (auto& link : m_Links) if (link.StartPinID == node.Outputs[0].ID) { isConnectedOut = true; break; }
+
+                ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+                // 2. Dessin d'un seul cercle magique au centre absolu (à X = +12 pixels)
+                ImVec2 center(cursorPos.x + 12, cursorPos.y + 7);
+                ImVec4 color;
+                switch (node.Inputs[0].Type) {
+                    case PinType::Float: color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); break;
+                    case PinType::Vec2:  color = ImVec4(0.8f, 0.8f, 0.2f, 1.0f); break;
+                    case PinType::Vec3:  color = ImVec4(0.2f, 0.4f, 0.9f, 1.0f); break;
+                    case PinType::Vec4:  color = ImVec4(0.8f, 0.2f, 0.8f, 1.0f); break;
+                }
+                ImU32 color32 = ImGui::GetColorU32(color);
+
+                if (isConnectedIn || isConnectedOut) {
+                    drawList->AddCircleFilled(center, 5.0f, color32);
+                } else {
+                    drawList->AddCircle(center, 5.0f, color32, 0, 2.0f);
+                    drawList->AddCircleFilled(center, 3.0f, ImGui::GetColorU32(ImVec4(color.x, color.y, color.z, 0.2f)));
+                }
+
+                // 3. Les deux hitboxes invisibles collées l'une à l'autre (12px + 12px)
+                ImGui::BeginGroup();
+                ed::BeginPin(node.Inputs[0].ID, node.Inputs[0].Kind);
+                ImGui::Dummy(ImVec2(12, 14)); // Moitié gauche (Entrée)
+                ed::EndPin();
+
+                ImGui::SameLine(0, 0); // On force les deux zones à se toucher sans espace
+
+                ed::BeginPin(node.Outputs[0].ID, node.Outputs[0].Kind);
+                ImGui::Dummy(ImVec2(12, 14)); // Moitié droite (Sortie)
+                ed::EndPin();
+                ImGui::EndGroup();
+
+                ed::EndNode();
+                ed::PopStyleColor(2); // On restaure les couleurs normales pour les prochains nœuds
+
+                continue;
+            }
+
             // === DEBUT DU NOEUD ===
             ed::BeginNode(node.ID);
 
@@ -318,20 +374,40 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
             // Si on relie deux connecteurs
             if (ed::QueryNewLink(&startPinId, &endPinId)) {
-                // ... (Ton code de validation Règle 1, 2, 3 et 4 RESTE ICI, ne le supprime pas)
                 auto startPin = FindPin(startPinId);
                 auto endPin = FindPin(endPinId);
 
                 if (startPin && endPin) {
+                    MaterialNode* sNode = FindNode(startPin->NodeID);
+                    MaterialNode* eNode = FindNode(endPin->NodeID);
+
+                    // On vérifie si l'un des deux nœuds est un Reroute
+                    bool isSReroute = sNode && sNode->Name == "Reroute";
+                    bool isEReroute = eNode && eNode->Name == "Reroute";
+
                     if (startPin == endPin || startPin->NodeID == endPin->NodeID) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
                     else if (startPin->Kind == endPin->Kind) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
-                    else if (startPin->Type != endPin->Type) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
+                    // NOUVEAU : On autorise le lien si les types sont différents MAIS que c'est un Reroute !
+                    else if (startPin->Type != endPin->Type && !isSReroute && !isEReroute) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
                     else {
                         if (ed::AcceptNewItem(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), 2.0f)) {
                             if (startPin->Kind == ed::PinKind::Input) {
                                 std::swap(startPin, endPin);
                                 std::swap(startPinId, endPinId);
+                                std::swap(sNode, eNode);
+                                std::swap(isSReroute, isEReroute);
                             }
+
+                            // --- LE CAMÉLÉON : Le Reroute adopte le type de son parent ---
+                            if (isEReroute) {
+                                endPin->Type = startPin->Type;
+                                eNode->Outputs[0].Type = startPin->Type; // L'output change aussi !
+                            }
+                            if (isSReroute) {
+                                startPin->Type = endPin->Type;
+                                sNode->Inputs[0].Type = endPin->Type;
+                            }
+
                             m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
                                 [endPinId](const MaterialLink& link) { return link.EndPinID == endPinId; }), m_Links.end());
                             m_Links.push_back({ ed::LinkId(GetNextId()), startPinId, endPinId });
@@ -430,6 +506,8 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
             MaterialNode* spawnedNode = nullptr;
 
+            if (ImGui::MenuItem("Add Reroute Node")) { spawnedNode = SpawnNode("Reroute", m_ContextPopupPos); }
+            ImGui::Separator();
             if (ImGui::MenuItem("Color"))     { spawnedNode = SpawnNode("Color", m_ContextPopupPos); }
             if (ImGui::MenuItem("Texture2D")) { spawnedNode = SpawnNode("Texture2D", m_ContextPopupPos); }
             ImGui::Separator();
@@ -442,10 +520,18 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             ImGui::Separator();
             if (ImGui::MenuItem("Float"))     { spawnedNode = SpawnNode("Float", m_ContextPopupPos); }
 
+
             // --- NOUVEAU : AUTO-CONNEXION INTELLIGENTE ---
             if (spawnedNode && m_NewNodeLinkPinId.Get() != 0) {
                 MaterialPin* startPin = FindPin(m_NewNodeLinkPinId);
                 if (startPin) {
+
+                    // Si on vient de créer un Reroute, on force ses types immédiatement !
+                    if (spawnedNode->Name == "Reroute") {
+                        spawnedNode->Inputs[0].Type = startPin->Type;
+                        spawnedNode->Outputs[0].Type = startPin->Type;
+                    }
+
                     MaterialPin* targetPin = nullptr;
                     // On cherche une broche compatible sur le nouveau noeud (Même Type : Float, Vec3...)
                     if (startPin->Kind == ed::PinKind::Output) {
@@ -555,6 +641,10 @@ MaterialNode* MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 pos
         newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Vec3 });
         newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Vec3 });
         newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
+    } else if (type == "Reroute") {
+        // Par défaut on le met en Float, mais il changera dynamiquement de type !
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "", ed::PinKind::Input, PinType::Float });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "", ed::PinKind::Output, PinType::Float });
     }
 
     m_Nodes.push_back(newNode);
@@ -823,6 +913,12 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
     MaterialPin* outputPin = FindPin(connectedLink->StartPinID);
     MaterialNode* sourceNode = FindNode(outputPin->NodeID);
     if (!sourceNode) return "vec3(0.0)";
+
+    // --- NOUVEAU : BYPASS TOTAL DU REROUTE ---
+    if (sourceNode->Name == "Reroute") {
+        // Le compilateur traverse le Reroute sans s'arrêter et demande ce qu'il y a derrière !
+        return EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+    }
 
     int sourceId = (int)sourceNode->ID.Get();
 
