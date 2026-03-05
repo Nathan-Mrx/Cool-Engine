@@ -151,7 +151,7 @@ uint32_t HubPanel::GetThumbnailTexture(const std::filesystem::path& path) {
 
     if (std::filesystem::exists(thumbPath)) {
         // On utilise notre nouvel utilitaire
-        uint32_t textureID = TextureLoader::LoadTexture(thumbPath.string());
+        uint32_t textureID = TextureLoader::LoadTexture(thumbPath.string().c_str());
         if (textureID != 0) {
             m_ThumbnailCache[path] = textureID;
             return textureID;

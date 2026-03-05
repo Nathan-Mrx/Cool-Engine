@@ -257,6 +257,10 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                         ImGui::PushItemWidth(60.0f);
                         ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
                         ImGui::PopItemWidth();
+                    } else if (input.Type == PinType::Vec2) {
+                        ImGui::PushItemWidth(100.0f);
+                        ImGui::DragFloat2("##v", &input.Vec2Value[0], 0.01f);
+                        ImGui::PopItemWidth();
                     } else if (input.Type == PinType::Vec3) {
                         ImGui::PushItemWidth(60.0f);
                         ImGui::ColorEdit3("##v", &input.Vec3Value[0], ImGuiColorEditFlags_NoInputs);
@@ -529,6 +533,9 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             if (ImGui::MenuItem("Pow"))       { spawnedNode = SpawnNode("Pow", m_ContextPopupPos); }
             ImGui::Separator();
             if (ImGui::MenuItem("Float"))     { spawnedNode = SpawnNode("Float", m_ContextPopupPos); }
+            ImGui::Separator();
+            if (ImGui::MenuItem("TexCoords"))       { spawnedNode = SpawnNode("TexCoords", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Tiling & Offset")) { spawnedNode = SpawnNode("TilingAndOffset", m_ContextPopupPos); }
 
 
             // --- NOUVEAU : AUTO-CONNEXION INTELLIGENTE ---
@@ -654,6 +661,20 @@ MaterialNode* MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 pos
         // Par défaut on le met en Float, mais il changera dynamiquement de type !
         newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "", ed::PinKind::Input, PinType::Float });
         newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "", ed::PinKind::Output, PinType::Float });
+    } else if (type == "TexCoords") {
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Output, PinType::Vec2 });
+    } else if (type == "TilingAndOffset") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Input, PinType::Vec2 });
+
+        MaterialPin tiling = { ed::PinId(GetNextId()), newNode.ID, "Tiling", ed::PinKind::Input, PinType::Vec2 };
+        tiling.Vec2Value = { 1.0f, 1.0f }; // Tiling par défaut à 1,1
+        newNode.Inputs.push_back(tiling);
+
+        MaterialPin offset = { ed::PinId(GetNextId()), newNode.ID, "Offset", ed::PinKind::Input, PinType::Vec2 };
+        offset.Vec2Value = { 0.0f, 0.0f }; // Offset par défaut à 0,0
+        newNode.Inputs.push_back(offset);
+
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Output, PinType::Vec2 });
     }
 
     m_Nodes.push_back(newNode);
@@ -691,6 +712,7 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
                 {"Name", pin.Name},
                 {"Type", (int)pin.Type},
                 {"FloatValue", pin.FloatValue},
+                {"Vec2Value", {pin.Vec2Value[0], pin.Vec2Value[1]}},
                 {"Vec3Value", {pin.Vec3Value.r, pin.Vec3Value.g, pin.Vec3Value.b}}
             });
         }
@@ -774,6 +796,7 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
 
                 // On récupère tes valeurs tapées à la main !
                 if (pinJson.contains("FloatValue")) newPin.FloatValue = pinJson["FloatValue"].get<float>();
+                if (pinJson.contains("Vec2Value")) newPin.Vec2Value = { pinJson["Vec2Value"][0], pinJson["Vec2Value"][1] };
                 if (pinJson.contains("Vec3Value")) newPin.Vec3Value = { pinJson["Vec3Value"][0], pinJson["Vec3Value"][1], pinJson["Vec3Value"][2] };
 
                 node.Inputs.push_back(newPin);
@@ -989,7 +1012,7 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
         if (myInputPin) {
             std::stringstream ss;
             if (myInputPin->Type == PinType::Float) { ss << myInputPin->FloatValue; return ss.str(); }
-            if (myInputPin->Type == PinType::Vec2)  return "vec2(0.0)";
+            if (myInputPin->Type == PinType::Vec2)  { ss << "vec2(" << myInputPin->Vec2Value.x << ", " << myInputPin->Vec2Value.y << ")"; return ss.str(); }
             if (myInputPin->Type == PinType::Vec3) { ss << "vec3(" << myInputPin->Vec3Value.r << ", " << myInputPin->Vec3Value.g << ", " << myInputPin->Vec3Value.b << ")"; return ss.str(); }
             if (myInputPin->Type == PinType::Vec4) return "vec4(0.0)";
         }
@@ -1044,9 +1067,25 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
             std::string t = GetGLSLType(sourceNode->Outputs[0].Type);
             bodyBuilder << "    " << t << " val_" << sourceId << " = pow(" << base << ", " << exp << ");\n";
         }
+        else if (sourceNode->Name == "TexCoords") {
+            bodyBuilder << "    vec2 val_" << sourceId << " = vTexCoords;\n";
+        }
+        else if (sourceNode->Name == "TilingAndOffset") {
+            std::string uv = "vTexCoords"; // Par défaut, on prend les UVs du mesh
+            bool hasLink = false;
+            for (auto& l : m_Links) if (l.EndPinID == sourceNode->Inputs[0].ID) { hasLink = true; break; }
+            if (hasLink) uv = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+
+            std::string tiling = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
+            std::string offset = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
+            bodyBuilder << "    vec2 val_" << sourceId << " = (" << uv << " * " << tiling << ") + " << offset << ";\n";
+        }
         else if (sourceNode->Name == "Texture2D") {
-            std::string uv = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
-            if (uv == "vec2(0.0)") uv = "vTexCoords";
+            std::string uv = "vTexCoords";
+            bool hasLink = false;
+            for (auto& l : m_Links) if (l.EndPinID == sourceNode->Inputs[0].ID) { hasLink = true; break; }
+            if (hasLink) uv = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+
             if (sourceNode->TexturePath.empty()) bodyBuilder << "    vec4 tex_" << sourceId << " = vec4(1.0, 0.0, 1.0, 1.0);\n";
             else bodyBuilder << "    vec4 tex_" << sourceId << " = texture(u_Tex_" << sourceId << ", " << uv << ");\n";
         }

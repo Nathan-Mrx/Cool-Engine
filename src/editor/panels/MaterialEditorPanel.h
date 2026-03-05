@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -28,6 +29,7 @@ struct MaterialPin {
     // --- NOUVEAU : Valeurs par défaut si le pin n'est pas branché ---
     float FloatValue = 0.0f;
     glm::vec3 Vec3Value = {1.0f, 1.0f, 1.0f};
+    glm::vec2 Vec2Value = { 1.0f, 1.0f };
 };
 
 struct MaterialNode {
