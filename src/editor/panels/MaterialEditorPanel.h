@@ -5,15 +5,24 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <glm/vec4.hpp>
 
 namespace ed = ax::NodeEditor;
 
 // --- LES STRUCTURES DE DONNÉES DU GRAPHE ---
+enum class PinType {
+    Float,
+    Vec2,
+    Vec3,
+    Vec4
+};
+
 struct MaterialPin {
     ed::PinId ID;
     ed::NodeId NodeID;
     std::string Name;
-    ed::PinKind Kind; // Input ou Output
+    ed::PinKind Kind;
+    PinType Type;
 };
 
 struct MaterialNode {
@@ -21,6 +30,9 @@ struct MaterialNode {
     std::string Name;
     std::vector<MaterialPin> Inputs;
     std::vector<MaterialPin> Outputs;
+
+    float FloatValue = 1.0f;
+    glm::vec4 ColorValue = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 struct MaterialLink {

@@ -19,20 +19,13 @@ MaterialEditorPanel::~MaterialEditorPanel() {
 }
 
 void MaterialEditorPanel::BuildDefaultNodes() {
-    // 1. Noeud Principal
     MaterialNode baseNode;
     baseNode.ID = GetNextId();
     baseNode.Name = "Base Material";
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Base Color", ed::PinKind::Input });
-    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Roughness", ed::PinKind::Input });
+    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Base Color", ed::PinKind::Input, PinType::Vec3 });
+    // Roughness a besoin d'un simple Float (0.0 à 1.0) !
+    baseNode.Inputs.push_back({ ed::PinId(GetNextId()), baseNode.ID, "Roughness", ed::PinKind::Input, PinType::Float });
     m_Nodes.push_back(baseNode);
-
-    // 2. Noeud de Couleur
-    MaterialNode colorNode;
-    colorNode.ID = GetNextId();
-    colorNode.Name = "Color";
-    colorNode.Outputs.push_back({ ed::PinId(GetNextId()), colorNode.ID, "RGB", ed::PinKind::Output });
-    m_Nodes.push_back(colorNode);
 }
 
 void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
@@ -110,6 +103,11 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                     else if (startPin->Kind == endPin->Kind) {
                         ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); // Croix rouge !
                     }
+                    // Regle 3 : Typage strict
+                    else if (startPin->Type != endPin->Type) {
+                        // On refuse de brancher un Float dans un Vec3 sans conversion !
+                        ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f);
+                    }
                     // Si toutes les règles sont respectées, on propose un lien vert
                     else {
                         // Le survol est valide, si on relâche la souris on accepte !
@@ -122,7 +120,7 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                                 std::swap(startPinId, endPinId);
                             }
 
-                            // Règle 3 : Un Input ne peut avoir qu'un seul câble !
+                            // Règle 4 : Un Input ne peut avoir qu'un seul câble !
                             // On détruit tout câble existant qui serait déjà branché sur cet Input.
                             m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
                                 [endPinId](const MaterialLink& link) { return link.EndPinID == endPinId; }),
@@ -214,28 +212,31 @@ void MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
     newNode.Name = type;
 
     if (type == "Texture2D") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Input });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGB", ed::PinKind::Output });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "R", ed::PinKind::Output });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "G", ed::PinKind::Output });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Output });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Output });
-    } else if (type == "Multiply") {
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input });
-        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input });
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Input, PinType::Vec2 });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGBA", ed::PinKind::Output, PinType::Vec4 });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGB", ed::PinKind::Output, PinType::Vec3 });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "R", ed::PinKind::Output, PinType::Float });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "G", ed::PinKind::Output, PinType::Float });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Output, PinType::Float });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Output, PinType::Float });
+    } else if (type == "Color") {
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGBA", ed::PinKind::Output, PinType::Vec4 });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGB", ed::PinKind::Output, PinType::Vec3 });
     } else if (type == "Float") {
-        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Value", ed::PinKind::Output });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Value", ed::PinKind::Output, PinType::Float });
+    } else if (type == "Multiply" || type == "Add") {
+        // Pour l'instant, on force les maths simples en Vec3 (on fera des noeuds génériques plus tard)
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input, PinType::Vec3 });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
     }
 
     m_Nodes.push_back(newNode);
-
-    // On place le noeud exactement là où était la souris !
     ed::SetNodePosition(newNode.ID, position);
 }
 
 void MaterialEditorPanel::Save(const std::filesystem::path& path) {
-    ed::SetCurrentEditor(m_Context); // On active le contexte pour pouvoir lire les positions
+    ed::SetCurrentEditor(m_Context);
 
     nlohmann::json data;
     data["Type"] = "MaterialGraph";
@@ -249,15 +250,20 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
         nodeJson["ID"] = (int)node.ID.Get();
         nodeJson["Name"] = node.Name;
 
-        // On sauvegarde la position de la boîte !
         ImVec2 pos = ed::GetNodePosition(node.ID);
         nodeJson["Position"] = { pos.x, pos.y };
 
+        // --- NOUVEAU : Sauvegarde des valeurs du noeud ---
+        nodeJson["FloatValue"] = node.FloatValue;
+        nodeJson["ColorValue"] = { node.ColorValue.r, node.ColorValue.g, node.ColorValue.b, node.ColorValue.a };
+
         for (auto& pin : node.Inputs) {
-            nodeJson["Inputs"].push_back({ {"ID", (int)pin.ID.Get()}, {"Name", pin.Name} });
+            // --- NOUVEAU : Sauvegarde du PinType ---
+            nodeJson["Inputs"].push_back({ {"ID", (int)pin.ID.Get()}, {"Name", pin.Name}, {"Type", (int)pin.Type} });
         }
         for (auto& pin : node.Outputs) {
-            nodeJson["Outputs"].push_back({ {"ID", (int)pin.ID.Get()}, {"Name", pin.Name} });
+            // --- NOUVEAU : Sauvegarde du PinType ---
+            nodeJson["Outputs"].push_back({ {"ID", (int)pin.ID.Get()}, {"Name", pin.Name}, {"Type", (int)pin.Type} });
         }
         nodesOut.push_back(nodeJson);
     }
@@ -272,7 +278,7 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
     }
 
     std::ofstream file(path);
-    file << data.dump(4); // Indentation de 4 espaces pour faire joli
+    file << data.dump(4);
 
     ed::SetCurrentEditor(nullptr);
 }
@@ -289,7 +295,6 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
     m_Nodes.clear();
     m_Links.clear();
 
-    // Si c'est un matériau tout neuf (créé via le clic droit du Content Browser)
     if (!data.contains("Nodes")) {
         m_NextId = 1;
         BuildDefaultNodes();
@@ -304,19 +309,32 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
         node.ID = ed::NodeId(nodeJson["ID"].get<int>());
         node.Name = nodeJson["Name"].get<std::string>();
 
+        // --- NOUVEAU : Lecture des valeurs interactives ---
+        if (nodeJson.contains("FloatValue")) node.FloatValue = nodeJson["FloatValue"].get<float>();
+        if (nodeJson.contains("ColorValue")) {
+            node.ColorValue = {
+                nodeJson["ColorValue"][0],
+                nodeJson["ColorValue"][1],
+                nodeJson["ColorValue"][2],
+                nodeJson["ColorValue"][3] // L'Alpha (A)
+            };
+        }
+
         if (nodeJson.contains("Inputs")) {
             for (auto& pinJson : nodeJson["Inputs"]) {
-                node.Inputs.push_back({ ed::PinId(pinJson["ID"].get<int>()), node.ID, pinJson["Name"].get<std::string>(), ed::PinKind::Input });
+                // On lit le Type s'il existe, sinon on met Vec3 par défaut pour la rétrocompatibilité
+                PinType pType = pinJson.contains("Type") ? (PinType)pinJson["Type"].get<int>() : PinType::Vec3;
+                node.Inputs.push_back({ ed::PinId(pinJson["ID"].get<int>()), node.ID, pinJson["Name"].get<std::string>(), ed::PinKind::Input, pType });
             }
         }
         if (nodeJson.contains("Outputs")) {
             for (auto& pinJson : nodeJson["Outputs"]) {
-                node.Outputs.push_back({ ed::PinId(pinJson["ID"].get<int>()), node.ID, pinJson["Name"].get<std::string>(), ed::PinKind::Output });
+                PinType pType = pinJson.contains("Type") ? (PinType)pinJson["Type"].get<int>() : PinType::Vec3;
+                node.Outputs.push_back({ ed::PinId(pinJson["ID"].get<int>()), node.ID, pinJson["Name"].get<std::string>(), ed::PinKind::Output, pType });
             }
         }
         m_Nodes.push_back(node);
 
-        // On replace le noeud exactement là où il était
         if (nodeJson.contains("Position")) {
             float x = nodeJson["Position"][0].get<float>();
             float y = nodeJson["Position"][1].get<float>();
@@ -382,6 +400,13 @@ std::string MaterialEditorPanel::CompileMaterial() {
     if (!rootNode->Inputs.empty()) {
         baseColorValue = EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder);
     }
+
+    // 2. Calcul de la Roughness (Pin 1)
+    std::string roughnessValue = "0.5";
+    if (rootNode->Inputs.size() > 1) {
+        roughnessValue = EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder);
+    }
+
     shaderCode << bodyBuilder.str();
 
     // 2. Gestion du mode Wireframe / Unlit
@@ -409,51 +434,77 @@ std::string MaterialEditorPanel::CompileMaterial() {
 
 // --- L'ALGORITHME MAGIQUE (Récursif) ---
 std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder) {
-    // 1. On regarde ce qui est branché
     MaterialLink* connectedLink = nullptr;
     for (auto& link : m_Links) {
         if (link.EndPinID == inputPinId) { connectedLink = &link; break; }
     }
 
-    if (!connectedLink) return "vec3(0.5)"; // Si y'a pas de câble, on renvoie du gris
+    // Valeurs par défaut si rien n'est branché
+    MaterialPin* myInputPin = FindPin(inputPinId);
+    if (!connectedLink) {
+        if (myInputPin && myInputPin->Type == PinType::Float) return "0.0";
+        if (myInputPin && myInputPin->Type == PinType::Vec2)  return "vec2(0.0)";
+        return "vec3(0.0)";
+    }
 
     MaterialPin* outputPin = FindPin(connectedLink->StartPinID);
     MaterialNode* sourceNode = FindNode(outputPin->NodeID);
-    if (!sourceNode) return "vec3(0.5)";
+    if (!sourceNode) return "vec3(0.0)";
 
     int sourceId = (int)sourceNode->ID.Get();
 
-    // 2. Si on n'a JAMAIS traduit ce noeud, on génère son code !
+    // Génération du code du noeud source s'il n'a pas encore été visité
     if (visited.find(sourceId) == visited.end()) {
-        visited.insert(sourceId); // On le marque comme traduit
+        visited.insert(sourceId);
+        bodyBuilder << "    // Noeud: " << sourceNode->Name << " (ID: " << sourceId << ")\n";
 
-        bodyBuilder << "    // Calcul du Noeud: " << sourceNode->Name << "\n";
-
-        // --- TRADUCTION DE CHAQUE TYPE DE BOÎTE ---
         if (sourceNode->Name == "Color") {
-            // Pour l'instant on hardcode du rouge. Plus tard on mettra un ColorPicker !
-            bodyBuilder << "    vec3 val_" << sourceId << " = vec3(0.8, 0.2, 0.2);\n";
+            bodyBuilder << "    vec4 val_" << sourceId << " = vec4("
+                        << sourceNode->ColorValue.r << ", " << sourceNode->ColorValue.g << ", "
+                        << sourceNode->ColorValue.b << ", " << sourceNode->ColorValue.a << ");\n";
         }
         else if (sourceNode->Name == "Float") {
-            bodyBuilder << "    float val_" << sourceId << " = 1.0;\n";
+            bodyBuilder << "    float val_" << sourceId << " = " << sourceNode->FloatValue << ";\n";
         }
         else if (sourceNode->Name == "Multiply") {
-            // RÉCURSIVITÉ : Un Multiply a besoin de lire ses propres entrées d'abord !
             std::string a = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
             std::string b = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
             bodyBuilder << "    vec3 val_" << sourceId << " = " << a << " * " << b << ";\n";
         }
+        else if (sourceNode->Name == "Add") {
+            std::string a = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            std::string b = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
+            bodyBuilder << "    vec3 val_" << sourceId << " = " << a << " + " << b << ";\n";
+        }
+        else if (sourceNode->Name == "Subtract") {
+            std::string a = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            std::string b = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
+            bodyBuilder << "    vec3 val_" << sourceId << " = " << a << " - " << b << ";\n";
+        }
+        else if (sourceNode->Name == "Mix") {
+            std::string a = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            std::string b = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
+            std::string alpha = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
+            bodyBuilder << "    vec3 val_" << sourceId << " = mix(" << a << ", " << b << ", " << alpha << ");\n";
+        }
         else if (sourceNode->Name == "Texture2D") {
-            // Pour l'instant on génère une couleur verte bidon qui simule une texture
-            bodyBuilder << "    vec4 tex_" << sourceId << " = vec4(0.0, 1.0, 0.0, 1.0);\n";
+            bodyBuilder << "    vec4 tex_" << sourceId << " = vec4(1.0, 1.0, 1.0, 1.0);\n";
         }
         bodyBuilder << "\n";
     }
 
-    // 3. On renvoie le nom de la variable qu'on vient de générer à celui qui l'a demandée
-    if (sourceNode->Name == "Texture2D") {
-        if (outputPin->Name == "RGB") return "tex_" + std::to_string(sourceId) + ".rgb";
-        if (outputPin->Name == "R") return "tex_" + std::to_string(sourceId) + ".r";
+    // --- ROUTAGE DES SORTIES ---
+    // Si c'est un noeud complexe (Color, Texture), on renvoie la bonne composante
+    if (sourceNode->Name == "Color" || sourceNode->Name == "Texture2D") {
+        std::string varName = (sourceNode->Name == "Color") ? "val_" : "tex_";
+        varName += std::to_string(sourceId);
+
+        if (outputPin->Name == "R") return varName + ".r";
+        if (outputPin->Name == "G") return varName + ".g";
+        if (outputPin->Name == "B") return varName + ".b";
+        if (outputPin->Name == "A") return varName + ".a";
+        if (outputPin->Name == "RGB") return varName + ".rgb";
+        return varName; // RGBA
     }
 
     return "val_" + std::to_string(sourceId);
