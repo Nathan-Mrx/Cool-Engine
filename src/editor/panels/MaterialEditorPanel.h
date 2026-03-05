@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui-node-editor/imgui_node_editor.h>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace ed = ax::NodeEditor;
@@ -45,6 +46,11 @@ private:
     ImVec2 m_ContextPopupPos;
 
     MaterialPin* FindPin(ed::PinId id);
+
+    // --- NOUVEAU : OUTILS DE COMPILATION ---
+    MaterialNode* FindNode(ed::NodeId id);
+    void CompileMaterial();
+    std::string EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder);
 
     ed::EditorContext* m_Context = nullptr;
     bool m_FirstFrame = true;

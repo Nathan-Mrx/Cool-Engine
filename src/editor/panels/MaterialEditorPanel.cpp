@@ -1,6 +1,7 @@
 #include "MaterialEditorPanel.h"
 #include <algorithm>
 #include <fstream>
+#include <iostream>
 #include <nlohmann/json.hpp>
 #include <nlohmann/json_fwd.hpp>
 
@@ -42,9 +43,17 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
     if (ImGui::Begin("Material Editor", &isOpen)) {
 
-        // --- TEXTE DE DIAGNOSTIC ---
+        // --- NOUVEAU : BOUTON DE COMPILATION ---
         ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
+        if (ImGui::Button("Compile to Console", ImVec2(150, 30))) {
+            CompileMaterial();
+        }
+        ImGui::SameLine();
+
+        // --- TEXTE DE DIAGNOSTIC ---
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[DEBUG] Graphe Dynamique Actif ! Noeuds: %zu | Liens: %zu", m_Nodes.size(), m_Links.size());
+
+
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (avail.x < 100.0f) avail.x = 800.0f;
@@ -323,4 +332,100 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
         }
     }
     ed::SetCurrentEditor(nullptr);
+}
+
+// --- FONCTION UTILITAIRE ---
+MaterialNode* MaterialEditorPanel::FindNode(ed::NodeId id) {
+    for (auto& node : m_Nodes) {
+        if (node.ID == id) return &node;
+    }
+    return nullptr;
+}
+
+// --- LE CHEF D'ORCHESTRE ---
+void MaterialEditorPanel::CompileMaterial() {
+    MaterialNode* rootNode = nullptr;
+    for (auto& node : m_Nodes) {
+        if (node.Name == "Base Material") { rootNode = &node; break; }
+    }
+    if (!rootNode) return;
+
+    // 1. On prépare la coquille vide du Shader GLSL
+    std::stringstream shaderCode;
+    shaderCode << "#version 410 core\n\n";
+    shaderCode << "out vec4 FragColor;\n";
+    shaderCode << "in vec2 v_TexCoord;\n\n";
+    shaderCode << "void main() {\n";
+
+    std::unordered_set<int> visitedNodes;
+    std::stringstream bodyBuilder;
+
+    // 2. On lance l'algorithme sur l'entrée "Base Color" (Index 0)
+    std::string baseColorValue = "vec3(1.0, 0.0, 1.0)"; // Rose fluo (valeur d'erreur par défaut)
+    if (!rootNode->Inputs.empty()) {
+        baseColorValue = EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder);
+    }
+
+    // 3. On assemble le tout
+    shaderCode << bodyBuilder.str();
+    shaderCode << "    // --- SORTIE FINALE ---\n";
+    shaderCode << "    FragColor = vec4(" << baseColorValue << ", 1.0);\n";
+    shaderCode << "}\n";
+
+    // 4. On l'affiche fièrement dans la console !
+    std::cout << "\n============= SHADER GENERE GLSL =============\n";
+    std::cout << shaderCode.str();
+    std::cout << "==============================================\n" << std::endl;
+}
+
+// --- L'ALGORITHME MAGIQUE (Récursif) ---
+std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder) {
+    // 1. On regarde ce qui est branché
+    MaterialLink* connectedLink = nullptr;
+    for (auto& link : m_Links) {
+        if (link.EndPinID == inputPinId) { connectedLink = &link; break; }
+    }
+
+    if (!connectedLink) return "vec3(0.5)"; // Si y'a pas de câble, on renvoie du gris
+
+    MaterialPin* outputPin = FindPin(connectedLink->StartPinID);
+    MaterialNode* sourceNode = FindNode(outputPin->NodeID);
+    if (!sourceNode) return "vec3(0.5)";
+
+    int sourceId = (int)sourceNode->ID.Get();
+
+    // 2. Si on n'a JAMAIS traduit ce noeud, on génère son code !
+    if (visited.find(sourceId) == visited.end()) {
+        visited.insert(sourceId); // On le marque comme traduit
+
+        bodyBuilder << "    // Calcul du Noeud: " << sourceNode->Name << "\n";
+
+        // --- TRADUCTION DE CHAQUE TYPE DE BOÎTE ---
+        if (sourceNode->Name == "Color") {
+            // Pour l'instant on hardcode du rouge. Plus tard on mettra un ColorPicker !
+            bodyBuilder << "    vec3 val_" << sourceId << " = vec3(0.8, 0.2, 0.2);\n";
+        }
+        else if (sourceNode->Name == "Float") {
+            bodyBuilder << "    float val_" << sourceId << " = 1.0;\n";
+        }
+        else if (sourceNode->Name == "Multiply") {
+            // RÉCURSIVITÉ : Un Multiply a besoin de lire ses propres entrées d'abord !
+            std::string a = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            std::string b = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
+            bodyBuilder << "    vec3 val_" << sourceId << " = " << a << " * " << b << ";\n";
+        }
+        else if (sourceNode->Name == "Texture2D") {
+            // Pour l'instant on génère une couleur verte bidon qui simule une texture
+            bodyBuilder << "    vec4 tex_" << sourceId << " = vec4(0.0, 1.0, 0.0, 1.0);\n";
+        }
+        bodyBuilder << "\n";
+    }
+
+    // 3. On renvoie le nom de la variable qu'on vient de générer à celui qui l'a demandée
+    if (sourceNode->Name == "Texture2D") {
+        if (outputPin->Name == "RGB") return "tex_" + std::to_string(sourceId) + ".rgb";
+        if (outputPin->Name == "R") return "tex_" + std::to_string(sourceId) + ".r";
+    }
+
+    return "val_" + std::to_string(sourceId);
 }
