@@ -30,13 +30,12 @@ void EditorLayer::OnAttach() {
     }
 
     // 1. Initialisation du premier onglet vierge
-    m_Tabs.push_back({ "Untitled", "", TabType::Scene, std::make_shared<Scene>(), false });
+    m_Tabs.push_back({ "Untitled", "", TabType::Scene, std::make_shared<Scene>(), false, nullptr });
     m_ActiveTabIndex = 0;
     m_ActiveScene = m_Tabs[0].SceneContext;
 
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
     m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
-    m_MaterialEditorPanel = std::make_unique<MaterialEditorPanel>();
 
     // 2. Connexion des callbacks du Content Browser !
     m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
@@ -174,7 +173,7 @@ void EditorLayer::BeginDockspace() {
                         m_SceneHierarchyPanel.SetIsPrefabScene(m_Tabs[i].IsPrefab);
                     }
                     else if (m_Tabs[i].Type == TabType::Material) {
-                        m_MaterialEditorPanel->Load(m_Tabs[i].Filepath);
+                        // On ne fait RIEN : l'onglet a déjà son graphe en mémoire !
                     }
                 }
                 ImGui::EndTabItem();
@@ -571,7 +570,7 @@ void EditorLayer::OnImGuiRender() {
     if (control && !shift && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
         // Nouvelle scène = Nouvel onglet !
         auto newScene = std::make_shared<Scene>();
-        m_Tabs.push_back({ "Untitled", "", TabType::Scene, newScene, false });
+        m_Tabs.push_back({ "Untitled", "", TabType::Scene, newScene, false, nullptr });
         m_ActiveTabIndex = m_Tabs.size() - 1;
         m_ActiveScene = newScene;
         m_ForceTabSelection = true;
@@ -729,9 +728,10 @@ void EditorLayer::OnImGuiRender() {
 
             } else if (activeTab.Type == TabType::Material) {
                 // --- MODE MATÉRIAU ---
-                // On affiche uniquement l'éditeur nodal ! La Hiérarchie et le Viewport disparaissent.
                 bool open = true;
-                m_MaterialEditorPanel->OnImGuiRender(open);
+                if (activeTab.MaterialContext) {
+                    activeTab.MaterialContext->OnImGuiRender(open);
+                }
             }
         }
     }
@@ -878,10 +878,11 @@ void EditorLayer::SaveScene() {
                 SaveSceneAs();
             }
         }
-        // --- LE FIX : Rédiger le fichier .cemat ---
         else if (activeTab.Type == TabType::Material) {
-            m_MaterialEditorPanel->Save(activeTab.Filepath);
-            std::cout << "[Editor] Saved Material Graph to " << activeTab.Filepath << std::endl;
+            if (activeTab.MaterialContext) {
+                activeTab.MaterialContext->Save(activeTab.Filepath);
+                std::cout << "[Editor] Saved Material Graph to " << activeTab.Filepath << std::endl;
+            }
         }
     }
 }
@@ -998,7 +999,7 @@ void EditorLayer::OpenScene(const std::filesystem::path& path) {
     SceneSerializer serializer(newScene);
     serializer.Deserialize(path.string());
 
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Scene, newScene, false });
+    m_Tabs.push_back({ path.filename().string(), path, TabType::Scene, newScene, false, nullptr });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ActiveScene = newScene;
     m_ForceTabSelection = true;
@@ -1015,7 +1016,7 @@ void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
     SceneSerializer serializer(newPrefabScene);
     serializer.Deserialize(path.string());
 
-    m_Tabs.push_back({ "[Prefab] " + path.filename().string(), path, TabType::Scene, newPrefabScene, true });
+    m_Tabs.push_back({ "[Prefab] " + path.filename().string(), path, TabType::Scene, newPrefabScene, true, nullptr });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ActiveScene = newPrefabScene;
     m_ForceTabSelection = true;
@@ -1092,18 +1093,22 @@ void EditorLayer::DrawSplashScreen() {
 }
 
 void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
+    // 1. On vérifie si l'onglet est déjà ouvert
     for (int i = 0; i < m_Tabs.size(); i++) {
         if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i; m_ForceTabSelection = true;
-            m_MaterialEditorPanel->Load(path); // Update si déjà ouvert !
-            return;
+            m_ActiveTabIndex = i;
+            m_ForceTabSelection = true;
+            return; // On s'arrête là, et SURTOUT on ne recharge pas le fichier !
         }
     }
 
-    // On charge les données JSON avant de l'afficher
-    m_MaterialEditorPanel->Load(path);
+    // 2. Si ce n'est pas ouvert, on crée un NOUVEAU panel indépendant
+    auto newMatPanel = std::make_shared<MaterialEditorPanel>();
+    newMatPanel->Load(path); // Il charge son propre fichier
 
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false });
+    // 3. On ajoute le nouvel onglet avec son panel dédié (le 6ème paramètre)
+    m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMatPanel });
+
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
 }

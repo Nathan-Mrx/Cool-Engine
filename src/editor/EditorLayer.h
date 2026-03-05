@@ -40,11 +40,12 @@ enum class TabType {
 struct EditorTab {
     std::string Name;
     std::filesystem::path Filepath;
-    TabType Type = TabType::Scene; // Le type définit quels panneaux s'affichent !
+    TabType Type = TabType::Scene;
 
-    // Données spécifiques à la scène
+    // --- MÉMOIRE DE L'ONGLET ---
     std::shared_ptr<Scene> SceneContext;
     bool IsPrefab = false;
+    std::shared_ptr<MaterialEditorPanel> MaterialContext = nullptr; // <-- NOUVEAU !
 };
 
 class EditorLayer {
@@ -111,7 +112,6 @@ private:
     uint32_t m_SplashTextureID = 0;
     std::filesystem::path m_PendingProjectPath;
 
-    std::unique_ptr<MaterialEditorPanel> m_MaterialEditorPanel;
     bool m_ShowMaterialEditor = false;
 
     void OpenMaterial(const std::filesystem::path& path);
