@@ -40,6 +40,7 @@ struct MaterialNode {
     glm::vec4 ColorValue = {1.0f, 1.0f, 1.0f, 1.0f};
 
     std::string TexturePath = "";
+    unsigned int TextureID = 0;
 };
 
 struct MaterialLink {

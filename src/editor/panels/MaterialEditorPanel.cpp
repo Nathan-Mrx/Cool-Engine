@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 #include <nlohmann/json_fwd.hpp>
 
+#include "renderer/TextureLoader.h"
+
 MaterialEditorPanel::MaterialEditorPanel() {
     ed::Config config;
     // --- LE KILL SWITCH (Bloque la corruption de caméra) ---
@@ -105,19 +107,32 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             }
             else if (node.Name == "Texture2D") {
                 ImGui::PushItemWidth(120.0f);
+
+                // 1. L'affichage dynamique
                 if (node.TexturePath.empty()) {
                     ImGui::Button("Drop Texture Here", ImVec2(120, 30));
                 } else {
-                    // Affiche le nom du fichier une fois chargé !
-                    ImGui::TextColored(ImVec4(0,1,0,1), "%s", std::filesystem::path(node.TexturePath).filename().string().c_str());
+                    // Si on a un chemin mais pas encore l'image en RAM (sécurité)
+                    if (node.TextureID == 0) {
+                        node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                    }
+
+                    // On dessine l'image avec ImGui !
+                    if (node.TextureID != 0) {
+                        ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120));
+                    } else {
+                        ImGui::TextColored(ImVec4(1,0,0,1), "Load Failed");
+                    }
                 }
 
-                // C'est ici qu'on intercepte ton glisser-déposer !
+                // 2. Le glisser-déposer
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                         std::filesystem::path path = (const char*)payload->Data;
                         if (path.extension() == ".png" || path.extension() == ".jpg") {
                             node.TexturePath = path.string();
+                            // On charge l'image en RAM instantanément lors du drop !
+                            node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
                         }
                     }
                     ImGui::EndDragDropTarget();
@@ -486,7 +501,14 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
                 nodeJson["ColorValue"][3] // L'Alpha (A)
             };
         }
-        if (nodeJson.contains("TexturePath")) node.TexturePath = nodeJson["TexturePath"].get<std::string>();
+
+        if (nodeJson.contains("TexturePath")) {
+            node.TexturePath = nodeJson["TexturePath"].get<std::string>();
+            // On précharge la miniature dès l'ouverture de l'onglet !
+            if (!node.TexturePath.empty()) {
+                node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+            }
+        }
 
         if (nodeJson.contains("Inputs")) {
             for (auto& pinJson : nodeJson["Inputs"]) {
