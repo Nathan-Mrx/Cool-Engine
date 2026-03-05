@@ -107,6 +107,19 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
                     activeShader->SetMat4("uView", s_Data->CurrentView);
                     activeShader->SetMat4("uProjection", s_Data->CurrentProjection);
 
+                    // ========================================================
+                    // --- NOUVEAU : UNIFORMES PBR (Lumière & Caméra) ---
+                    // ========================================================
+                    // uLightPos représente maintenant la DIRECTION du soleil (ex: venant d'en haut, à droite et en avant)
+                    activeShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
+
+                    // L'intensité est drastiquement réduite car le soleil n'a pas de perte de puissance avec la distance
+                    activeShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
+
+                    glm::mat4 invView = glm::inverse(s_Data->CurrentView);
+                    glm::vec3 camPos = glm::vec3(invView[3]);
+                    activeShader->SetVec3("uViewPos", camPos);
+
                     // --- NOUVEAU : ON BRANCHE LES TEXTURES AVANT DE DESSINER ---
                     int slot = 0;
                     for (auto const& [nodeID, texID] : mat.Textures) {

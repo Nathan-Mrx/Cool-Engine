@@ -825,71 +825,156 @@ std::string MaterialEditorPanel::CompileMaterial() {
     std::stringstream shaderCode;
     shaderCode << "#version 460 core\n\n";
 
-    // --- VARIABLES DE SORTIE (Match parfait avec default.frag) ---
+    // --- VARIABLES DE SORTIE ---
     shaderCode << "layout(location = 0) out vec4 FragColor;\n";
     shaderCode << "layout(location = 1) out int EntityID;\n\n";
 
-    // --- VARIABLES D'ENTRÉE (Depuis default.vert) ---
+    // --- VARIABLES D'ENTRÉE ---
     shaderCode << "in vec3 vFragPos;\n";
     shaderCode << "in vec3 vNormal;\n";
     shaderCode << "in vec2 vTexCoords;\n\n";
 
-    // --- UNIFORMS (Lumière et Éditeur) ---
-    shaderCode << "uniform vec3 uLightColor;\n";
-    shaderCode << "uniform vec3 uLightDir;\n";
-    shaderCode << "uniform float uAmbientStrength;\n";
-    shaderCode << "uniform float uDiffuseStrength;\n";
+    // --- UNIFORMS STANDARDS ---
     shaderCode << "uniform int uEntityID;\n";
     shaderCode << "uniform int uRenderMode;\n\n";
 
-    // --- NOUVEAU : Déclaration des Sampler2D (Les textures) ---
+    // --- TEXTURES ---
     for (auto& node : m_Nodes) {
         if (node.Name == "Texture2D" && !node.TexturePath.empty()) {
             shaderCode << "uniform sampler2D u_Tex_" << node.ID.Get() << ";\n";
         }
     }
 
-    shaderCode << "void main() {\n";
+    // --- UNIFORMS PBR ---
+    shaderCode << "uniform vec3 uViewPos;\n";
+    shaderCode << "uniform vec3 uLightPos;\n";
+    shaderCode << "uniform vec3 uLightColor;\n\n";
 
+    // --- FONCTIONS MATHÉMATIQUES PBR ---
+    shaderCode << R"(
+const float PI = 3.14159265359;
+
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness*roughness;
+    float a2 = a*a;
+    float NdotH = max(dot(N, H), 0.0);
+    float denom = (NdotH*NdotH * (a2 - 1.0) + 1.0);
+    return a2 / (PI * denom * denom);
+}
+
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r*r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) * GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
+    vec3 tangentNormal = texNormal * 2.0 - 1.0;
+    vec3 Q1  = dFdx(fragPos);
+    vec3 Q2  = dFdy(fragPos);
+    vec2 st1 = dFdx(uv);
+    vec2 st2 = dFdy(uv);
+    vec3 N   = normalize(vNormal);
+    vec3 T  = normalize(Q1*st2.t - Q2*st1.t);
+    vec3 B  = -normalize(cross(N, T));
+    mat3 TBN = mat3(T, B, N);
+    return normalize(TBN * tangentNormal);
+}
+)";
+
+    // ========================================================
+    // --- EVALUATION DU GRAPHE ---
+    // ========================================================
     std::unordered_set<int> visitedNodes;
     std::stringstream bodyBuilder;
 
-    // 1. Calcul du graphe nodal
-    std::string baseColorValue = "vec3(1.0, 0.0, 1.0)";
-    if (!rootNode->Inputs.empty()) {
-        baseColorValue = EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder);
-    }
+    std::string v_baseColor = EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder);
+    std::string v_normal    = EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder);
+    std::string v_metallic  = EvaluatePinGLSL(rootNode->Inputs[2].ID, visitedNodes, bodyBuilder);
+    std::string v_roughness = EvaluatePinGLSL(rootNode->Inputs[3].ID, visitedNodes, bodyBuilder);
+    std::string v_specular  = EvaluatePinGLSL(rootNode->Inputs[4].ID, visitedNodes, bodyBuilder);
+    std::string v_ao        = EvaluatePinGLSL(rootNode->Inputs[5].ID, visitedNodes, bodyBuilder);
 
-    // 2. Calcul de la Roughness (Pin 1)
-    std::string roughnessValue = "0.5";
-    if (rootNode->Inputs.size() > 1) {
-        roughnessValue = EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder);
-    }
+    // Sécurité : On s'assure qu'aucune variable n'est vide
+    if (v_baseColor.empty() || v_baseColor.find("vec3(0") != std::string::npos) v_baseColor = "vec3(1.0)";
+    if (v_metallic.empty())  v_metallic = "0.0";
+    if (v_roughness.empty()) v_roughness = "0.5";
+    if (v_ao.empty() || v_ao == "0.0" || v_ao == "0") v_ao = "1.0";
 
+    // ========================================================
+    // --- MAIN ---
+    // ========================================================
+    shaderCode << "void main() {\n";
+
+    // 1. Injection du code des nœuds
     shaderCode << bodyBuilder.str();
 
-    // 2. Gestion du mode Wireframe / Unlit
+    // 2. Assignation des propriétés PBR
+    shaderCode << "    vec3 albedo = pow(vec3(" << v_baseColor << "), vec3(2.2)); // Gamma to Linear\n";
+    shaderCode << "    float metallic = float(" << v_metallic << ");\n";
+    shaderCode << "    float roughness = clamp(float(" << v_roughness << "), 0.05, 1.0);\n";
+    shaderCode << "    float ao = float(" << v_ao << ");\n\n";
+
+    if (v_normal.empty() || v_normal.find("vec3(0") != std::string::npos) {
+        shaderCode << "    vec3 N = normalize(vNormal);\n";
+    } else {
+        shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
+    }
+
+    // 3. Mode Wireframe Bypass
     shaderCode << "    if (uRenderMode == 1 || uRenderMode == 2) {\n";
-    shaderCode << "        FragColor = vec4(" << baseColorValue << ", 1.0);\n";
+    shaderCode << "        FragColor = vec4(albedo, 1.0);\n";
     shaderCode << "        EntityID = uEntityID;\n";
     shaderCode << "        return;\n";
     shaderCode << "    }\n\n";
 
-    // 3. Calcul de la lumière (Lambert)
-    shaderCode << "    vec3 ambient = uAmbientStrength * uLightColor;\n";
-    shaderCode << "    vec3 norm = normalize(vNormal);\n"; // Utilisation de la bonne variable !
-    shaderCode << "    vec3 lightDir = normalize(-uLightDir);\n";
-    shaderCode << "    float diff = max(dot(norm, lightDir), 0.0);\n";
-    shaderCode << "    vec3 diffuse = diff * uDiffuseStrength * uLightColor;\n";
+    // 4. Équation de Cook-Torrance
+    shaderCode << R"(
+    vec3 V = normalize(uViewPos - vFragPos);
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, albedo, metallic);
 
-    // 4. Sortie Finale
-    shaderCode << "    vec3 finalColor = (ambient + diffuse) * " << baseColorValue << ";\n";
-    shaderCode << "    FragColor = vec4(finalColor, 1.0);\n";
-    shaderCode << "    EntityID = uEntityID;\n"; // Le fix pour pouvoir cliquer sur le modèle !
-    shaderCode << "}\n";
+    vec3 L = normalize(uLightPos);
+    vec3 H = normalize(V + L);
+    vec3 radiance = uLightColor;
+
+    float NDF = DistributionGGX(N, H, roughness);
+    float G   = GeometrySmith(N, V, L, roughness);
+    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    vec3 numerator    = NDF * G * F;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+    vec3 specular = numerator / denominator;
+
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - metallic;
+
+    float NdotL = max(dot(N, L), 0.0);
+    vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
+
+    vec3 ambient = vec3(0.15) * albedo * ao;
+    vec3 color = ambient + Lo;
+
+    color = color / (color + vec3(1.0));
+    color = pow(color, vec3(1.0/2.2));
+
+    FragColor = vec4(color, 1.0);
+    EntityID = uEntityID;
+}
+)";
 
     return shaderCode.str();
 }
+
 
 // --- L'ALGORITHME MAGIQUE (Récursif) ---
 std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder) {
