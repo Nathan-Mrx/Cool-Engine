@@ -111,6 +111,10 @@ void SceneSerializer::Serialize(const std::string& filepath) {
             entityJson["PrefabComponent"]["PrefabPath"] = entity.GetComponent<PrefabComponent>().PrefabPath;
         }
 
+        if (entity.HasComponent<MaterialComponent>()) {
+            entityJson["MaterialComponent"]["AssetPath"] = entity.GetComponent<MaterialComponent>().AssetPath;
+        }
+
         entitiesData.push_back(entityJson);
     }
 
@@ -256,6 +260,16 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
             auto& pc = deserializedEntity.AddComponent<PrefabComponent>();
             pc.PrefabPath = entityJson["PrefabComponent"]["PrefabPath"].get<std::string>();
         }
+
+        if (entityJson.contains("MaterialComponent")) {
+            auto& jMat = entityJson["MaterialComponent"];
+            if (!deserializedEntity.HasComponent<MaterialComponent>()) deserializedEntity.AddComponent<MaterialComponent>();
+            auto& mat = deserializedEntity.GetComponent<MaterialComponent>();
+
+            // Appeler SetAndCompile va lire le fichier et recréer le Shader !
+            mat.SetAndCompile(jMat["AssetPath"].get<std::string>());
+        }
+
     }
 
     // ==========================================
@@ -366,6 +380,11 @@ Entity SceneSerializer::DeserializePrefab(const std::string& filepath) {
                 nsc.ScriptName = scriptName;
                 ScriptRegistry::Registry[scriptName](nsc);
             }
+        }
+
+        if (entityJson.contains("MaterialComponent")) {
+            auto& mat = newEntity.AddComponent<MaterialComponent>();
+            mat.SetAndCompile(entityJson["MaterialComponent"]["AssetPath"].get<std::string>());
         }
     }
 

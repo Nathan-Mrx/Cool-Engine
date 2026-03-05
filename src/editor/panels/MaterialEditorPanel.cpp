@@ -350,28 +350,60 @@ std::string MaterialEditorPanel::CompileMaterial() {
     for (auto& node : m_Nodes) {
         if (node.Name == "Base Material") { rootNode = &node; break; }
     }
-    if (!rootNode) return ""; // On renvoie vide si erreur
+    if (!rootNode) return "";
 
     std::stringstream shaderCode;
-    shaderCode << "#version 410 core\n\n";
-    shaderCode << "out vec4 FragColor;\n";
-    shaderCode << "in vec2 v_TexCoord;\n\n";
+    shaderCode << "#version 460 core\n\n";
+
+    // --- VARIABLES DE SORTIE (Match parfait avec default.frag) ---
+    shaderCode << "layout(location = 0) out vec4 FragColor;\n";
+    shaderCode << "layout(location = 1) out int EntityID;\n\n";
+
+    // --- VARIABLES D'ENTRÉE (Depuis default.vert) ---
+    shaderCode << "in vec3 vFragPos;\n";
+    shaderCode << "in vec3 vNormal;\n"; // LE FIX EST ICI : Plus de tiret du bas !
+    shaderCode << "in vec2 aTexCoords;\n\n"; // En préparation pour les textures
+
+    // --- UNIFORMS (Lumière et Éditeur) ---
+    shaderCode << "uniform vec3 uLightColor;\n";
+    shaderCode << "uniform vec3 uLightDir;\n";
+    shaderCode << "uniform float uAmbientStrength;\n";
+    shaderCode << "uniform float uDiffuseStrength;\n";
+    shaderCode << "uniform int uEntityID;\n";
+    shaderCode << "uniform int uRenderMode;\n\n";
+
     shaderCode << "void main() {\n";
 
     std::unordered_set<int> visitedNodes;
     std::stringstream bodyBuilder;
 
+    // 1. Calcul du graphe nodal
     std::string baseColorValue = "vec3(1.0, 0.0, 1.0)";
     if (!rootNode->Inputs.empty()) {
         baseColorValue = EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder);
     }
-
     shaderCode << bodyBuilder.str();
-    shaderCode << "    // --- SORTIE FINALE ---\n";
-    shaderCode << "    FragColor = vec4(" << baseColorValue << ", 1.0);\n";
+
+    // 2. Gestion du mode Wireframe / Unlit
+    shaderCode << "    if (uRenderMode == 1 || uRenderMode == 2) {\n";
+    shaderCode << "        FragColor = vec4(" << baseColorValue << ", 1.0);\n";
+    shaderCode << "        EntityID = uEntityID;\n";
+    shaderCode << "        return;\n";
+    shaderCode << "    }\n\n";
+
+    // 3. Calcul de la lumière (Lambert)
+    shaderCode << "    vec3 ambient = uAmbientStrength * uLightColor;\n";
+    shaderCode << "    vec3 norm = normalize(vNormal);\n"; // Utilisation de la bonne variable !
+    shaderCode << "    vec3 lightDir = normalize(-uLightDir);\n";
+    shaderCode << "    float diff = max(dot(norm, lightDir), 0.0);\n";
+    shaderCode << "    vec3 diffuse = diff * uDiffuseStrength * uLightColor;\n";
+
+    // 4. Sortie Finale
+    shaderCode << "    vec3 finalColor = (ambient + diffuse) * " << baseColorValue << ";\n";
+    shaderCode << "    FragColor = vec4(finalColor, 1.0);\n";
+    shaderCode << "    EntityID = uEntityID;\n"; // Le fix pour pouvoir cliquer sur le modèle !
     shaderCode << "}\n";
 
-    // ON RETOURNE LA STRING AU LIEU DU COUT !
     return shaderCode.str();
 }
 

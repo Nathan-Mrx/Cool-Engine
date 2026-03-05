@@ -12,8 +12,11 @@
 #include "../renderer/ModelLoader.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include <fstream>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include "core/UUID.h"
 #include "renderer/Shader.h"
@@ -289,14 +292,57 @@ struct PrefabComponent {
 };
 
 struct MaterialComponent {
-    std::string AssetPath; // Le chemin vers le fichier .cemat
-    std::shared_ptr<Shader> ShaderInstance = nullptr; // Le shader compilé par OpenGL
+    std::string AssetPath;
+    std::shared_ptr<Shader> ShaderInstance = nullptr;
 
     MaterialComponent() = default;
     MaterialComponent(const MaterialComponent&) = default;
-    MaterialComponent(const std::string& path) : AssetPath(path) {}
+    MaterialComponent(const std::string& path) { SetAndCompile(path); }
 
-    void OnImGuiRender() {}
+    // --- LE COMPILATEUR À LA VOLÉE ---
+    void SetAndCompile(const std::string& path) {
+        AssetPath = path;
+        std::ifstream file(path);
+        if (!file.is_open()) return;
+
+        nlohmann::json data;
+        try { file >> data; } catch(...) { return; }
+
+        if (data.contains("GeneratedGLSL")) {
+            std::string glsl = data["GeneratedGLSL"].get<std::string>();
+
+            // On écrit un fichier .frag temporaire à côté du matériau pour que la classe Shader puisse le lire !
+            std::string fragPath = path + ".frag";
+            std::ofstream outFrag(fragPath);
+            outFrag << glsl;
+            outFrag.close();
+
+            // On compile ! On réutilise ton default.vert pour la géométrie, et notre nouveau .frag pour les couleurs
+            ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.c_str());
+            std::cout << "[Material] Shader compile avec succes pour : " << path << std::endl;
+        }
+    }
+
+    void OnImGuiRender() {
+        if (!AssetPath.empty()) {
+            ImGui::TextWrapped("Mat: %s", std::filesystem::path(AssetPath).filename().string().c_str());
+        } else {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "No Material Assigned");
+        }
+
+        ImGui::Button("Drop .cemat Here", ImVec2(-1, 30));
+
+        // --- DRAG & DROP TARGET ---
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                std::filesystem::path filepath = (const char*)payload->Data;
+                if (filepath.extension() == ".cemat") {
+                    SetAndCompile(filepath.string());
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+    }
 };
 
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---

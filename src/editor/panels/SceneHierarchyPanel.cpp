@@ -19,6 +19,10 @@ const char* GetComponentName() {
     //if constexpr (std::is_same_v<T, PointLightComponent>) return "Point Light"; // not implemented yet
     if constexpr (std::is_same_v<T, RigidBodyComponent>) return "Rigid Body";
     if constexpr (std::is_same_v<T, BoxColliderComponent>) return "Box Collider";
+    if constexpr (std::is_same_v<T, NativeScriptComponent>) return "Native Script";
+    if constexpr (std::is_same_v<T, RelationshipComponent>) return "Relationship";
+    if constexpr (std::is_same_v<T, PrefabComponent>) return "Prefab";
+    if constexpr (std::is_same_v<T, MaterialComponent>) return "Material";
     return "Unknown Component";
 }
 

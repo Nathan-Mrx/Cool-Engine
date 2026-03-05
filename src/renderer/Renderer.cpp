@@ -55,67 +55,77 @@ void Renderer::Init() {
 void Renderer::RenderScene(Scene* scene, int renderMode) {
     if (s_Data->MainShader) {
         s_Data->MainShader->Use();
-        s_Data->MainShader->SetInt("uRenderMode", renderMode); // On prévient le shader !
+        s_Data->MainShader->SetInt("uRenderMode", renderMode);
     }
 
-    // Si on est en mode Wireframe (2), on demande à OpenGL de ne dessiner que les lignes
-    if (renderMode == 2) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    } else {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    }
+    if (renderMode == 2) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
-    // --- 1. GESTION DE LA LUMIÈRE ---
+    // =====================================================
+    // 1. LECTURE GLOBALE DE LA LUMIÈRE
+    // =====================================================
     auto lightView = scene->m_Registry.view<TransformComponent, DirectionalLightComponent>();
-    bool hasLight = false;
 
-    // Itération standard EnTT (Supporte les vues multiples)
+    // Valeurs par défaut (si aucune lumière n'est dans la scène)
+    glm::vec3 currentLightColor = glm::vec3(1.0f);
+    glm::vec3 currentLightDir = glm::vec3(0.0f, -1.0f, 0.0f);
+    float currentAmbient = 1.0f;
+    float currentDiffuse = 0.0f;
+
     for (auto entity : lightView) {
         auto [lightTransform, light] = lightView.get<TransformComponent, DirectionalLightComponent>(entity);
-
-        // --- LE FIX : Calcul de la direction avec le Quaternion ---
-        // On prend le vecteur de base de la lumière (vers le bas) et on le tourne avec le Quat.
-        // C'est beaucoup plus performant qu'une multiplication de matrices 4x4 !
         glm::vec3 baseDirection = glm::vec3(0.0f, -1.0f, 0.0f);
-        glm::vec3 lightDir = glm::normalize(lightTransform.Rotation * baseDirection);
 
-        s_Data->MainShader->SetVec3("uLightColor", light.Color);
-        s_Data->MainShader->SetVec3("uLightDir", lightDir);
-        s_Data->MainShader->SetFloat("uAmbientStrength", light.AmbientIntensity);
-        s_Data->MainShader->SetFloat("uDiffuseStrength", light.DiffuseIntensity);
-
-        hasLight = true;
-        break; // On ne gère qu'une seule Directional Light globale pour l'instant
+        currentLightDir = glm::normalize(lightTransform.Rotation * baseDirection);
+        currentLightColor = light.Color;
+        currentAmbient = light.AmbientIntensity;
+        currentDiffuse = light.DiffuseIntensity;
+        break; // On ne gère qu'une seule Directional Light pour l'instant
     }
 
-    if (!hasLight) {
-        // Fallback sans lumière : on éclaire tout
-        s_Data->MainShader->SetVec3("uLightColor", glm::vec3(1.0f));
-        s_Data->MainShader->SetVec3("uLightDir", glm::vec3(0.0f, -1.0f, 0.0f));
-        s_Data->MainShader->SetFloat("uAmbientStrength", 1.0f);
-        s_Data->MainShader->SetFloat("uDiffuseStrength", 0.0f);
-    }
-
-    // --- 2. RENDU DES MESHES ---
-    auto view = scene->m_Registry.view<TransformComponent, MeshComponent, ColorComponent>();
+    // =====================================================
+    // 2. RENDU DES MESHES ET APPLICATION DES MATÉRIAUX
+    // =====================================================
+    auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
     for (auto entityID : view) {
-        auto [transform, mesh, color] = view.get<TransformComponent, MeshComponent, ColorComponent>(entityID);
+        auto [transform, mesh] = view.get<TransformComponent, MeshComponent>(entityID);
         if (mesh.MeshData) {
 
-            // --- LE FIX HIERARCHIE EST ICI ---
-            // On crée un objet Entity temporaire pour pouvoir interroger la Scene
             Entity entityObj{ entityID, scene };
-
-            // On récupère la vraie position mathématique dans le monde (Parent x Enfant)
             glm::mat4 globalTransform = scene->GetWorldTransform(entityObj);
 
-            s_Data->MainShader->SetVec3("uColor", color.Color);
+            // A. On sélectionne le bon Shader
+            Shader* activeShader = s_Data->MainShader.get();
+            activeShader->Use();
 
-            // On envoie la matrice GLOBALE à la carte graphique, au lieu de 'transform.GetTransform()'
-            s_Data->MainShader->SetMat4("uModel", globalTransform);
+            if (entityObj.HasComponent<MaterialComponent>()) {
+                auto& mat = entityObj.GetComponent<MaterialComponent>();
+                if (mat.ShaderInstance) {
+                    activeShader = mat.ShaderInstance.get();
+                    activeShader->Use();
 
-            // On envoie l'identifiant numérique de l'entité au Shader
-            s_Data->MainShader->SetInt("uEntityID", (int)entityID);
+                    // Si on a changé de shader, on doit lui renvoyer la caméra !
+                    activeShader->SetMat4("uView", s_Data->CurrentView);
+                    activeShader->SetMat4("uProjection", s_Data->CurrentProjection);
+                }
+            }
+
+            // B. --- LE FIX EST LÀ : ON ENVOIE LA LUMIÈRE AU SHADER ACTIF ! ---
+            activeShader->SetVec3("uLightColor", currentLightColor);
+            activeShader->SetVec3("uLightDir", currentLightDir);
+            activeShader->SetFloat("uAmbientStrength", currentAmbient);
+            activeShader->SetFloat("uDiffuseStrength", currentDiffuse);
+
+            // C. On envoie les infos de l'entité
+            glm::vec3 colorVal = glm::vec3(1.0f);
+            if (entityObj.HasComponent<ColorComponent>()) {
+                colorVal = entityObj.GetComponent<ColorComponent>().Color;
+            }
+
+            activeShader->SetVec3("uColor", colorVal);
+            activeShader->SetMat4("uModel", globalTransform);
+            activeShader->SetInt("uEntityID", (int)entityID);
+            activeShader->SetInt("uRenderMode", renderMode);
 
             mesh.MeshData->Draw();
         }
