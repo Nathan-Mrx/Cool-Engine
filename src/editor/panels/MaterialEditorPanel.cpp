@@ -8,13 +8,13 @@
 #include "renderer/TextureLoader.h"
 
 static void DrawPinIcon(PinType type, bool connected) {
-    ImVec2 size(18, 14); // Plus large pour faire rentrer la flèche
+    ImVec2 size(22, 14); // Plus large pour laisser respirer l'icône
 
     if (ImGui::IsRectVisible(size)) {
         ImVec2 cursorPos = ImGui::GetCursorScreenPos();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-        // Centre du cercle un peu décalé à gauche
+        // 1. Position du cercle (o)
         ImVec2 center = ImVec2(cursorPos.x + 6, cursorPos.y + 7);
 
         ImVec4 color;
@@ -33,10 +33,11 @@ static void DrawPinIcon(PinType type, bool connected) {
             drawList->AddCircleFilled(center, 3.0f, ImGui::GetColorU32(ImVec4(color.x, color.y, color.z, 0.2f)));
         }
 
-        // --- NOUVEAU : La petite pointe du triangle (flèche) ---
-        ImVec2 p1(cursorPos.x + 12, cursorPos.y + 3);
-        ImVec2 p2(cursorPos.x + 12, cursorPos.y + 11);
-        ImVec2 p3(cursorPos.x + 17, cursorPos.y + 7);
+        // 2. Position du triangle (>) avec MARGE
+        // On commence à +15 pixels au lieu de +12 pour créer l'espace
+        ImVec2 p1(cursorPos.x + 15, cursorPos.y + 3);
+        ImVec2 p2(cursorPos.x + 15, cursorPos.y + 11);
+        ImVec2 p3(cursorPos.x + 20, cursorPos.y + 7);
         drawList->AddTriangleFilled(p1, p2, p3, color32);
     }
     ImGui::Dummy(size);
