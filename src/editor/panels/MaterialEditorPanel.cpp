@@ -80,13 +80,46 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         }
 
         // =========================================================
-        // 3. LOGIQUE DE CRÉATION DE CÂBLE (Drag & Drop souris)
+        // 3. LOGIQUE DE CRÉATION DE CÂBLE (Drag & Drop avec Validation)
         // =========================================================
-        if (ed::BeginCreate()) {
+        if (ed::BeginCreate(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 2.0f)) {
             ed::PinId startPinId = 0, endPinId = 0;
+
             if (ed::QueryNewLink(&startPinId, &endPinId)) {
-                if (ed::AcceptNewItem()) {
-                    m_Links.push_back({ ed::LinkId(GetNextId()), startPinId, endPinId });
+                auto startPin = FindPin(startPinId);
+                auto endPin = FindPin(endPinId);
+
+                if (startPin && endPin) {
+                    // Règle 1 : Pas de connexion sur soi-même ou sur le même noeud
+                    if (startPin == endPin || startPin->NodeID == endPin->NodeID) {
+                        ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); // Croix rouge !
+                    }
+                    // Règle 2 : Pas de Input->Input ou Output->Output
+                    else if (startPin->Kind == endPin->Kind) {
+                        ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); // Croix rouge !
+                    }
+                    // Si toutes les règles sont respectées, on propose un lien vert
+                    else {
+                        // Le survol est valide, si on relâche la souris on accepte !
+                        if (ed::AcceptNewItem(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), 2.0f)) {
+
+                            // On s'assure que startPin est toujours l'Output, et endPin l'Input
+                            // (l'utilisateur peut tirer le câble à l'envers !)
+                            if (startPin->Kind == ed::PinKind::Input) {
+                                std::swap(startPin, endPin);
+                                std::swap(startPinId, endPinId);
+                            }
+
+                            // Règle 3 : Un Input ne peut avoir qu'un seul câble !
+                            // On détruit tout câble existant qui serait déjà branché sur cet Input.
+                            m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
+                                [endPinId](const MaterialLink& link) { return link.EndPinID == endPinId; }),
+                                m_Links.end());
+
+                            // On enregistre le nouveau câble parfait
+                            m_Links.push_back({ ed::LinkId(GetNextId()), startPinId, endPinId });
+                        }
+                    }
                 }
             }
         }
@@ -108,6 +141,32 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         ed::EndDelete();
 
         // =========================================================
+        // 5. MENU CONTEXTUEL (CLIC DROIT)
+        // =========================================================
+        // On "suspend" l'éditeur nodal pour dessiner une fenêtre ImGui standard par-dessus
+        ed::Suspend();
+
+        if (ed::ShowBackgroundContextMenu()) {
+            ImGui::OpenPopup("CreateNewNode");
+            // On traduit les pixels de l'écran en coordonnées du monde nodal !
+            m_ContextPopupPos = ed::ScreenToCanvas(ImGui::GetMousePos());
+        }
+
+        if (ImGui::BeginPopup("CreateNewNode")) {
+            ImGui::TextDisabled("Create Node");
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Texture2D")) { SpawnNode("Texture2D", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Multiply"))  { SpawnNode("Multiply", m_ContextPopupPos); }
+            if (ImGui::MenuItem("Float"))     { SpawnNode("Float", m_ContextPopupPos); }
+
+            ImGui::EndPopup();
+        }
+
+        // On rend la main à l'éditeur nodal
+        ed::Resume();
+
+        // =========================================================
         // PLACEMENT INITIAL SANS NAVIGATETOCONTENT !
         // =========================================================
         if (m_FirstFrame && m_Nodes.size() >= 2) {
@@ -122,4 +181,43 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+MaterialPin* MaterialEditorPanel::FindPin(ed::PinId id) {
+    if (!id) return nullptr;
+    for (auto& node : m_Nodes) {
+        for (auto& pin : node.Inputs) {
+            if (pin.ID == id) return &pin;
+        }
+        for (auto& pin : node.Outputs) {
+            if (pin.ID == id) return &pin;
+        }
+    }
+    return nullptr;
+}
+
+void MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
+    MaterialNode newNode;
+    newNode.ID = GetNextId();
+    newNode.Name = type;
+
+    if (type == "Texture2D") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "UV", ed::PinKind::Input });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "RGB", ed::PinKind::Output });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "R", ed::PinKind::Output });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "G", ed::PinKind::Output });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Output });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Output });
+    } else if (type == "Multiply") {
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "A", ed::PinKind::Input });
+        newNode.Inputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "B", ed::PinKind::Input });
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Result", ed::PinKind::Output });
+    } else if (type == "Float") {
+        newNode.Outputs.push_back({ ed::PinId(GetNextId()), newNode.ID, "Value", ed::PinKind::Output });
+    }
+
+    m_Nodes.push_back(newNode);
+
+    // On place le noeud exactement là où était la souris !
+    ed::SetNodePosition(newNode.ID, position);
 }

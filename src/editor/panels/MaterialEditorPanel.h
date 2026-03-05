@@ -37,6 +37,11 @@ public:
 private:
     void BuildDefaultNodes();
 
+    void SpawnNode(const std::string& type, ImVec2 position);
+    ImVec2 m_ContextPopupPos;
+
+    MaterialPin* FindPin(ed::PinId id);
+
     ed::EditorContext* m_Context = nullptr;
     bool m_FirstFrame = true;
 
