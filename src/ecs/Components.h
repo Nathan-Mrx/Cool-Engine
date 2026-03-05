@@ -16,6 +16,7 @@
 #include <glm/gtx/quaternion.hpp>
 
 #include "core/UUID.h"
+#include "renderer/Shader.h"
 #include "scene/ScriptableNode.h"
 
 // --- STRUCTURES DE DONNÉES DE BASE ---
@@ -287,6 +288,17 @@ struct PrefabComponent {
     void OnImGuiRender() {} // Géré manuellement dans le panneau
 };
 
+struct MaterialComponent {
+    std::string AssetPath; // Le chemin vers le fichier .cemat
+    std::shared_ptr<Shader> ShaderInstance = nullptr; // Le shader compilé par OpenGL
+
+    MaterialComponent() = default;
+    MaterialComponent(const MaterialComponent&) = default;
+    MaterialComponent(const std::string& path) : AssetPath(path) {}
+
+    void OnImGuiRender() {}
+};
+
 // --- RÉFLEXION STATIQUE (Nouveau Standard) ---
 
 // Cette liste permet à l'Inspector d'itérer automatiquement sur tous les types
@@ -303,5 +315,6 @@ using AllComponents = std::tuple<
     NativeScriptComponent,
     RelationshipComponent,
     IDComponent,
-    PrefabComponent
+    PrefabComponent,
+    MaterialComponent
 >;

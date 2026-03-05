@@ -241,6 +241,8 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
     data["Type"] = "MaterialGraph";
     data["NextID"] = m_NextId;
 
+    data["GeneratedGLSL"] = CompileMaterial();
+
     auto& nodesOut = data["Nodes"];
     for (auto& node : m_Nodes) {
         nlohmann::json nodeJson;
@@ -343,14 +345,13 @@ MaterialNode* MaterialEditorPanel::FindNode(ed::NodeId id) {
 }
 
 // --- LE CHEF D'ORCHESTRE ---
-void MaterialEditorPanel::CompileMaterial() {
+std::string MaterialEditorPanel::CompileMaterial() {
     MaterialNode* rootNode = nullptr;
     for (auto& node : m_Nodes) {
         if (node.Name == "Base Material") { rootNode = &node; break; }
     }
-    if (!rootNode) return;
+    if (!rootNode) return ""; // On renvoie vide si erreur
 
-    // 1. On prépare la coquille vide du Shader GLSL
     std::stringstream shaderCode;
     shaderCode << "#version 410 core\n\n";
     shaderCode << "out vec4 FragColor;\n";
@@ -360,22 +361,18 @@ void MaterialEditorPanel::CompileMaterial() {
     std::unordered_set<int> visitedNodes;
     std::stringstream bodyBuilder;
 
-    // 2. On lance l'algorithme sur l'entrée "Base Color" (Index 0)
-    std::string baseColorValue = "vec3(1.0, 0.0, 1.0)"; // Rose fluo (valeur d'erreur par défaut)
+    std::string baseColorValue = "vec3(1.0, 0.0, 1.0)";
     if (!rootNode->Inputs.empty()) {
         baseColorValue = EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder);
     }
 
-    // 3. On assemble le tout
     shaderCode << bodyBuilder.str();
     shaderCode << "    // --- SORTIE FINALE ---\n";
     shaderCode << "    FragColor = vec4(" << baseColorValue << ", 1.0);\n";
     shaderCode << "}\n";
 
-    // 4. On l'affiche fièrement dans la console !
-    std::cout << "\n============= SHADER GENERE GLSL =============\n";
-    std::cout << shaderCode.str();
-    std::cout << "==============================================\n" << std::endl;
+    // ON RETOURNE LA STRING AU LIEU DU COUT !
+    return shaderCode.str();
 }
 
 // --- L'ALGORITHME MAGIQUE (Récursif) ---

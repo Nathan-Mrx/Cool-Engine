@@ -49,7 +49,7 @@ private:
 
     // --- NOUVEAU : OUTILS DE COMPILATION ---
     MaterialNode* FindNode(ed::NodeId id);
-    void CompileMaterial();
+    std::string CompileMaterial();
     std::string EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder);
 
     ed::EditorContext* m_Context = nullptr;
