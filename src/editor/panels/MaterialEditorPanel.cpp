@@ -8,7 +8,7 @@
 #include "renderer/TextureLoader.h"
 
 static void DrawPinIcon(PinType type, bool connected) {
-    ImVec2 size(22, 14); // Plus large pour laisser respirer l'icône
+    ImVec2 size(24, 14); // Plus large pour la marge
 
     if (ImGui::IsRectVisible(size)) {
         ImVec2 cursorPos = ImGui::GetCursorScreenPos();
@@ -33,11 +33,11 @@ static void DrawPinIcon(PinType type, bool connected) {
             drawList->AddCircleFilled(center, 3.0f, ImGui::GetColorU32(ImVec4(color.x, color.y, color.z, 0.2f)));
         }
 
-        // 2. Position du triangle (>) avec MARGE
-        // On commence à +15 pixels au lieu de +12 pour créer l'espace
-        ImVec2 p1(cursorPos.x + 15, cursorPos.y + 3);
-        ImVec2 p2(cursorPos.x + 15, cursorPos.y + 11);
-        ImVec2 p3(cursorPos.x + 20, cursorPos.y + 7);
+        // 2. Position du triangle (>) avec MARGE de 4 pixels
+        // On le décale à +16 pixels du début
+        ImVec2 p1(cursorPos.x + 16, cursorPos.y + 3);
+        ImVec2 p2(cursorPos.x + 16, cursorPos.y + 11);
+        ImVec2 p3(cursorPos.x + 21, cursorPos.y + 7);
         drawList->AddTriangleFilled(p1, p2, p3, color32);
     }
     ImGui::Dummy(size);
@@ -79,6 +79,10 @@ MaterialEditorPanel::MaterialEditorPanel() {
 
     ed::SetCurrentEditor(nullptr);
     // =========================================================
+
+    // Dans ton constructeur MaterialEditorPanel()
+    style.LinkStrength = 100.0f; // <-- Augmenté pour un look plus "droit" en sortie de pin
+    style.Colors[ed::StyleColor_NodeBg] = ImColor(35, 35, 35, 255); // Fond un peu plus sombre
 
     BuildDefaultNodes();
 }
@@ -139,11 +143,10 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             // 1. LE TEXTE DU HEADER (Remonté)
             // ==========================================
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            // On remonte le curseur de 4 pixels pour mieux centrer le texte dans la couleur !
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 4.0f);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f); // Remonté pour être pile au centre
             ImGui::TextUnformatted(node.Name.c_str());
             ImGui::PopStyleColor();
-            ImGui::Dummy(ImVec2(0, 6)); // Espace sous le titre
+            ImGui::Dummy(ImVec2(0, 8)); // Espace compact sous le titre
 
             // ==========================================
             // COLONNE 1 : GAUCHE (Inputs + Interface)
@@ -216,7 +219,7 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             // COLONNE 2 : DROITE (Outputs Alignés à droite !)
             // ==========================================
             if (!node.Outputs.empty()) {
-                ImGui::SameLine(0, 20.0f);
+                ImGui::SameLine(0, 40.0f);
 
                 ImGui::BeginGroup();
 
@@ -264,7 +267,7 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 auto drawList = ed::GetNodeBackgroundDrawList(node.ID);
 
                 // La hauteur de la zone colorée (Taille du texte + marges)
-                float headerHeight = ImGui::GetTextLineHeight() + 12.0f;
+                float headerHeight = ImGui::GetTextLineHeight() + 8.0f;
                 ImVec2 headerMax = ImVec2(nodeMax.x, nodeMin.y + headerHeight);
 
                 // On choisit une couleur d'entête stylisée selon le type du noeud
