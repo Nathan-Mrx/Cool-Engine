@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <imgui.h>
 #include <imgui-node-editor/imgui_node_editor.h>
 #include <string>
@@ -33,6 +34,9 @@ public:
     ~MaterialEditorPanel();
 
     void OnImGuiRender(bool& isOpen);
+
+    void Save(const std::filesystem::path& path);
+    void Load(const std::filesystem::path& path);
 
 private:
     void BuildDefaultNodes();

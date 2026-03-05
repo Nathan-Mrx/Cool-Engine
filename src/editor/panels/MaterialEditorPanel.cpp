@@ -1,5 +1,8 @@
 #include "MaterialEditorPanel.h"
 #include <algorithm>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 MaterialEditorPanel::MaterialEditorPanel() {
     ed::Config config;
@@ -220,4 +223,104 @@ void MaterialEditorPanel::SpawnNode(const std::string& type, ImVec2 position) {
 
     // On place le noeud exactement là où était la souris !
     ed::SetNodePosition(newNode.ID, position);
+}
+
+void MaterialEditorPanel::Save(const std::filesystem::path& path) {
+    ed::SetCurrentEditor(m_Context); // On active le contexte pour pouvoir lire les positions
+
+    nlohmann::json data;
+    data["Type"] = "MaterialGraph";
+    data["NextID"] = m_NextId;
+
+    auto& nodesOut = data["Nodes"];
+    for (auto& node : m_Nodes) {
+        nlohmann::json nodeJson;
+        nodeJson["ID"] = (int)node.ID.Get();
+        nodeJson["Name"] = node.Name;
+
+        // On sauvegarde la position de la boîte !
+        ImVec2 pos = ed::GetNodePosition(node.ID);
+        nodeJson["Position"] = { pos.x, pos.y };
+
+        for (auto& pin : node.Inputs) {
+            nodeJson["Inputs"].push_back({ {"ID", (int)pin.ID.Get()}, {"Name", pin.Name} });
+        }
+        for (auto& pin : node.Outputs) {
+            nodeJson["Outputs"].push_back({ {"ID", (int)pin.ID.Get()}, {"Name", pin.Name} });
+        }
+        nodesOut.push_back(nodeJson);
+    }
+
+    auto& linksOut = data["Links"];
+    for (auto& link : m_Links) {
+        nlohmann::json linkJson;
+        linkJson["ID"] = (int)link.ID.Get();
+        linkJson["StartPinID"] = (int)link.StartPinID.Get();
+        linkJson["EndPinID"] = (int)link.EndPinID.Get();
+        linksOut.push_back(linkJson);
+    }
+
+    std::ofstream file(path);
+    file << data.dump(4); // Indentation de 4 espaces pour faire joli
+
+    ed::SetCurrentEditor(nullptr);
+}
+
+void MaterialEditorPanel::Load(const std::filesystem::path& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) return;
+
+    nlohmann::json data;
+    try { file >> data; } catch(...) { return; }
+
+    ed::SetCurrentEditor(m_Context);
+
+    m_Nodes.clear();
+    m_Links.clear();
+
+    // Si c'est un matériau tout neuf (créé via le clic droit du Content Browser)
+    if (!data.contains("Nodes")) {
+        m_NextId = 1;
+        BuildDefaultNodes();
+        ed::SetCurrentEditor(nullptr);
+        return;
+    }
+
+    m_NextId = data.value("NextID", 1);
+
+    for (auto& nodeJson : data["Nodes"]) {
+        MaterialNode node;
+        node.ID = ed::NodeId(nodeJson["ID"].get<int>());
+        node.Name = nodeJson["Name"].get<std::string>();
+
+        if (nodeJson.contains("Inputs")) {
+            for (auto& pinJson : nodeJson["Inputs"]) {
+                node.Inputs.push_back({ ed::PinId(pinJson["ID"].get<int>()), node.ID, pinJson["Name"].get<std::string>(), ed::PinKind::Input });
+            }
+        }
+        if (nodeJson.contains("Outputs")) {
+            for (auto& pinJson : nodeJson["Outputs"]) {
+                node.Outputs.push_back({ ed::PinId(pinJson["ID"].get<int>()), node.ID, pinJson["Name"].get<std::string>(), ed::PinKind::Output });
+            }
+        }
+        m_Nodes.push_back(node);
+
+        // On replace le noeud exactement là où il était
+        if (nodeJson.contains("Position")) {
+            float x = nodeJson["Position"][0].get<float>();
+            float y = nodeJson["Position"][1].get<float>();
+            ed::SetNodePosition(node.ID, ImVec2(x, y));
+        }
+    }
+
+    if (data.contains("Links")) {
+        for (auto& linkJson : data["Links"]) {
+            MaterialLink link;
+            link.ID = ed::LinkId(linkJson["ID"].get<int>());
+            link.StartPinID = ed::PinId(linkJson["StartPinID"].get<int>());
+            link.EndPinID = ed::PinId(linkJson["EndPinID"].get<int>());
+            m_Links.push_back(link);
+        }
+    }
+    ed::SetCurrentEditor(nullptr);
 }

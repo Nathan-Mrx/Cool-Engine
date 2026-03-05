@@ -173,6 +173,9 @@ void EditorLayer::BeginDockspace() {
                         m_SceneHierarchyPanel.SetSelectedEntity({});
                         m_SceneHierarchyPanel.SetIsPrefabScene(m_Tabs[i].IsPrefab);
                     }
+                    else if (m_Tabs[i].Type == TabType::Material) {
+                        m_MaterialEditorPanel->Load(m_Tabs[i].Filepath);
+                    }
                 }
                 ImGui::EndTabItem();
             }
@@ -865,12 +868,20 @@ void EditorLayer::DrawProjectSettings() {
 void EditorLayer::SaveScene() {
     if (m_ActiveTabIndex >= 0 && m_ActiveTabIndex < m_Tabs.size()) {
         auto& activeTab = m_Tabs[m_ActiveTabIndex];
-        if (!activeTab.Filepath.empty()) {
-            SceneSerializer serializer(activeTab.SceneContext);
-            serializer.Serialize(activeTab.Filepath.string());
-            std::cout << "[Editor] Saved " << (activeTab.IsPrefab ? "Prefab" : "Scene") << " to " << activeTab.Filepath << std::endl;
-        } else {
-            SaveSceneAs();
+
+        if (activeTab.Type == TabType::Scene) {
+            if (!activeTab.Filepath.empty()) {
+                SceneSerializer serializer(activeTab.SceneContext);
+                serializer.Serialize(activeTab.Filepath.string());
+                std::cout << "[Editor] Saved " << (activeTab.IsPrefab ? "Prefab" : "Scene") << " to " << activeTab.Filepath << std::endl;
+            } else {
+                SaveSceneAs();
+            }
+        }
+        // --- LE FIX : Rédiger le fichier .cemat ---
+        else if (activeTab.Type == TabType::Material) {
+            m_MaterialEditorPanel->Save(activeTab.Filepath);
+            std::cout << "[Editor] Saved Material Graph to " << activeTab.Filepath << std::endl;
         }
     }
 }
@@ -1083,10 +1094,15 @@ void EditorLayer::DrawSplashScreen() {
 void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
     for (int i = 0; i < m_Tabs.size(); i++) {
         if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i; m_ForceTabSelection = true; return;
+            m_ActiveTabIndex = i; m_ForceTabSelection = true;
+            m_MaterialEditorPanel->Load(path); // Update si déjà ouvert !
+            return;
         }
     }
-    // On ajoute un onglet spécifiquement typé "Material"
+
+    // On charge les données JSON avant de l'afficher
+    m_MaterialEditorPanel->Load(path);
+
     m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
