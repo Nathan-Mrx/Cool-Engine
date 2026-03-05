@@ -104,9 +104,17 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
                     activeShader = mat.ShaderInstance.get();
                     activeShader->Use();
 
-                    // Si on a changé de shader, on doit lui renvoyer la caméra !
                     activeShader->SetMat4("uView", s_Data->CurrentView);
                     activeShader->SetMat4("uProjection", s_Data->CurrentProjection);
+
+                    // --- NOUVEAU : ON BRANCHE LES TEXTURES AVANT DE DESSINER ---
+                    int slot = 0;
+                    for (auto const& [nodeID, texID] : mat.Textures) {
+                        glActiveTexture(GL_TEXTURE0 + slot);
+                        glBindTexture(GL_TEXTURE_2D, texID);
+                        activeShader->SetInt("u_Tex_" + std::to_string(nodeID), slot);
+                        slot++;
+                    }
                 }
             }
 

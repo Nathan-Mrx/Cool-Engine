@@ -97,6 +97,35 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 }
             }
 
+            ImGui::PushID((int)node.ID.Get());
+            if (node.Name == "Color") {
+                ImGui::PushItemWidth(120.0f);
+                ImGui::ColorEdit4("##val", &node.ColorValue[0], ImGuiColorEditFlags_NoInputs);
+                ImGui::PopItemWidth();
+            }
+            else if (node.Name == "Texture2D") {
+                ImGui::PushItemWidth(120.0f);
+                if (node.TexturePath.empty()) {
+                    ImGui::Button("Drop Texture Here", ImVec2(120, 30));
+                } else {
+                    // Affiche le nom du fichier une fois chargé !
+                    ImGui::TextColored(ImVec4(0,1,0,1), "%s", std::filesystem::path(node.TexturePath).filename().string().c_str());
+                }
+
+                // C'est ici qu'on intercepte ton glisser-déposer !
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                        std::filesystem::path path = (const char*)payload->Data;
+                        if (path.extension() == ".png" || path.extension() == ".jpg") {
+                            node.TexturePath = path.string();
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::PopItemWidth();
+            }
+            ImGui::PopID();
+
             for (auto& output : node.Outputs) {
                 ed::BeginPin(output.ID, output.Kind);
                 ImGui::Text("%s ->", output.Name.c_str());

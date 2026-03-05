@@ -20,6 +20,7 @@
 
 #include "core/UUID.h"
 #include "renderer/Shader.h"
+#include "renderer/TextureLoader.h"
 #include "scene/ScriptableNode.h"
 
 // --- STRUCTURES DE DONNÉES DE BASE ---
@@ -295,11 +296,13 @@ struct MaterialComponent {
     std::string AssetPath;
     std::shared_ptr<Shader> ShaderInstance = nullptr;
 
+    // --- NOUVEAU : On retient les textures chargées (NodeID -> OpenGL_ID) ---
+    std::map<int, unsigned int> Textures;
+
     MaterialComponent() = default;
     MaterialComponent(const MaterialComponent&) = default;
     MaterialComponent(const std::string& path) { SetAndCompile(path); }
 
-    // --- LE COMPILATEUR À LA VOLÉE ---
     void SetAndCompile(const std::string& path) {
         AssetPath = path;
         std::ifstream file(path);
@@ -310,16 +313,26 @@ struct MaterialComponent {
 
         if (data.contains("GeneratedGLSL")) {
             std::string glsl = data["GeneratedGLSL"].get<std::string>();
-
-            // On écrit un fichier .frag temporaire à côté du matériau pour que la classe Shader puisse le lire !
             std::string fragPath = path + ".frag";
             std::ofstream outFrag(fragPath);
             outFrag << glsl;
             outFrag.close();
 
-            // On compile ! On réutilise ton default.vert pour la géométrie, et notre nouveau .frag pour les couleurs
             ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.c_str());
-            std::cout << "[Material] Shader compile avec succes pour : " << path << std::endl;
+        }
+
+        // --- NOUVEAU : ON LIT LE JSON POUR CHARGER LES IMAGES ---
+        Textures.clear();
+        if (data.contains("Nodes")) {
+            for (auto& node : data["Nodes"]) {
+                if (node["Name"] == "Texture2D" && node.contains("TexturePath")) {
+                    std::string texPath = node["TexturePath"].get<std::string>();
+                    if (!texPath.empty()) {
+                        int nodeID = node["ID"].get<int>();
+                        Textures[nodeID] = TextureLoader::LoadTexture(texPath.c_str());
+                    }
+                }
+            }
         }
     }
 
