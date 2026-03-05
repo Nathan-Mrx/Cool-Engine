@@ -120,6 +120,96 @@ void MaterialEditorPanel::BuildDefaultNodes() {
 void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     if (!isOpen) return;
 
+    // --- VARIABLES STATIQUES POUR L'ANIMATION ---
+    static float s_PreviewRotation = 0.0f;
+    static float s_RotationSpeed = 30.0f;
+    static float s_CameraDistance = 250.0f;
+
+    // ========================================================
+    // --- 1. RENDU DE LA SPHERE DANS LE FRAMEBUFFER ---
+    // ========================================================
+    if (m_PreviewFramebuffer) {
+        m_PreviewFramebuffer->Bind();
+        glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(0.12f, 0.12f, 0.12f, 1.0f); // Fond anthracite
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        if (m_PreviewShader && m_PreviewMesh) {
+            m_PreviewShader->Use();
+
+            // 1. Calcul de l'Aspect Ratio avec sécurité anti-crash (division par 0)
+            float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
+            float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
+            float aspect = (height > 0.0f) ? (width / height) : 1.0f;
+
+            // 2. Caméra reculée et Clipping ajusté pour l'échelle en centimètres !
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
+            glm::vec3 camPos = glm::vec3(0.0f, 0.0f, s_CameraDistance);
+            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+            m_PreviewShader->SetMat4("uProjection", proj);
+            m_PreviewShader->SetMat4("uView", view);
+
+            // 3. Animation indépendante du framerate (DeltaTime)
+            s_PreviewRotation += s_RotationSpeed * ImGui::GetIO().DeltaTime;
+
+            // On convertit les degrés en radians pour OpenGL, et on scale un peu la sphère au cas où
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::rotate(model, glm::radians(s_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::scale(model, glm::vec3(0.8f)); // On réduit sa taille de 20%
+            m_PreviewShader->SetMat4("uModel", model);
+
+            // Météo et Lumière
+            m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
+            m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
+            m_PreviewShader->SetVec3("uViewPos", camPos);
+
+            // Branchement des textures
+            int slot = 0;
+            for (auto& node : m_Nodes) {
+                if (node.Name == "Texture2D" && node.TextureID != 0) {
+                    glActiveTexture(GL_TEXTURE0 + slot);
+                    glBindTexture(GL_TEXTURE_2D, node.TextureID);
+                    m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
+                    slot++;
+                }
+            }
+
+            // Appel de dessin OpenGL
+            glBindVertexArray(m_PreviewMesh->GetVAO());
+            glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+        }
+        m_PreviewFramebuffer->Unbind();
+    }
+
+    // ========================================================
+    // --- 2. LA FENÊTRE IMGUI DU VIEWPORT ---
+    // ========================================================
+    ImGui::Begin("Material Preview");
+
+    // --- LES SLIDERS DE CONTRÔLE ---
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f); // Sliders à mi-largeur
+    ImGui::SliderFloat("Speed", &s_RotationSpeed, -180.0f, 180.0f, "%.1f deg/s");
+    ImGui::SameLine();
+    ImGui::SliderFloat("Zoom", &s_CameraDistance, 50.0f, 1000.0f, "%.0f cm"); // <-- Ajusté !
+    ImGui::PopItemWidth();
+    ImGui::Separator();
+
+    ImVec2 previewAvail = ImGui::GetContentRegionAvail();
+
+    // On redimensionne dynamiquement le Framebuffer
+    if (previewAvail.x > 0 && previewAvail.y > 0 &&
+       (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
+        m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
+    }
+
+    // On affiche l'image
+    ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
+    ImGui::End();
+    // ========================================================
+
     // On enlève les marges pour que la grille remplisse l'onglet
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
@@ -135,84 +225,10 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         // --- TEXTE DE DIAGNOSTIC ---
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[DEBUG] Graphe Dynamique Actif ! Noeuds: %zu | Liens: %zu", m_Nodes.size(), m_Links.size());
 
-
-
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (avail.x < 100.0f) avail.x = 800.0f;
         if (avail.y < 100.0f) avail.y = 600.0f;
 
-        // ========================================================
-        // --- 1. RENDU DE LA SPHERE DANS LE FRAMEBUFFER ---
-        // ========================================================
-        if (m_PreviewFramebuffer) {
-            m_PreviewFramebuffer->Bind();
-
-            // --- LE FIX DU ZOOM EST ICI ---
-            // On force OpenGL à dessiner à l'échelle exacte de notre petite image
-            glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
-
-            glEnable(GL_DEPTH_TEST);
-            glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-            if (m_PreviewShader && m_PreviewMesh) {
-                m_PreviewShader->Use();
-
-                // Setup de la Caméra (Aspect Ratio dynamique)
-                float aspect = (float)m_PreviewFramebuffer->GetSpecification().Width / (float)m_PreviewFramebuffer->GetSpecification().Height;
-                glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-                glm::vec3 camPos = glm::vec3(0.0f, 0.0f, 2.5f);
-                glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-
-                m_PreviewShader->SetMat4("uProjection", proj);
-                m_PreviewShader->SetMat4("uView", view);
-
-                // Animation : On fait tourner la sphère doucement pour admirer le PBR !
-                static float rot = 0.0f;
-                rot += 0.005f;
-                glm::mat4 model = glm::rotate(glm::mat4(1.0f), rot, glm::vec3(0, 1, 0));
-                m_PreviewShader->SetMat4("uModel", model);
-
-                // Météo et Lumière
-                m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
-                m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
-                m_PreviewShader->SetVec3("uViewPos", camPos);
-
-                // Branchement des textures en RAM Vidéo
-                int slot = 0;
-                for (auto& node : m_Nodes) {
-                    if (node.Name == "Texture2D" && node.TextureID != 0) {
-                        glActiveTexture(GL_TEXTURE0 + slot);
-                        glBindTexture(GL_TEXTURE_2D, node.TextureID);
-                        m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
-                        slot++;
-                    }
-                }
-
-                // Appel de dessin OpenGL
-                glBindVertexArray(m_PreviewMesh->GetVAO());
-                glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
-                glBindVertexArray(0);
-            }
-            m_PreviewFramebuffer->Unbind();
-        }
-
-        // ========================================================
-        // --- 2. LA FENÊTRE IMGUI DU VIEWPORT ---
-        // ========================================================
-        ImGui::Begin("Material Preview");
-
-        // ON RENOMME EN previewAvail !
-        ImVec2 previewAvail = ImGui::GetContentRegionAvail();
-
-        if (previewAvail.x > 0 && previewAvail.y > 0 &&
-           (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
-            m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
-           }
-
-        ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
-        ImGui::End();
-        // ========================================================
 
         ed::SetCurrentEditor(m_Context);
         ed::Begin("My Material Graph", avail);
