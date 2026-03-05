@@ -1,45 +1,36 @@
 # 🚀 Cool Engine (3D)
 
-**Cool Engine** est un moteur de jeu 3D "Industry-Ready" développé en C++20, conçu avec une architecture **Linux-first**. Ce projet est né de la volonté de créer une plateforme performante, modulaire et hautement personnalisable, en s'appuyant sur les standards modernes de l'industrie comme l'ECS (Entity Component System) et le multi-threading.
+**Cool Engine** est un moteur de jeu 3D développé en C++20, conçu avec une architecture "Industry-Ready" orientée performance et modularité. Pensé avec une approche **Linux-first** (idéal pour Arch/CachyOS), il repose sur les standards modernes de l'industrie du jeu vidéo.
 
-## 🛠 Tech Stack & Vitals
+## 🌟 Présentation du Projet
 
-Le moteur repose sur une sélection de bibliothèques de pointe pour garantir stabilité et performance sur les systèmes Arch-based (CachyOS) :
+Le but de Cool Engine est d'offrir une plateforme de création visuelle performante et un environnement de développement optimisé. À la croisée entre la puissance d'un moteur C++ bas niveau et la flexibilité d'un éditeur moderne, le moteur s'articule autour de concepts clés :
 
-* **Core Engine :** C++20, CMake, vcpkg.
-* **Architecture :** [EnTT](https://github.com/skypjack/entt) (Entity Component System) pour une gestion de données ultra-rapide.
-* **Graphismes :** OpenGL 4.6 (Modern Pipeline), GLM (Maths).
-* **Physique :** [Jolt Physics](https://github.com/jrouwe/JoltPhysics) (Moteur AAA utilisé dans *Horizon Forbidden West*).
-* **UI & Editor :** Dear ImGui (Docking branch), ImGuizmo pour les manipulateurs 3D.
-* **Asset Loading :** Assimp pour le chargement de modèles 3D complexes (.obj, .fbx).
-* **Sérialisation :** nlohmann/json pour la sauvegarde des scènes au format `.cescene`.
+* **Entity Component System (ECS) :** Architecture de traitement ultra-rapide basée sur [EnTT](https://github.com/skypjack/entt) pour la gestion optimisée des données en jeu.
+* **Éditeur Intégré :** Un éditeur professionnel complet offrant une hiérarchie dynamique (`ScriptableNode`), un système d'Inspector temps réel via réflexion statique, et des modificateurs interactifs (Gizmos 3D).
+* **Rendu & Physique :** Un rendu basé sur OpenGL 4.6 (Modern Pipeline) couplé à une implémentation grandissante du moteur physique AAA [Jolt Physics](https://github.com/jrouwe/JoltPhysics).
+* **Workflow Avancé :** Support du rechargement à chaud (Hot-Reloading), d'une compilation asynchrone pour les projets avec écrans de démarrage, et d'une conception par modules dynamiques. Un éditeur de matériaux par nœuds est également de la partie.
+* **Gestion d'Assets :** Un navigateur de contenu ("Content Browser") avec glisser-déposer, assurant une sérialisation complète des scènes (.cescene) au format JSON.
 
 ---
 
-## ✨ Fonctionnalités Actuelles
+## 🗺️ Roadmap
 
-### 🖥️ Éditeur Professionnel
+L'objectif est d'étendre progressivement les capacités du moteur pour en faire une solution toujours plus polyvalente. Voici les prochaines étapes majeures de développement :
 
-* **Scene Hierarchy :** Gestion intuitive des entités avec création de primitives (Cubes, Sphères, Planes) générées procéduralement.
-* **Inspector Dynamique :** Réflexion statique permettant de modifier les composants (Transform, Color, Mesh, Light) en temps réel.
-* **3D Gizmos :** Manipulation visuelle des objets avec les raccourcis standards de l'industrie (`W`, `E`, `R` pour Translate, Rotate, Scale).
-* **Viewport Interactif :** Rendu déporté via Framebuffers avec support du Drag & Drop d'assets directement depuis l'explorateur.
-
-### 📂 Gestion de Projet & Assets
-
-* **Content Browser :** Navigation dans les dossiers du projet avec rendu par "cards" et glisser-déposer vers le Viewport ou l'Inspector.
-* **Sérialisation JSON :** Système complet de sauvegarde et de chargement des niveaux via des boîtes de dialogue natives (NFD).
-
-### 💡 Rendu & Physique
-
-* **Lumière Directionnelle :** Gestion des ombres et de l'éclairage diffus/ambiant via des shaders GLSL modernes.
-* **Intégration Jolt :** (En cours) Simulation physique haute performance pour les RigidBodies et les Colliders.
+* [ ] **Éditeur de Matériaux :** Finaliser et étendre l'éditeur de matériaux basé sur des nœuds (Material node based editor).
+* [ ] **Physique :** Intégration plus poussée de Jolt Physics (Deeper Jolt physics integration).
+* [ ] **Audio :** Intégration du middleware audio FMOD.
+* [ ] **Input :** Implémenter un système d'entrées multi-appareils (Multi-device input system).
+* [ ] **Play Mode :** Ajouter un bouton Play/Stop pour tester la scène sans quitter l'éditeur.
+* [ ] **Scripting :** Système de "Native Scripting" en C++ pour la logique de gameplay.
+* [ ] **Networking :** Protocole personnalisé pour le multijoueur en ligne.
 
 ---
 
 ## 🏗️ Installation & Build (Linux / CachyOS)
 
-Le moteur utilise **vcpkg** pour une gestion sans douleur des dépendances.
+La gestion des dépendances du moteur est gérée sans heurts par **vcpkg**.
 
 ```bash
 # 1. Cloner le dépôt
@@ -52,18 +43,7 @@ cd CoolEngine
 # 3. Configurer et compiler avec CMake
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build -j$(nproc)
-
 ```
 
 ---
-
-## 🗺️ Roadmap
-
-* [ ] **Physique :** Finaliser l'intégration des RigidBodies Jolt.
-* [ ] **Play Mode :** Ajouter un bouton Play/Stop pour tester la scène sans quitter l'éditeur.
-* [ ] **Scripting :** Système de "Native Scripting" en C++ pour la logique de gameplay.
-* [ ] **Networking :** Protocole personnalisé pour le multijoueur en ligne.
-
----
-
 *Développé par Nathan Merieux*
