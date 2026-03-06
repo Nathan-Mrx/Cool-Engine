@@ -284,3 +284,137 @@ struct RerouteNodeDef : public IMaterialNodeDef {
         return evaluateInput(0, "0.0");
     }
 };
+
+// --- MACROS POUR LES NOEUDS A 1 ENTREE (Sin, Cos, Abs...) ---
+#define MATH_NODE_1_IN_EXPR(ClassName, NodeName, Expr) \
+CEMAT_NODE() \
+struct ClassName : public IMaterialNodeDef { \
+    std::string GetName() const override { return NodeName; } \
+    std::string GetCategory() const override { return "Math"; } \
+    ImColor GetColor() const override { return ImColor(30, 70, 100, 255); } \
+    bool IsWildcard() const override { return true; } \
+    void Initialize(MaterialNode& node, int& nextId) const override { \
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "In", ed::PinKind::Input, PinType::Float }); \
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Out", ed::PinKind::Output, PinType::Float }); \
+    } \
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override { \
+        std::string varName = "val_" + std::to_string((int)node.ID.Get()); \
+        std::string inVal = evaluateInput(0, "0.0"); \
+        std::string t = GetGLSLTypeStr(node.Outputs[0].Type); \
+        bodyBuilder << "    " << t << " " << varName << " = " << Expr << ";\n"; \
+        return varName; \
+    } \
+};
+
+// --- MACROS POUR LES NOEUDS A 2 ENTREES (Min, Max, Mod...) ---
+#define MATH_NODE_2_IN_EXPR(ClassName, NodeName, Expr) \
+CEMAT_NODE() \
+struct ClassName : public IMaterialNodeDef { \
+    std::string GetName() const override { return NodeName; } \
+    std::string GetCategory() const override { return "Math"; } \
+    ImColor GetColor() const override { return ImColor(30, 70, 100, 255); } \
+    bool IsWildcard() const override { return true; } \
+    void Initialize(MaterialNode& node, int& nextId) const override { \
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Float }); \
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Float }); \
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float }); \
+    } \
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override { \
+        std::string varName = "val_" + std::to_string((int)node.ID.Get()); \
+        std::string a = evaluateInput(0, "0.0"); \
+        std::string b = evaluateInput(1, "0.0"); \
+        std::string t = GetGLSLTypeStr(node.Outputs[0].Type); \
+        bodyBuilder << "    " << t << " " << varName << " = " << Expr << ";\n"; \
+        return varName; \
+    } \
+};
+
+// === LES 9 NOUVEAUX NOEUDS MATHÉMATIQUES ===
+MATH_NODE_1_IN_EXPR(OneMinusNodeDef, "OneMinus", "1.0 - " + inVal)
+MATH_NODE_1_IN_EXPR(SinNodeDef, "Sin", "sin(" + inVal + ")")
+MATH_NODE_1_IN_EXPR(CosNodeDef, "Cos", "cos(" + inVal + ")")
+MATH_NODE_1_IN_EXPR(AbsNodeDef, "Abs", "abs(" + inVal + ")")
+MATH_NODE_1_IN_EXPR(FractNodeDef, "Fract", "fract(" + inVal + ")")
+
+MATH_NODE_2_IN_EXPR(MinNodeDef, "Min", "min(" + a + ", " + b + ")")
+MATH_NODE_2_IN_EXPR(MaxNodeDef, "Max", "max(" + a + ", " + b + ")")
+MATH_NODE_2_IN_EXPR(ModNodeDef, "Modulo", "mod(" + a + ", " + b + ")")
+MATH_NODE_2_IN_EXPR(StepNodeDef, "Step", "step(" + a + ", " + b + ")")
+
+
+// ==========================================
+// 5. VECTOR MATH (Pas de Wildcard, types stricts !)
+// ==========================================
+CEMAT_NODE()
+struct DotProductNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Dot"; }
+    std::string GetCategory() const override { return "Vector Math"; }
+    ImColor GetColor() const override { return ImColor(40, 80, 120, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Vec3 });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Vec3 });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string a = evaluateInput(0, "vec3(0.0)");
+        std::string b = evaluateInput(1, "vec3(0.0)");
+        bodyBuilder << "    float " << varName << " = dot(" << a << ", " << b << ");\n";
+        return varName;
+    }
+};
+
+CEMAT_NODE()
+struct CrossProductNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Cross"; }
+    std::string GetCategory() const override { return "Vector Math"; }
+    ImColor GetColor() const override { return ImColor(40, 80, 120, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Vec3 });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Vec3 });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string a = evaluateInput(0, "vec3(0.0)");
+        std::string b = evaluateInput(1, "vec3(0.0)");
+        bodyBuilder << "    vec3 " << varName << " = cross(" << a << ", " << b << ");\n";
+        return varName;
+    }
+};
+
+CEMAT_NODE()
+struct DistanceNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Distance"; }
+    std::string GetCategory() const override { return "Vector Math"; }
+    ImColor GetColor() const override { return ImColor(40, 80, 120, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "A", ed::PinKind::Input, PinType::Vec3 });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "B", ed::PinKind::Input, PinType::Vec3 });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string a = evaluateInput(0, "vec3(0.0)");
+        std::string b = evaluateInput(1, "vec3(0.0)");
+        bodyBuilder << "    float " << varName << " = distance(" << a << ", " << b << ");\n";
+        return varName;
+    }
+};
+
+CEMAT_NODE()
+struct NormalizeNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Normalize"; }
+    std::string GetCategory() const override { return "Vector Math"; }
+    ImColor GetColor() const override { return ImColor(40, 80, 120, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "V", ed::PinKind::Input, PinType::Vec3 });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string v = evaluateInput(0, "vec3(0.0, 0.0, 1.0)");
+        bodyBuilder << "    vec3 " << varName << " = normalize(" << v << ");\n";
+        return varName;
+    }
+};
