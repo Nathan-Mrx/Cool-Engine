@@ -346,9 +346,19 @@ void MaterialEditorPanel::DrawCommentNode(MaterialNode& node) {
     ed::EndNode();
     ed::PopStyleColor(2);
 
+    static std::unordered_map<int, ImVec2> s_CommentPadding;
+
     if (!m_FirstFrame) {
-        ImVec2 newSize = ed::GetNodeSize(node.ID);
-        if (newSize.x > 0 && newSize.y > 0) node.Size = { newSize.x, newSize.y };
+        ImVec2 totalSize = ed::GetNodeSize(node.ID);
+
+        if (s_CommentPadding.find((int)node.ID.Get()) == s_CommentPadding.end()) {
+            s_CommentPadding[(int)node.ID.Get()] = ImVec2(totalSize.x - node.Size.x, totalSize.y - node.Size.y);
+        }
+
+        ImVec2 padding = s_CommentPadding[(int)node.ID.Get()];
+        if (totalSize.x > 0 && totalSize.y > 0) {
+            node.Size = { totalSize.x - padding.x, totalSize.y - padding.y };
+        }
     }
 }
 
@@ -397,15 +407,14 @@ void MaterialEditorPanel::DrawStandardNode(MaterialNode& node) {
     // Header
     if (node.IsParameter) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f);
         ImGui::TextUnformatted((node.ParameterName + " (Param)").c_str());
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f);
         ImGui::TextUnformatted(node.Name.c_str());
     }
     ImGui::PopStyleColor();
-    ImGui::Dummy(ImVec2(0, 8));
+
+    ImGui::Spacing();
 
     // Inputs
     ImGui::BeginGroup();
@@ -510,9 +519,12 @@ void MaterialEditorPanel::DrawStandardNode(MaterialNode& node) {
         ImVec2 nodeMin = ImGui::GetItemRectMin();
         ImVec2 nodeMax = ImGui::GetItemRectMax();
         auto drawList = ed::GetNodeBackgroundDrawList(node.ID);
-        float headerHeight = ImGui::GetTextLineHeight() + 8.0f;
+
+        // On augmente la hauteur à 16.0f au lieu de 8.0f pour couvrir le padding naturel
+        float headerHeight = ImGui::GetTextLineHeight() + 16.0f;
         ImVec2 headerMax = ImVec2(nodeMax.x, nodeMin.y + headerHeight);
         ImColor headerColor = MaterialNodeRegistry::GetNodeColor(node.Name);
+
         drawList->AddRectFilled(nodeMin, headerMax, headerColor, ed::GetStyle().NodeRounding, ImDrawFlags_RoundCornersTop);
         drawList->AddLine(ImVec2(nodeMin.x, headerMax.y), headerMax, ImColor(30, 30, 30, 255), 2.0f);
     }
