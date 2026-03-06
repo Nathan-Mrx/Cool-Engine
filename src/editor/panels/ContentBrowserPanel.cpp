@@ -5,6 +5,8 @@
 #include "../../project/Project.h"
 #include <imgui.h>
 
+#include "editor/AssetRegistry.h"
+#include "renderer/TextureLoader.h"
 #include "scene/Entity.h"
 #include "scene/SceneSerializer.h"
 
@@ -24,6 +26,11 @@ void ContentBrowserPanel::OnImGuiRender() {
 
     if (m_CurrentDirectory.empty()) {
         m_CurrentDirectory = Project::GetContentDirectory();
+    }
+
+    // Chargement paresseux de l'icône de dossier
+    if (m_DirectoryIcon == 0 && std::filesystem::exists("icons/folder.png")) {
+        m_DirectoryIcon = TextureLoader::LoadTexture("icons/folder.png");
     }
 
     // --- 1. TOP BAR ---
@@ -78,43 +85,45 @@ void ContentBrowserPanel::OnImGuiRender() {
             ImGui::PushID(filename.c_str());
 
             if (directoryEntry.is_directory()) {
-                // Rendu Dossier
-                ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
+                // --- RENDU DOSSIER ---
+                if (m_DirectoryIcon != 0) {
+                    // Bouton avec image (fond transparent)
+                    ImGui::ImageButton(filename.c_str(), (ImTextureID)(uintptr_t)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
+                } else {
+                    ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
+                }
 
-                // Double clic pour ouvrir
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     m_CurrentDirectory /= path.filename();
                 }
             } else {
-                // Rendu Fichier
-                bool isScene = path.extension() == ".cescene";
-                bool isPrefab = path.extension() == ".ceprefab"; // <-- NOUVEAU
+                // --- RENDU ASSET ---
+                AssetTypeInfo info;
+                bool isKnownAsset = AssetRegistry::GetInfo(path.extension().string(), info);
 
-                // --- VISIBILITÉ : Couleurs différentes ---
-                if (isScene) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
-                else if (isPrefab) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.2f, 1.0f)); // Orange pour les prefabs !
+                // Couleur de fond (plus sombre si inconnu)
+                ImVec4 bgCol = isKnownAsset ? ImVec4(info.Color.x * 0.4f, info.Color.y * 0.4f, info.Color.z * 0.4f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
 
-                ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
-
-                if (isScene || isPrefab) ImGui::PopStyleColor();
-
-                // --- LOGIQUE D'OUVERTURE CORRIGÉE ---
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    if (isScene && OnSceneOpenCallback) {
-                        OnSceneOpenCallback(path);
-                    } else if (isPrefab && OnPrefabOpenCallback) {
-                        OnPrefabOpenCallback(path);
-                    } else if (path.extension() == ".cemat" && OnMaterialOpenCallback) {
-                        OnMaterialOpenCallback(path);
-                    }
+                if (isKnownAsset && info.IconID != 0) {
+                    ImGui::ImageButton(filename.c_str(), (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, bgCol);
+                    ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
+                    ImGui::PopStyleColor();
                 }
 
-                // DÉBUT DU DRAG AND DROP (Source)
+                // Logique d'ouverture (On garde ça simple pour l'instant)
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    if (path.extension() == ".cescene" && OnSceneOpenCallback) OnSceneOpenCallback(path);
+                    else if (path.extension() == ".ceprefab" && OnPrefabOpenCallback) OnPrefabOpenCallback(path);
+                    else if (path.extension() == ".cemat" && OnMaterialOpenCallback) OnMaterialOpenCallback(path);
+                }
+
+                // Drag and Drop
                 if (ImGui::BeginDragDropSource()) {
                     std::string itemPath = path.string();
-                    // On définit un identifiant "CONTENT_BROWSER_ITEM" et on envoie le chemin absolu en mémoire
                     ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath.c_str(), itemPath.size() + 1);
-                    ImGui::Text("Drop %s", filename.c_str()); // Tooltip qui suit la souris
+                    ImGui::Text("Drop %s", filename.c_str());
                     ImGui::EndDragDropSource();
                 }
             }
@@ -126,26 +135,18 @@ void ContentBrowserPanel::OnImGuiRender() {
     }
 
     // --- MENU CONTEXTUEL (Clic Droit dans le vide) ---
+    // --- MENU CONTEXTUEL GÉNÉRIQUE ---
     if (ImGui::BeginPopupContextWindow("ContentBrowserContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-
         if (ImGui::BeginMenu("Create...")) {
-
-            // On arme le canon pour un Prefab
-            if (ImGui::MenuItem("Prefab")) {
-                m_OpenCreateAssetPopup = true;
-                m_CreateAssetType = "Prefab";
-                m_CreateAssetExtension = ".ceprefab";
-                strcpy(m_NewAssetName, "NewPrefab");
+            // MAGIE : On lit tous les types d'assets du registre !
+            for (const auto& [ext, info] : AssetRegistry::GetRegistry()) {
+                if (ImGui::MenuItem(info.Name.c_str())) {
+                    m_OpenCreateAssetPopup = true;
+                    m_CreateAssetType = info.Name;
+                    m_CreateAssetExtension = info.Extension;
+                    snprintf(m_NewAssetName, sizeof(m_NewAssetName), "New%s", info.Name.c_str());
+                }
             }
-
-            // On arme le canon pour un Material
-            if (ImGui::MenuItem("Material")) {
-                m_OpenCreateAssetPopup = true;
-                m_CreateAssetType = "Material";
-                m_CreateAssetExtension = ".cemat";
-                strcpy(m_NewAssetName, "NewMaterial");
-            }
-
             ImGui::EndMenu();
         }
         ImGui::EndPopup();
@@ -175,19 +176,15 @@ void ContentBrowserPanel::DrawCreateAssetPopup() {
             if (!nameStr.empty()) {
                 std::filesystem::path newAssetPath = m_CurrentDirectory / (nameStr + m_CreateAssetExtension);
 
-                // === LOGIQUE DE CRÉATION SELON LE TYPE ===
-                if (m_CreateAssetType == "Material") {
+                // === L'ASSET SE CRÉE LUI-MÊME ! ===
+                AssetTypeInfo info;
+                if (AssetRegistry::GetInfo(m_CreateAssetExtension, info) && info.Instance) {
+                    info.Instance->CreateDefaultAsset(newAssetPath);
+                } else {
+                    // Fallback de sécurité : fichier vide
                     std::ofstream file(newAssetPath);
-                    file << "{\n    \"Type\": \"MaterialGraph\",\n    \"NextID\": 1,\n    \"Nodes\": [],\n    \"Links\": []\n}";
                     file.close();
                 }
-                else if (m_CreateAssetType == "Prefab") {
-                    auto tempScene = std::make_shared<Scene>();
-                    tempScene->CreateEntity(nameStr + " Root"); // On utilise le nom choisi !
-                    SceneSerializer serializer(tempScene);
-                    serializer.Serialize(newAssetPath.string());
-                }
-                // (Plus tard, tu rajouteras "Scene", "Animation", etc. ici !)
 
                 ImGui::CloseCurrentPopup();
             }

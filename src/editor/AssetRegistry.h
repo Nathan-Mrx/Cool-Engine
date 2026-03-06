@@ -4,24 +4,13 @@
 #include <memory>
 #include <imgui.h>
 #include <filesystem>
+#include <fstream>
 #include "renderer/TextureLoader.h"
 
-// --- LA MACRO POUR LE CHT ---
 #define CE_ASSET()
-
-// --- LE BOUCLIER ANTI-PYTHON ---
 using CHT_AssetBlocker = int;
 
-// Les données finales stockées
-struct AssetTypeInfo {
-    std::string Name;
-    std::string Extension;
-    ImVec4 Color;
-    std::string IconPath;
-    uint32_t IconID = 0;
-};
-
-// --- L'INTERFACE (Le contrat C++) ---
+// L'INTERFACE
 class IAssetType {
 public:
     virtual ~IAssetType() = default;
@@ -29,12 +18,29 @@ public:
     virtual std::string GetExtension() const = 0;
     virtual ImVec4 GetColor() const = 0;
     virtual std::string GetIconPath() const = 0;
+
+    // --- NOUVEAU : Chaque asset sait comment s'auto-construire ! ---
+    virtual void CreateDefaultAsset(const std::filesystem::path& path) const {
+        std::ofstream f(path); // Par défaut : Crée un fichier vide
+        f.close();
+    }
 };
 
-// --- LE REGISTRE ---
+// LA STRUCTURE DE DONNÉES
+struct AssetTypeInfo {
+    std::string Name;
+    std::string Extension;
+    ImVec4 Color;
+    std::string IconPath;
+    uint32_t IconID = 0;
+
+    // --- NOUVEAU : On garde une trace de l'instance pour exécuter la création ---
+    std::shared_ptr<IAssetType> Instance;
+};
+
+// LE REGISTRE
 class AssetRegistry {
 public:
-    // Cette fonction sera générée par le Cool Header Tool !
     static void RegisterAllAssets();
 
     static std::unordered_map<std::string, AssetTypeInfo>& GetRegistry() {
@@ -50,7 +56,8 @@ public:
         info.Color = assetType->GetColor();
         info.IconPath = assetType->GetIconPath();
 
-        // Préchargement de l'icône si elle existe
+        info.Instance = assetType; // <-- TRÈS IMPORTANT
+
         if (!info.IconPath.empty() && std::filesystem::exists(info.IconPath)) {
             info.IconID = TextureLoader::LoadTexture(info.IconPath.c_str());
         }

@@ -23,4 +23,6 @@ private:
     std::string m_CreateAssetType = "";      // "Material", "Prefab", etc.
     std::string m_CreateAssetExtension = ""; // ".cemat", ".ceprefab", etc.
     char m_NewAssetName[128] = "";
+
+    uint32_t m_DirectoryIcon = 0;
 };
