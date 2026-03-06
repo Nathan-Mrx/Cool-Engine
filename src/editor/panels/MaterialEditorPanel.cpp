@@ -10,6 +10,8 @@
 #include "../../renderer/PrimitiveFactory.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <filesystem>
+#include <nfd.h>
+#include <nfd.hpp>
 
 #include "editor/materials/MaterialNodeRegistry.h"
 
@@ -1078,5 +1080,28 @@ void MaterialEditorPanel::Save() {
 }
 
 void MaterialEditorPanel::SaveAs() {
-    // Plus tard, tu pourras ouvrir un NFD::SaveDialog ici pour les matériaux !
+    nfdchar_t* outPath = nullptr;
+    nfdfilteritem_t filterItem[1] = { { "Cool Engine Material", "cemat" } };
+
+    // On ouvre la fenêtre (Tu pourrais remplacer le premier nullptr par le dossier "Content" de ton projet)
+    if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, nullptr) == NFD_OKAY) {
+        std::filesystem::path filepath = outPath;
+
+        // Sécurité : On force l'extension .cemat si l'utilisateur a oublié de l'écrire
+        if (filepath.extension() != ".cemat") {
+            filepath += ".cemat";
+        }
+
+        m_CurrentPath = filepath; // Le panel mémorise sa nouvelle maison
+
+        // 1. On crie au moteur de changer le nom de l'onglet !
+        if (OnPathChangedCallback) {
+            OnPathChangedCallback(m_CurrentPath);
+        }
+
+        // 2. On sauvegarde la vraie data et on déclenche le Hot-Reload
+        Save(m_CurrentPath);
+
+        NFD::FreePath(outPath);
+    }
 }

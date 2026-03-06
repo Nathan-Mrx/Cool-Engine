@@ -17,4 +17,6 @@ public:
     // --- COMMANDES GLOBALES ---
     virtual void Save() {}
     virtual void SaveAs() {}
+
+    std::function<void(const std::filesystem::path&)> OnPathChangedCallback;
 };

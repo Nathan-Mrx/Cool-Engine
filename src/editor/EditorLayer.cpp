@@ -1129,6 +1129,17 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
         }
     };
 
+    newMatPanel->OnPathChangedCallback = [this, newMatPanel](const std::filesystem::path& newPath) {
+        // On cherche à quel onglet appartient cet éditeur et on le renomme
+        for (auto& tab : m_Tabs) {
+            if (tab.CustomEditor == newMatPanel) {
+                tab.Filepath = newPath;
+                tab.Name = newPath.filename().string();
+                break;
+            }
+        }
+    };
+
     // 3. On ajoute le nouvel onglet
     m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMatPanel });
 

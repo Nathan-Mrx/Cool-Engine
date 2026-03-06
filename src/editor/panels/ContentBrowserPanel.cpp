@@ -11,6 +11,9 @@
 ContentBrowserPanel::ContentBrowserPanel() {}
 
 void ContentBrowserPanel::OnImGuiRender() {
+    static bool s_OpenCreateMaterialPopup = false;
+    static char s_NewMaterialName[128] = "NewMaterial";
+
     ImGui::Begin("Content Browser");
 
     if (!Project::GetActive()) {
@@ -134,12 +137,47 @@ void ContentBrowserPanel::OnImGuiRender() {
             SceneSerializer serializer(tempScene);
             serializer.Serialize(newPrefabPath.string());
         }
-        if (ImGui::MenuItem("New Material")) {
-            std::filesystem::path newMatPath = m_CurrentDirectory / "NewMaterial.cemat";
-            std::ofstream f(newMatPath);
-            f << "{ \"Type\": \"MaterialGraph\" }"; // Fichier JSON basique
-            f.close();
+        if (ImGui::MenuItem("Material")) {
+            s_OpenCreateMaterialPopup = true;
+            strcpy(s_NewMaterialName, "NewMaterial"); // Valeur par défaut
         }
+        ImGui::EndMenu();
+    }
+
+    // 1. On ordonne à ImGui d'ouvrir le Popup (au centre de l'écran)
+    if (s_OpenCreateMaterialPopup) {
+        ImGui::OpenPopup("Name New Material");
+        s_OpenCreateMaterialPopup = false; // On reset le déclencheur
+    }
+
+    // 2. Le vrai contenu du Popup
+    if (ImGui::BeginPopupModal("Name New Material", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Enter material name:");
+        ImGui::InputText("##MatName", s_NewMaterialName, sizeof(s_NewMaterialName));
+        ImGui::Spacing();
+
+        if (ImGui::Button("Create", ImVec2(120, 0))) {
+            std::string nameStr = s_NewMaterialName;
+            if (!nameStr.empty()) {
+                // On fabrique le chemin complet (Dossier Actuel / NomDuMateriau.cemat)
+                std::filesystem::path newMatPath = m_CurrentDirectory / (nameStr + ".cemat");
+
+                // IMPORTANT : On injecte un JSON vide valide, sinon l'éditeur plantera en essayant de le lire !
+                std::ofstream file(newMatPath);
+                file << "{\n    \"Type\": \"MaterialGraph\",\n    \"NextID\": 1,\n    \"Nodes\": [],\n    \"Links\": []\n}";
+                file.close();
+
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        ImGui::SetItemDefaultFocus(); // Permet d'appuyer sur "Entrée"
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+
         ImGui::EndPopup();
     }
 
