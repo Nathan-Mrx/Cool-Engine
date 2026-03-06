@@ -64,66 +64,67 @@ void EditorLayer::OnDetach() {
 
 void EditorLayer::DrawMenuBar() {
     if (ImGui::BeginMenuBar()) {
+        auto& activeTab = m_Tabs[m_ActiveTabIndex];
+
         if (ImGui::BeginMenu("File")) {
-
-            // --- NOUVEAU : CRÉER UNE SCÈNE VIERGE ---
+            // 1. Actions Globales
             if (ImGui::MenuItem("New Scene", "Ctrl+N")) {
-                // 1. On écrase l'ancien pointeur par une nouvelle scène vierge
                 m_ActiveScene = std::make_shared<Scene>();
-
-                // 2. On met à jour l'interface (ce qui désélectionne aussi l'entité active)
                 m_SceneHierarchyPanel.SetContext(m_ActiveScene);
             }
-
-            ImGui::Separator();
-
-            // --- NOUVEAU : SAUVEGARDE RAPIDE ---
-            if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
-                SaveScene();
-            }
-
-            if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) {
-                SaveSceneAs();
-            }
-
             if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) {
                 nfdchar_t* outPath = nullptr;
                 nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
                 if (NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
-
-                    OpenScene(outPath); // <-- ON UTILISE NOTRE FONCTION D'ONGLET !
-
+                    OpenScene(outPath);
                     NFD::FreePath(outPath);
                 }
             }
 
             ImGui::Separator();
-            if (ImGui::MenuItem("Close Project")) {
-                m_RequestCloseProject = true;
+
+            // ========================================================
+            // 2. LA MAGIE CONTEXTUELLE EST ICI !
+            // ========================================================
+            if (activeTab.Type == TabType::Scene) {
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
+                if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) SaveSceneAs();
+            } else if (activeTab.CustomEditor) {
+                // L'éditeur actif dessine LUI-MÊME ses propres boutons !
+                activeTab.CustomEditor->OnImGuiMenuFile();
             }
+            // ========================================================
+
+            ImGui::Separator();
+            if (ImGui::MenuItem("Close Project")) m_RequestCloseProject = true;
             if (ImGui::MenuItem("Exit")) Application::Get().Close();
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Project Settings")) {
-                m_ShowProjectSettings = true;
+            if (ImGui::MenuItem("Project Settings")) m_ShowProjectSettings = true;
+
+            // L'éditeur actif peut aussi ajouter des trucs dans Edit !
+            if (activeTab.CustomEditor) {
+                ImGui::Separator();
+                activeTab.CustomEditor->OnImGuiMenuEdit();
             }
             ImGui::EndMenu();
         }
 
-        // --- Menu View pour la grille, les collisions et le rendu ---
         if (ImGui::BeginMenu("View")) {
-            ImGui::MenuItem("Show Grid", nullptr, &m_ShowGrid);
-            ImGui::MenuItem("Show Collisions", nullptr, &m_ShowCollisions); // <-- NOUVEAU
-
-            ImGui::Separator();
-
-            if (ImGui::BeginMenu("Render Mode")) {
-                if (ImGui::MenuItem("Lit", nullptr, m_RenderMode == 0)) m_RenderMode = 0;
-                if (ImGui::MenuItem("Unlit", nullptr, m_RenderMode == 1)) m_RenderMode = 1;
-                if (ImGui::MenuItem("Wireframe", nullptr, m_RenderMode == 2)) m_RenderMode = 2;
-                ImGui::EndMenu();
+            if (activeTab.Type == TabType::Scene) {
+                ImGui::MenuItem("Show Grid", nullptr, &m_ShowGrid);
+                ImGui::MenuItem("Show Collisions", nullptr, &m_ShowCollisions);
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Render Mode")) {
+                    if (ImGui::MenuItem("Lit", nullptr, m_RenderMode == 0)) m_RenderMode = 0;
+                    if (ImGui::MenuItem("Unlit", nullptr, m_RenderMode == 1)) m_RenderMode = 1;
+                    if (ImGui::MenuItem("Wireframe", nullptr, m_RenderMode == 2)) m_RenderMode = 2;
+                    ImGui::EndMenu();
+                }
+            } else if (activeTab.CustomEditor) {
+                activeTab.CustomEditor->OnImGuiMenuView();
             }
             ImGui::EndMenu();
         }
@@ -558,13 +559,19 @@ void EditorLayer::OnImGuiRender() {
         UI_Toolbar();
     }
 
-    // --- RACCOURCIS CLAVIER ---
+    // --- RACCOURCIS CLAVIER INTELLIGENTS ---
     bool control = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
     bool shift   = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
 
     if (control && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        if (shift) SaveSceneAs();
-        else SaveScene();
+        if (isSceneTabActive) {
+            if (shift) SaveSceneAs();
+            else SaveScene();
+        } else if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor) {
+            // Ctrl+S envoie l'ordre directement à l'éditeur actif !
+            if (shift) m_Tabs[m_ActiveTabIndex].CustomEditor->SaveAs();
+            else m_Tabs[m_ActiveTabIndex].CustomEditor->Save();
+        }
     }
 
     if (control && !shift && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
@@ -727,10 +734,10 @@ void EditorLayer::OnImGuiRender() {
                 ImGui::PopStyleVar();
 
             } else if (activeTab.Type == TabType::Material) {
-                // --- MODE MATÉRIAU ---
+                // --- MODE CUSTOM EDITOR ---
                 bool open = true;
-                if (activeTab.MaterialContext) {
-                    activeTab.MaterialContext->OnImGuiRender(open);
+                if (activeTab.CustomEditor) {
+                    activeTab.CustomEditor->OnImGuiRender(open);
                 }
             }
         }
@@ -878,11 +885,9 @@ void EditorLayer::SaveScene() {
                 SaveSceneAs();
             }
         }
-        else if (activeTab.Type == TabType::Material) {
-            if (activeTab.MaterialContext) {
-                activeTab.MaterialContext->Save(activeTab.Filepath);
-                std::cout << "[Editor] Saved Material Graph to " << activeTab.Filepath << std::endl;
-            }
+        else if (activeTab.CustomEditor) {
+            // Le système général délègue la sauvegarde (utilisé par le bouton Save de l'UI globale)
+            activeTab.CustomEditor->Save();
         }
     }
 }

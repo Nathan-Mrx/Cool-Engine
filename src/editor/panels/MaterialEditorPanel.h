@@ -15,18 +15,23 @@
 #include "../materials/MaterialGraph.h"
 #include <functional>
 
+#include "editor/IAssetEditor.h"
 
 
 namespace ed = ax::NodeEditor;
 
 
 
-class MaterialEditorPanel {
+class MaterialEditorPanel : public IAssetEditor{
 public:
     MaterialEditorPanel();
     ~MaterialEditorPanel();
 
     void OnImGuiRender(bool& isOpen);
+
+    void OnImGuiMenuFile() override;
+    void Save();
+    void SaveAs();
 
     void Save(const std::filesystem::path& path);
     void Load(const std::filesystem::path& path);
@@ -100,4 +105,6 @@ private:
     void CompilePreviewShader();
 
     void UpdateWildcardPins();
+
+    std::filesystem::path m_CurrentPath;
 };

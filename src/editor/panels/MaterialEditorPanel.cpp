@@ -647,6 +647,8 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
 }
 
 void MaterialEditorPanel::Load(const std::filesystem::path& path) {
+    m_CurrentPath = path;
+
     std::ifstream file(path);
     if (!file.is_open()) return;
 
@@ -1057,4 +1059,24 @@ void MaterialEditorPanel::UpdateWildcardPins() {
             }
         }
     }
+}
+
+void MaterialEditorPanel::OnImGuiMenuFile() {
+    if (ImGui::MenuItem("Save Material", "Ctrl+S")) {
+        Save();
+    }
+    if (ImGui::MenuItem("Save Material As...", "Ctrl+Shift+S")) {
+        SaveAs();
+    }
+}
+
+void MaterialEditorPanel::Save() {
+    if (!m_CurrentPath.empty()) {
+        Save(m_CurrentPath); // Appelle ta "vraie" fonction de sauvegarde
+        std::cout << "[MaterialEditor] Material automatically saved!" << std::endl;
+    }
+}
+
+void MaterialEditorPanel::SaveAs() {
+    // Plus tard, tu pourras ouvrir un NFD::SaveDialog ici pour les matériaux !
 }

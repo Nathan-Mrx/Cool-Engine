@@ -40,12 +40,12 @@ enum class TabType {
 struct EditorTab {
     std::string Name;
     std::filesystem::path Filepath;
-    TabType Type = TabType::Scene;
-
-    // --- MÉMOIRE DE L'ONGLET ---
+    TabType Type;
     std::shared_ptr<Scene> SceneContext;
-    bool IsPrefab = false;
-    std::shared_ptr<MaterialEditorPanel> MaterialContext = nullptr; // <-- NOUVEAU !
+    bool IsPrefab;
+
+    // --- LE FIX ARCHITECTURAL : Un pointeur générique ! ---
+    std::shared_ptr<IAssetEditor> CustomEditor;
 };
 
 class EditorLayer {

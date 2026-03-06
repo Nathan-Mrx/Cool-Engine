@@ -66,6 +66,7 @@ set(SOURCES
         src/editor/materials/MaterialNodeRegistry.h
         src/editor/materials/NodeDefinitions.h
         src/editor/materials/MaterialNodeRegistry.generated.cpp
+        src/editor/IAssetEditor.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
