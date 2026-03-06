@@ -91,4 +91,6 @@ private:
     std::shared_ptr<Shader> m_PreviewShader;
 
     void CompilePreviewShader();
+
+    void UpdateWildcardPins();
 };
