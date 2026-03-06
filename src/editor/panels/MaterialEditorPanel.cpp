@@ -200,11 +200,15 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             glBindVertexArray(0);
 
             // ========================================================
-            // --- LE FIX EST ICI : NETTOYAGE DE L'ÉTAT OPENGL ---
+            // --- LE FIX (V2) : CHASSE D'EAU COMPLÈTE OPENGL ---
             // ========================================================
-            glActiveTexture(GL_TEXTURE0);    // On remet l'aiguille à zéro
-            glBindTexture(GL_TEXTURE_2D, 0); // On vide le slot
-            glUseProgram(0);                 // On lâche le shader
+            // On vide agressivement les 8 premiers slots de texture
+            for (int i = 0; i < 8; i++) {
+                glActiveTexture(GL_TEXTURE0 + i);
+                glBindTexture(GL_TEXTURE_2D, 0);
+            }
+            glActiveTexture(GL_TEXTURE0); // On remet l'aiguille sur 0
+            glUseProgram(0);              // On lâche le shader
         }
         m_PreviewFramebuffer->Unbind();
     }

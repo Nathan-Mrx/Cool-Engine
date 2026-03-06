@@ -262,7 +262,9 @@ void Renderer::DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, 
 }
 
 void Renderer::BeginOutlineMask(const glm::mat4& transform) {
-    if (!s_Data->MainShader) return;    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    if (!s_Data->LineShader) return; // On utilise le LineShader !
+
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     glEnable(GL_STENCIL_TEST);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
@@ -270,38 +272,33 @@ void Renderer::BeginOutlineMask(const glm::mat4& transform) {
     glStencilMask(0xFF);
 
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-
-    // --- NOUVEAU : Fix de l'Image 5 ---
-    // On désactive la profondeur pour que le masque englobe
-    // TOUT l'objet, même s'il est caché derrière un mur ou le sol.
     glDisable(GL_DEPTH_TEST);
 
-    s_Data->MainShader->Use();
-    s_Data->MainShader->SetMat4("uModel", transform);
+    // --- LE FIX EST ICI : On utilise un shader basique ---
+    s_Data->LineShader->Use();
+    s_Data->LineShader->SetMat4("uModel", transform);
+    s_Data->LineShader->SetMat4("uView", s_Data->CurrentView);
+    s_Data->LineShader->SetMat4("uProjection", s_Data->CurrentProjection);
 }
 
 void Renderer::BeginOutlineDraw(const glm::mat4& transform, const glm::vec3& color) {
+    if (!s_Data->LineShader) return;
+
     glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
     glStencilMask(0x00);
 
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-
-    // --- NOUVEAU : Fix de l'Image 5 (Suite) ---
-    // On garde la profondeur désactivée pour que l'outline se
-    // dessine PAR-DESSUS tout le reste du monde.
     glDisable(GL_DEPTH_TEST);
 
-    // --- NOUVEAU : Fix de l'Image 3 et 4 ---
-    // L'astuce du fil de fer !
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    glLineWidth(6.0f); // Épaisseur de ton outline. Ajuste selon tes goûts !
+    glLineWidth(6.0f); // Épaisseur de ton outline
 
-    // On utilise le shader standard, plus besoin de gonfler l'objet
-    s_Data->MainShader->Use();
-    s_Data->MainShader->SetVec3("uColor", color);
-    s_Data->MainShader->SetMat4("uModel", transform);
-    s_Data->MainShader->SetFloat("uAmbientStrength", 1.0f);
-    s_Data->MainShader->SetFloat("uDiffuseStrength", 0.0f);
+    // --- LE FIX EST ICI : Couleur pure, sans influence des textures ! ---
+    s_Data->LineShader->Use();
+    s_Data->LineShader->SetMat4("uModel", transform);
+    s_Data->LineShader->SetMat4("uView", s_Data->CurrentView);
+    s_Data->LineShader->SetMat4("uProjection", s_Data->CurrentProjection);
+    s_Data->LineShader->SetVec3("uColor", color);
 }
 
 void Renderer::EndOutline() {
