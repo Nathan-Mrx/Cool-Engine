@@ -4,6 +4,9 @@
 #include <string>
 #include <unordered_map>
 #include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
+
 #include "renderer/Shader.h"
 #include "renderer/Framebuffer.h"
 #include "renderer/Mesh.h"
@@ -11,6 +14,7 @@
 struct MIParameter {
     std::string Type;
     std::string Name;
+    std::string Category = "General";
 
     float FloatVal = 0.0f;
     bool BoolVal = false;
@@ -19,6 +23,7 @@ struct MIParameter {
     uint32_t TextureID = 0;
 
     bool IsOverridden = false;
+    bool IsVisible = false;
 };
 
 struct MIStaticTexture {
@@ -46,10 +51,13 @@ private:
     void CompilePreviewShader();
 
     void ResetParameterToDefault(const std::string& paramName);
+    void EvaluateParameterVisibility();
 
 private:
     std::filesystem::path m_CurrentPath;
     std::string m_ParentMaterialPath = "";
+    nlohmann::json m_ParentGraphJson;
+
     std::unordered_map<std::string, MIParameter> m_Parameters;
 
     std::vector<MIStaticTexture> m_StaticTextures;

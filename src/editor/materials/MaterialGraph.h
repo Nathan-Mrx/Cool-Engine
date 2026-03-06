@@ -49,6 +49,7 @@ struct MaterialNode {
     // --- NOUVEAU : PARAMÈTRES D'INSTANCE ---
     bool IsParameter = false;
     std::string ParameterName = "";
+    std::string ParameterCategory = "General";
 };
 
 struct MaterialLink {

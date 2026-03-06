@@ -36,25 +36,34 @@ void MaterialInstanceEditorPanel::Load(const std::filesystem::path& path) {
             auto overrides = data["Overrides"];
             for (auto& [key, param] : m_Parameters) {
                 if (overrides.contains(key)) {
-                    param.IsOverridden = true;
-                    if (param.Type == "Float") param.FloatVal = overrides[key].get<float>();
-                    else if (param.Type == "Color") {
+                    // --- LE FIX DE SECURITE EST ICI ---
+                    if (param.Type == "Float" && overrides[key].is_number()) {
+                        param.IsOverridden = true;
+                        param.FloatVal = overrides[key].get<float>();
+                    }
+                    else if (param.Type == "Color" && overrides[key].is_array() && overrides[key].size() >= 4) {
+                        param.IsOverridden = true;
                         auto col = overrides[key];
                         param.ColorVal = {col[0], col[1], col[2], col[3]};
                     }
-                    else if (param.Type == "Texture2D") {
+                    else if (param.Type == "Texture2D" && overrides[key].is_string()) {
+                        param.IsOverridden = true;
                         param.TexturePath = overrides[key].get<std::string>();
                         if (!param.TexturePath.empty()) {
                             std::filesystem::path fullTex = Project::GetProjectDirectory() / param.TexturePath;
                             param.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
                         }
                     }
-                    else if (param.Type == "StaticSwitchParameter") param.BoolVal = overrides[key].get<bool>();
+                    else if (param.Type == "StaticSwitchParameter" && overrides[key].is_boolean()) {
+                        param.IsOverridden = true;
+                        param.BoolVal = overrides[key].get<bool>();
+                    }
                 }
             }
         }
         file.close();
         CompilePreviewShader();
+        EvaluateParameterVisibility();
     }
 }
 
@@ -63,37 +72,40 @@ void MaterialInstanceEditorPanel::OpenAsset(const std::filesystem::path& path) {
 }
 
 void MaterialInstanceEditorPanel::LoadParentParameters() {
-    m_Parameters.clear();
-    m_StaticTextures.clear(); // <-- On nettoie au chargement
+    m_Parameters.clear(); m_StaticTextures.clear();
     if (m_ParentMaterialPath.empty()) return;
 
     std::filesystem::path fullParentPath = Project::GetProjectDirectory() / m_ParentMaterialPath;
     std::ifstream file(fullParentPath);
     if (file.is_open()) {
-        nlohmann::json data = nlohmann::json::parse(file);
-        if (data.contains("Nodes")) {
-            for (auto& nodeJson : data["Nodes"]) {
+        m_ParentGraphJson = nlohmann::json::parse(file); // ON CACHE LE JSON !
+        if (m_ParentGraphJson.contains("Nodes")) {
+            for (auto& nodeJson : m_ParentGraphJson["Nodes"]) {
                 if (nodeJson.contains("IsParameter") && nodeJson["IsParameter"].get<bool>()) {
                     MIParameter param;
-                    param.Name = nodeJson["ParameterName"].get<std::string>();
-                    param.Type = nodeJson["Name"].get<std::string>();
+                    param.Name = nodeJson.value("ParameterName", "");
+                    param.Type = nodeJson.value("Name", "");
+                    param.Category = nodeJson.value("ParameterCategory", "General"); // <-- LECTURE CATÉGORIE
 
-                    if (param.Type == "Float") param.FloatVal = nodeJson.value("FloatValue", 0.0f);
-                    else if (param.Type == "Color") {
+                    if (param.Type == "Float" && nodeJson.contains("FloatValue") && nodeJson["FloatValue"].is_number()) {
+                        param.FloatVal = nodeJson["FloatValue"].get<float>();
+                    }
+                    else if (param.Type == "Color" && nodeJson.contains("ColorValue") && nodeJson["ColorValue"].is_array() && nodeJson["ColorValue"].size() >= 4) {
                         auto col = nodeJson["ColorValue"];
                         param.ColorVal = {col[0], col[1], col[2], col[3]};
                     }
-                    else if (param.Type == "Texture2D") {
-                        param.TexturePath = nodeJson.value("TexturePath", "");
+                    else if (param.Type == "StaticSwitchParameter" && nodeJson.contains("BoolValue") && nodeJson["BoolValue"].is_boolean()) {
+                        param.BoolVal = nodeJson["BoolValue"].get<bool>();
+                    }
+                    else if (param.Type == "Texture2D" && nodeJson.contains("TexturePath") && nodeJson["TexturePath"].is_string()) {
+                        param.TexturePath = nodeJson["TexturePath"].get<std::string>();
                         if (!param.TexturePath.empty()) {
                             std::filesystem::path fullTex = Project::GetProjectDirectory() / param.TexturePath;
                             param.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
                         }
                     }
-                    else if (param.Type == "StaticSwitchParameter") param.BoolVal = nodeJson.value("BoolValue", false);
                     m_Parameters[param.Name] = param;
                 }
-                // --- LE FIX DES TEXTURES : On charge les textures "Statiques" du parent ! ---
                 else if (nodeJson["Name"].get<std::string>() == "Texture2D") {
                     std::string path = nodeJson.value("TexturePath", "");
                     if (!path.empty()) {
@@ -108,8 +120,120 @@ void MaterialInstanceEditorPanel::LoadParentParameters() {
         }
         file.close();
     }
+    EvaluateParameterVisibility(); // Calcul immédiat des visibles !
 }
 
+void MaterialInstanceEditorPanel::ResetParameterToDefault(const std::string& paramName) {
+    if (!m_ParentGraphJson.contains("Nodes")) return;
+    for (auto& nodeJson : m_ParentGraphJson["Nodes"]) {
+        if (nodeJson.contains("IsParameter") && nodeJson["IsParameter"].get<bool>()) {
+            if (nodeJson.value("ParameterName", "") == paramName) {
+                auto& param = m_Parameters[paramName];
+                if (param.Type == "Float" && nodeJson.contains("FloatValue") && nodeJson["FloatValue"].is_number()) {
+                    param.FloatVal = nodeJson["FloatValue"].get<float>();
+                }
+                else if (param.Type == "Color" && nodeJson.contains("ColorValue") && nodeJson["ColorValue"].is_array() && nodeJson["ColorValue"].size() >= 4) {
+                    auto col = nodeJson["ColorValue"];
+                    param.ColorVal = {col[0], col[1], col[2], col[3]};
+                }
+                else if (param.Type == "StaticSwitchParameter" && nodeJson.contains("BoolValue") && nodeJson["BoolValue"].is_boolean()) {
+                    param.BoolVal = nodeJson["BoolValue"].get<bool>();
+                }
+                else if (param.Type == "Texture2D" && nodeJson.contains("TexturePath") && nodeJson["TexturePath"].is_string()) {
+                    param.TexturePath = nodeJson["TexturePath"].get<std::string>();
+                    param.TextureID = param.TexturePath.empty() ? 0 : TextureLoader::LoadTexture((Project::GetProjectDirectory() / param.TexturePath).string().c_str());
+                }
+                break;
+            }
+        }
+    }
+}
+
+
+void MaterialInstanceEditorPanel::EvaluateParameterVisibility() {
+    // 1. On rend TOUT visible par défaut (Fail-safe)
+    for (auto& [key, param] : m_Parameters) param.IsVisible = true;
+
+    if (!m_ParentGraphJson.contains("Nodes") || !m_ParentGraphJson.contains("Links")) return;
+
+    std::unordered_map<int, nlohmann::json> nodesMap;
+    std::unordered_map<int, int> pinToNode;
+    std::unordered_map<int, int> linkEndToStart;
+
+    int outputNodeID = -1;
+    for (auto& node : m_ParentGraphJson["Nodes"]) {
+        int nodeID = node["ID"];
+        nodesMap[nodeID] = node;
+
+        std::string nodeName = node.value("Name", "");
+
+        // --- FIX : AJOUTE LE NOM DE TON NOEUD FINAL ICI S'IL MANQUE ---
+        if (nodeName == "Base Material" || nodeName == "Output" || nodeName == "PBRMaterial" || nodeName == "MaterialOutput") {
+            outputNodeID = nodeID;
+        }
+
+        if (node.contains("Inputs")) for (auto& pin : node["Inputs"]) pinToNode[pin["ID"]] = nodeID;
+        if (node.contains("Outputs")) for (auto& pin : node["Outputs"]) pinToNode[pin["ID"]] = nodeID;
+    }
+
+    for (auto& link : m_ParentGraphJson["Links"]) linkEndToStart[link["EndPinID"]] = link["StartPinID"];
+
+    // Si on n'a pas trouvé le noeud de sortie, on retourne (tout restera visible grâce au fail-safe !)
+    if (outputNodeID == -1) {
+        std::cout << "[Warning] EvaluateParameterVisibility: Noeud de sortie introuvable !" << std::endl;
+        return;
+    }
+
+    // 2. Maintenant qu'on est sûr que le graphe est valide, on cache tout pour le vrai tri
+    for (auto& [key, param] : m_Parameters) param.IsVisible = false;
+
+    // 3. Parcours Récursif
+    std::unordered_map<int, bool> visited;
+    std::function<void(int)> traverse = [&](int nodeID) {
+        if (visited[nodeID]) return;
+        visited[nodeID] = true;
+
+        auto& node = nodesMap[nodeID];
+
+        // Rendre visible si c'est un paramètre
+        if (node.value("IsParameter", false)) {
+            std::string pName = node.value("ParameterName", "");
+            if (m_Parameters.contains(pName)) m_Parameters[pName].IsVisible = true;
+        }
+
+        // Gestion des Static Switches
+        if (node.value("Name", "") == "StaticSwitchParameter") {
+            std::string pName = node.value("ParameterName", "");
+            bool switchVal = node.value("BoolValue", false);
+            if (m_Parameters.contains(pName) && m_Parameters[pName].IsOverridden) switchVal = m_Parameters[pName].BoolVal;
+
+            int activePinID = -1;
+            if (node.contains("Inputs")) {
+                for (auto& pin : node["Inputs"]) {
+                    if (switchVal && pin["Name"] == "True") activePinID = pin["ID"];
+                    if (!switchVal && pin["Name"] == "False") activePinID = pin["ID"];
+                }
+            }
+
+            if (activePinID != -1 && linkEndToStart.contains(activePinID)) {
+                int startPin = linkEndToStart[activePinID];
+                if (pinToNode.contains(startPin)) traverse(pinToNode[startPin]);
+            }
+        } else {
+            if (node.contains("Inputs")) {
+                for (auto& pin : node["Inputs"]) {
+                    int pinID = pin["ID"];
+                    if (linkEndToStart.contains(pinID)) {
+                        int startPin = linkEndToStart[pinID];
+                        if (pinToNode.contains(startPin)) traverse(pinToNode[startPin]);
+                    }
+                }
+            }
+        }
+    };
+
+    traverse(outputNodeID);
+}
 void MaterialInstanceEditorPanel::CompilePreviewShader() {
     if (m_ParentMaterialPath.empty()) return;
     std::filesystem::path fullParentPath = Project::GetProjectDirectory() / m_ParentMaterialPath;
@@ -265,79 +389,87 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
         ImGui::EndDragDropTarget();
     }
     
-    std::string paramToReset = ""; // <-- On retient l'action pour après la boucle !
+    std::string paramToReset = "";
+    bool needsRecompileAndEval = false;
 
-    ImGui::Spacing(); ImGui::Spacing();
-    ImGui::TextDisabled("STATIC SWITCHES");
-    ImGui::Separator();
-
+    // --- LE TRI PAR CATÉGORIES ET PAR TYPE ---
+    std::map<std::string, std::vector<MIParameter*>> groupedParams;
     for (auto& [key, param] : m_Parameters) {
-        if (param.Type != "StaticSwitchParameter") continue;
-        ImGui::PushID(key.c_str());
-
-        if (ImGui::Checkbox("##override", &param.IsOverridden)) {
-            if (!param.IsOverridden) paramToReset = key; // On stocke l'action
-            CompilePreviewShader();
+        if (param.IsVisible) {
+            groupedParams[param.Category].push_back(&param);
         }
-        ImGui::SameLine(); ImGui::Text("%s", key.c_str());
+    }
 
-        if (!param.IsOverridden) ImGui::BeginDisabled();
-        ImGui::SameLine(150);
-        if (ImGui::Checkbox("Value", &param.BoolVal)) CompilePreviewShader();
-        if (!param.IsOverridden) ImGui::EndDisabled();
-
-        ImGui::PopID();
+    // On trie chaque catégorie pour mettre les Switches en premier, puis par ordre alphabétique
+    for (auto& [category, params] : groupedParams) {
+        std::sort(params.begin(), params.end(), [](MIParameter* a, MIParameter* b) {
+            if (a->Type == "StaticSwitchParameter" && b->Type != "StaticSwitchParameter") return true;
+            if (a->Type != "StaticSwitchParameter" && b->Type == "StaticSwitchParameter") return false;
+            return a->Name < b->Name; // Ordre alphabétique si même type
+        });
     }
 
     ImGui::Spacing(); ImGui::Spacing();
-    ImGui::TextDisabled("DYNAMIC PARAMETERS");
-    ImGui::Separator();
+    // (Supprime la ligne ImGui::TextDisabled("STATIC SWITCHES") et le Separator() s'ils sont encore là)
 
-    for (auto& [key, param] : m_Parameters) {
-        if (param.Type == "StaticSwitchParameter") continue;
+    for (auto& [category, params] : groupedParams) {
+        // Style Unreal : Un header repliable par catégorie
+        if (ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (auto* paramPtr : params) {
+                auto& param = *paramPtr;
+                ImGui::PushID(param.Name.c_str());
 
-        ImGui::PushID(key.c_str());
-        if (ImGui::Checkbox("##override", &param.IsOverridden)) {
-            if (!param.IsOverridden) paramToReset = key; // On stocke l'action
-        }
-        ImGui::SameLine(); ImGui::Text("%s", key.c_str());
-
-        if (!param.IsOverridden) ImGui::BeginDisabled();
-
-        ImGui::PushItemWidth(-1);
-        if (param.Type == "Float") {
-            ImGui::DragFloat("##f", &param.FloatVal, 0.01f);
-        } else if (param.Type == "Color") {
-            ImGui::ColorEdit4("##c", glm::value_ptr(param.ColorVal));
-        } else if (param.Type == "Texture2D") {
-            std::string btnText = param.TexturePath.empty() ? "Drop Texture Here" : std::filesystem::path(param.TexturePath).filename().string();
-            ImGui::Button(btnText.c_str(), ImVec2(-1, 24));
-
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                    std::filesystem::path fp = (const char*)payload->Data;
-                    if (fp.extension() == ".png" || fp.extension() == ".jpg") {
-                        param.TexturePath = std::filesystem::relative(fp, Project::GetProjectDirectory()).string();
-                        param.TextureID = TextureLoader::LoadTexture(fp.string().c_str());
-                    }
+                if (ImGui::Checkbox("##override", &param.IsOverridden)) {
+                    if (!param.IsOverridden) paramToReset = param.Name;
+                    if (param.Type == "StaticSwitchParameter") needsRecompileAndEval = true;
                 }
-                ImGui::EndDragDropTarget();
+                ImGui::SameLine(); ImGui::Text("%s", param.Name.c_str());
+
+                if (!param.IsOverridden) ImGui::BeginDisabled();
+
+                // Dessin selon le type
+                if (param.Type == "StaticSwitchParameter") {
+                    ImGui::SameLine(150);
+                    if (ImGui::Checkbox("Value", &param.BoolVal)) needsRecompileAndEval = true;
+                } else {
+                    ImGui::PushItemWidth(-1);
+                    if (param.Type == "Float") {
+                        ImGui::DragFloat("##f", &param.FloatVal, 0.01f);
+                    } else if (param.Type == "Color") {
+                        ImGui::ColorEdit4("##c", glm::value_ptr(param.ColorVal));
+                    } else if (param.Type == "Texture2D") {
+                        std::string btnText = param.TexturePath.empty() ? "Drop Texture" : std::filesystem::path(param.TexturePath).filename().string();
+                        ImGui::Button(btnText.c_str(), ImVec2(-1, 24));
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                                std::filesystem::path fp = (const char*)payload->Data;
+                                if (fp.extension() == ".png" || fp.extension() == ".jpg") {
+                                    param.TexturePath = std::filesystem::relative(fp, Project::GetProjectDirectory()).string();
+                                    param.TextureID = TextureLoader::LoadTexture(fp.string().c_str());
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+                    }
+                    ImGui::PopItemWidth();
+                }
+
+                if (!param.IsOverridden) ImGui::EndDisabled();
+                ImGui::PopID();
+                ImGui::Spacing();
             }
         }
-        ImGui::PopItemWidth();
-
-        if (!param.IsOverridden) ImGui::EndDisabled();
-        ImGui::PopID();
     }
 
-    // --- LE FIX ANTI-CRASH EST LÀ ---
-    // On effectue le rechargement en dehors de la boucle !
+    // --- EXECUTION DES ACTIONS (Pour éviter le crash de l'UI !) ---
     if (!paramToReset.empty()) {
         ResetParameterToDefault(paramToReset);
-        // Si c'était un switch, on doit recompiler la variante
-        if (m_Parameters[paramToReset].Type == "StaticSwitchParameter") {
-            CompilePreviewShader();
-        }
+        if (m_Parameters[paramToReset].Type == "StaticSwitchParameter") needsRecompileAndEval = true;
+    }
+
+    if (needsRecompileAndEval) {
+        EvaluateParameterVisibility(); // Met à jour ce qui est visible ou caché
+        CompilePreviewShader();        // Recompile le Shader GLSL avec les nouveaux #defines
     }
 
     ImGui::EndChild();
@@ -369,42 +501,6 @@ void MaterialInstanceEditorPanel::Save() {
         
         if (OnMaterialInstanceSavedCallback) {
             OnMaterialInstanceSavedCallback(m_CurrentPath);
-        }
-    }
-}
-
-void MaterialInstanceEditorPanel::ResetParameterToDefault(const std::string& paramName) {
-    if (m_ParentMaterialPath.empty()) return;
-    std::filesystem::path fullParentPath = Project::GetProjectDirectory() / m_ParentMaterialPath;
-    std::ifstream file(fullParentPath);
-    if (!file.is_open()) return;
-
-    nlohmann::json data;
-    try { file >> data; } catch(...) { return; }
-
-    if (data.contains("Nodes")) {
-        for (auto& nodeJson : data["Nodes"]) {
-            if (nodeJson.contains("IsParameter") && nodeJson["IsParameter"].get<bool>()) {
-                if (nodeJson.value("ParameterName", "") == paramName) {
-                    auto& param = m_Parameters[paramName];
-                    if (param.Type == "Float") param.FloatVal = nodeJson.value("FloatValue", 0.0f);
-                    else if (param.Type == "Color") {
-                        auto col = nodeJson["ColorValue"];
-                        param.ColorVal = {col[0], col[1], col[2], col[3]};
-                    }
-                    else if (param.Type == "StaticSwitchParameter") param.BoolVal = nodeJson.value("BoolValue", false);
-                    else if (param.Type == "Texture2D") {
-                        param.TexturePath = nodeJson.value("TexturePath", "");
-                        if (!param.TexturePath.empty()) {
-                            std::filesystem::path fullTex = Project::GetProjectDirectory() / param.TexturePath;
-                            param.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
-                        } else {
-                            param.TextureID = 0;
-                        }
-                    }
-                    break;
-                }
-            }
         }
     }
 }

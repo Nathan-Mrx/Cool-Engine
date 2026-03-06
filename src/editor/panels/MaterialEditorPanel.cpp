@@ -598,6 +598,13 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                     if (ImGui::InputText("Name", buf, sizeof(buf))) {
                         node->ParameterName = buf; CompilePreviewShader();
                     }
+
+                    // --- NOUVEAU : INPUT POUR LA CATEGORIE ---
+                    char catBuf[128];
+                    strncpy(catBuf, node->ParameterCategory.c_str(), sizeof(catBuf));
+                    if (ImGui::InputText("Category", catBuf, sizeof(catBuf))) {
+                        node->ParameterCategory = catBuf;
+                    }
                 }
 
                 // --- NOUVEAU : LA VALEUR PAR DÉFAUT DU SWITCH ---
@@ -664,6 +671,7 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
 
         nodeJson["IsParameter"] = node.IsParameter;
         nodeJson["ParameterName"] = node.ParameterName;
+        nodeJson["ParameterCategory"] = node.ParameterCategory;
 
         for (auto& pin : node.Inputs) {
             nodeJson["Inputs"].push_back({
@@ -769,6 +777,7 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
 
                         if (nodeJson.contains("IsParameter")) node.IsParameter = nodeJson["IsParameter"].get<bool>();
                         if (nodeJson.contains("ParameterName")) node.ParameterName = nodeJson["ParameterName"].get<std::string>();
+                        if (nodeJson.contains("ParameterCategory")) node.ParameterCategory = nodeJson["ParameterCategory"].get<std::string>();
 
                         if (pinJson.contains("FloatValue")) pin.FloatValue = pinJson["FloatValue"].get<float>();
                         if (pinJson.contains("Vec2Value")) pin.Vec2Value = { pinJson["Vec2Value"][0], pinJson["Vec2Value"][1] };
