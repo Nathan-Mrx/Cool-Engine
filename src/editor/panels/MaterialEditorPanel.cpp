@@ -1289,7 +1289,8 @@ void MaterialEditorPanel::SaveAs() {
     nfdfilteritem_t filterItem[1] = { { "Cool Engine Material", "cemat" } };
 
     // On ouvre la fenêtre (Tu pourrais remplacer le premier nullptr par le dossier "Content" de ton projet)
-    if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, nullptr) == NFD_OKAY) {
+    if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, nullptr) == NFD_OKAY)
+    {
         std::filesystem::path filepath = outPath;
 
         // Sécurité : On force l'extension .cemat si l'utilisateur a oublié de l'écrire

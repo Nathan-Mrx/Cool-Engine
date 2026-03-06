@@ -3,8 +3,8 @@
 #include "../ecs/Components.h"
 #include "physics/PhysicsEngine.h"
 
-Scene::Scene() {}
-Scene::~Scene() {}
+Scene::Scene() = default;
+Scene::~Scene() = default;
 
 
 
@@ -28,13 +28,12 @@ void Scene::DestroyEntity(Entity entity) {
 
     // 1. Détacher l'entité de la hiérarchie (Réparer l'arbre)
     if (entity.HasComponent<RelationshipComponent>()) {
-        auto& rel = entity.GetComponent<RelationshipComponent>();
+        const auto& rel = entity.GetComponent<RelationshipComponent>();
 
         // Mettre à jour le parent pour qu'il "oublie" cet enfant
         if (rel.Parent != entt::null) {
             Entity parent{ rel.Parent, this };
-            auto& parentRel = parent.GetComponent<RelationshipComponent>();
-            if (parentRel.FirstChild == entity) {
+            if (auto& parentRel = parent.GetComponent<RelationshipComponent>(); parentRel.FirstChild == entity) {
                 parentRel.FirstChild = rel.NextSibling;
             }
         }
@@ -53,7 +52,7 @@ void Scene::DestroyEntity(Entity entity) {
         entt::entity childID = rel.FirstChild;
         while (childID != entt::null) {
             Entity child{ childID, this };
-            entt::entity nextSibling = child.GetComponent<RelationshipComponent>().NextSibling;
+            const entt::entity nextSibling = child.GetComponent<RelationshipComponent>().NextSibling;
             DestroyEntity(child); // Récursion mortelle
             childID = nextSibling;
         }
@@ -64,8 +63,7 @@ void Scene::DestroyEntity(Entity entity) {
 }
 
 void Scene::OnPhysicsStart() {
-    auto view = m_Registry.view<RigidBodyComponent, TransformComponent>();
-    for (auto entity : view) {
+    for (const auto view = m_Registry.view<RigidBodyComponent, TransformComponent>(); const auto entity : view) {
         auto [rb, transform] = view.get<RigidBodyComponent, TransformComponent>(entity);
 
         // On suppose que c'est une boîte si elle a un BoxColliderComponent
@@ -79,7 +77,7 @@ void Scene::OnPhysicsStart() {
                 transform.Location + bc.Offset,
                 transform.Rotation,
                 worldHalfExtents,
-                (int)rb.Type,
+                static_cast<int>(rb.Type),
                 rb.Mass
             );
         }

@@ -1,0 +1,51 @@
+---
+# Configuration Clang-Tidy pour Cool Engine
+# Basée sur CLion Default + CppCoreGuidelines + Performance + Modernize (Strict)
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  
+  # --- EXCLUSIONS (Trop verbeux ou non adaptés au Game Dev) ---
+  -cppcoreguidelines-avoid-magic-numbers,          # Les constantes mathématiques/couleurs sont partout
+  -readability-magic-numbers,                     # Idem
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic, # Nécessaire pour manipuler les buffers GPU/Physics
+  -cppcoreguidelines-pro-type-reinterpret-cast,    # Indispensable pour l'interop OpenGL/Void*
+  -cppcoreguidelines-pro-type-member-init,         # Parfois géré par l'ECS ou les constructeurs par défaut
+  -modernize-use-trailing-return-type,             # Trop bruyant (on préfère le style classique)
+  -readability-identifier-naming,                  # Conflit souvent avec les librairies externes (GLM, EnTT)
+  -readability-braces-around-statements,           # Question de style personnel
+  -readability-else-after-return,                  # Question de style personnel
+  -readability-function-cognitive-complexity,      # Trop strict pour les fonctions de rendu
+  -bugprone-easily-swappable-parameters,           # Trop de faux positifs sur les Vec3(x, y, z)
+  -modernize-pass-by-value,                        # Parfois contre-performant en C++ moderne
+  -readability-convert-member-functions-to-static  # Parfois on garde une fonction non-static pour l'API future
+
+# --- PARAMÈTRES SPÉCIFIQUES ---
+CheckOptions:
+  - key:             bugprone-argument-comment.StrictMode
+    value:           'true'
+  - key:             modernize-make-shared.MakeSmartPtrFunction
+    value:           'std::make_shared'
+  - key:             modernize-make-unique.MakeSmartPtrFunction
+    value:           'std::make_unique'
+  - key:             performance-for-range-copy.WarnOnAllAutoCopy
+    value:           'true'
+  - key:             readability-identifier-naming.VariableCase
+    value:           'camelCase'
+  - key:             readability-identifier-naming.FunctionCase
+    value:           'PascalCase' # Pour coller au style de ton moteur
+
+WarningsAsErrors: 'performance-*,bugprone-*,modernize-use-override'
+HeaderFilterRegex: 'src/.*'
+AnalyzeTemporaryDtors: false
+FormatValues:
+  Standard: 'c++20'
+...

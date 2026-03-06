@@ -1,11 +1,10 @@
 #pragma once
-#include <entt/entt.hpp>
 #include "Scene.h"
 
 class Entity {
 public:
     Entity() = default;
-    Entity(entt::entity handle, Scene* scene) : m_EntityHandle(handle), m_Scene(scene) {}
+    Entity(const entt::entity handle, Scene* scene) : m_EntityHandle(handle), m_Scene(scene) {}
 
     // Méthodes templates INDISPENSABLES dans le header
     template<typename T, typename... Args>
@@ -17,14 +16,15 @@ public:
     T& GetComponent() { return m_Scene->m_Registry.get<T>(m_EntityHandle); }
 
     template<typename T>
-    bool HasComponent() { return m_Scene->m_Registry.all_of<T>(m_EntityHandle); }
+    [[nodiscard]] bool HasComponent() const { return m_Scene->m_Registry.all_of<T>(m_EntityHandle); }
 
     template<typename T>
-    void RemoveComponent() {
+    void RemoveComponent() const
+    {
         m_Scene->m_Registry.remove<T>(m_EntityHandle);
     }
 
-    Scene* GetScene() const { return m_Scene; }
+    [[nodiscard]] Scene* GetScene() const { return m_Scene; }
 
     operator bool() const { return m_EntityHandle != entt::null; }
     operator entt::entity() const { return m_EntityHandle; }
