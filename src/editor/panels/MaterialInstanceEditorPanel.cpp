@@ -204,7 +204,7 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
             // 1. Textures des Paramètres d'Instance
             for (auto& [key, param] : m_Parameters) {
                 if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);
-                else if (param.Type == "Color") m_PreviewShader->SetVec3("u_" + key, param.ColorVal);
+                else if (param.Type == "Color") m_PreviewShader->SetVec4("u_" + key, param.ColorVal);
                 else if (param.Type == "Texture2D" && param.TextureID != 0) {
                     glActiveTexture(GL_TEXTURE0 + texSlot);
                     glBindTexture(GL_TEXTURE_2D, param.TextureID);
@@ -265,6 +265,8 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
         ImGui::EndDragDropTarget();
     }
     
+    std::string paramToReset = ""; // <-- On retient l'action pour après la boucle !
+
     ImGui::Spacing(); ImGui::Spacing();
     ImGui::TextDisabled("STATIC SWITCHES");
     ImGui::Separator();
@@ -272,9 +274,10 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
     for (auto& [key, param] : m_Parameters) {
         if (param.Type != "StaticSwitchParameter") continue;
         ImGui::PushID(key.c_str());
+
         if (ImGui::Checkbox("##override", &param.IsOverridden)) {
-            if (!param.IsOverridden) LoadParentParameters();
-            CompilePreviewShader(); // Obligatoire car ça change la compilation !
+            if (!param.IsOverridden) paramToReset = key; // On stocke l'action
+            CompilePreviewShader();
         }
         ImGui::SameLine(); ImGui::Text("%s", key.c_str());
 
@@ -282,6 +285,7 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
         ImGui::SameLine(150);
         if (ImGui::Checkbox("Value", &param.BoolVal)) CompilePreviewShader();
         if (!param.IsOverridden) ImGui::EndDisabled();
+
         ImGui::PopID();
     }
 
@@ -291,17 +295,15 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
 
     for (auto& [key, param] : m_Parameters) {
         if (param.Type == "StaticSwitchParameter") continue;
+
         ImGui::PushID(key.c_str());
-        
-        // La case à cocher Unreal Engine Style !
         if (ImGui::Checkbox("##override", &param.IsOverridden)) {
-            if (!param.IsOverridden) LoadParentParameters(); // Reset à la valeur par défaut
+            if (!param.IsOverridden) paramToReset = key; // On stocke l'action
         }
-        ImGui::SameLine();
-        ImGui::Text("%s", key.c_str());
-        
+        ImGui::SameLine(); ImGui::Text("%s", key.c_str());
+
         if (!param.IsOverridden) ImGui::BeginDisabled();
-        
+
         ImGui::PushItemWidth(-1);
         if (param.Type == "Float") {
             ImGui::DragFloat("##f", &param.FloatVal, 0.01f);
@@ -309,7 +311,7 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
             ImGui::ColorEdit4("##c", glm::value_ptr(param.ColorVal));
         } else if (param.Type == "Texture2D") {
             std::string btnText = param.TexturePath.empty() ? "Drop Texture Here" : std::filesystem::path(param.TexturePath).filename().string();
-            ImGui::Button(btnText.c_str(), ImVec2(-1, 24)); // Bouton qui prend toute la largeur
+            ImGui::Button(btnText.c_str(), ImVec2(-1, 24));
 
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
@@ -323,11 +325,19 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
             }
         }
         ImGui::PopItemWidth();
-        
+
         if (!param.IsOverridden) ImGui::EndDisabled();
-        
         ImGui::PopID();
-        ImGui::Spacing();
+    }
+
+    // --- LE FIX ANTI-CRASH EST LÀ ---
+    // On effectue le rechargement en dehors de la boucle !
+    if (!paramToReset.empty()) {
+        ResetParameterToDefault(paramToReset);
+        // Si c'était un switch, on doit recompiler la variante
+        if (m_Parameters[paramToReset].Type == "StaticSwitchParameter") {
+            CompilePreviewShader();
+        }
     }
 
     ImGui::EndChild();
@@ -359,6 +369,42 @@ void MaterialInstanceEditorPanel::Save() {
         
         if (OnMaterialInstanceSavedCallback) {
             OnMaterialInstanceSavedCallback(m_CurrentPath);
+        }
+    }
+}
+
+void MaterialInstanceEditorPanel::ResetParameterToDefault(const std::string& paramName) {
+    if (m_ParentMaterialPath.empty()) return;
+    std::filesystem::path fullParentPath = Project::GetProjectDirectory() / m_ParentMaterialPath;
+    std::ifstream file(fullParentPath);
+    if (!file.is_open()) return;
+
+    nlohmann::json data;
+    try { file >> data; } catch(...) { return; }
+
+    if (data.contains("Nodes")) {
+        for (auto& nodeJson : data["Nodes"]) {
+            if (nodeJson.contains("IsParameter") && nodeJson["IsParameter"].get<bool>()) {
+                if (nodeJson.value("ParameterName", "") == paramName) {
+                    auto& param = m_Parameters[paramName];
+                    if (param.Type == "Float") param.FloatVal = nodeJson.value("FloatValue", 0.0f);
+                    else if (param.Type == "Color") {
+                        auto col = nodeJson["ColorValue"];
+                        param.ColorVal = {col[0], col[1], col[2], col[3]};
+                    }
+                    else if (param.Type == "StaticSwitchParameter") param.BoolVal = nodeJson.value("BoolValue", false);
+                    else if (param.Type == "Texture2D") {
+                        param.TexturePath = nodeJson.value("TexturePath", "");
+                        if (!param.TexturePath.empty()) {
+                            std::filesystem::path fullTex = Project::GetProjectDirectory() / param.TexturePath;
+                            param.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
+                        } else {
+                            param.TextureID = 0;
+                        }
+                    }
+                    break;
+                }
+            }
         }
     }
 }

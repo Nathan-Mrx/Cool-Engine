@@ -90,6 +90,12 @@ void Shader::SetVec3(const std::string& name, const glm::vec3& value) const {
     glUniform3fv(glGetUniformLocation(ID, name.c_str()), 1, &value[0]);
 }
 
+void Shader::SetVec4(const std::string& name, const glm::vec4& value) const {
+    GLint location = glGetUniformLocation(ID, name.c_str());
+    // L'erreur classique est d'avoir glUniform3f ici au lieu de 4f !
+    glUniform4f(location, value.x, value.y, value.z, value.w);
+}
+
 void Shader::SetMat4(const std::string& name, const glm::mat4& mat) const {
     glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, glm::value_ptr(mat));
 }

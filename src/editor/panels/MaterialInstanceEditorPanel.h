@@ -45,6 +45,8 @@ private:
     void LoadParentParameters();
     void CompilePreviewShader();
 
+    void ResetParameterToDefault(const std::string& paramName);
+
 private:
     std::filesystem::path m_CurrentPath;
     std::string m_ParentMaterialPath = "";
