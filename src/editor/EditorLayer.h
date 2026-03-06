@@ -154,4 +154,6 @@ private:
     bool m_ShowMaterialEditor = false;
 
     bool m_ShowProjectSettings = false;
+
+    bool m_ProjectLoadedState = false;
 };

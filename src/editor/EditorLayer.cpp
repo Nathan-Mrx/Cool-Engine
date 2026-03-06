@@ -189,12 +189,17 @@ void EditorLayer::UpdateEditor(float deltaTime) {
         float speed = 1000.0f * deltaTime;
         if (Input::IsKeyPressed(GLFW_KEY_LEFT_SHIFT)) speed *= 3.0f;
 
-        if (Input::IsKeyPressed(GLFW_KEY_W)) m_EditorCamera.Position += speed * m_EditorCamera.Front;
-        if (Input::IsKeyPressed(GLFW_KEY_S)) m_EditorCamera.Position -= speed * m_EditorCamera.Front;
-        if (Input::IsKeyPressed(GLFW_KEY_A)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
-        if (Input::IsKeyPressed(GLFW_KEY_D)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
-        if (Input::IsKeyPressed(GLFW_KEY_Q)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
-        if (Input::IsKeyPressed(GLFW_KEY_E)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
+        bool isCtrlPressed = Input::IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || Input::IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
+
+        if (!isCtrlPressed)
+        {
+            if (Input::IsKeyPressed(GLFW_KEY_W)) m_EditorCamera.Position += speed * m_EditorCamera.Front;
+            if (Input::IsKeyPressed(GLFW_KEY_S)) m_EditorCamera.Position -= speed * m_EditorCamera.Front;
+            if (Input::IsKeyPressed(GLFW_KEY_A)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
+            if (Input::IsKeyPressed(GLFW_KEY_D)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
+            if (Input::IsKeyPressed(GLFW_KEY_Q)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
+            if (Input::IsKeyPressed(GLFW_KEY_E)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
+        }
 
         glm::vec2 mousePos = Input::GetMousePosition();
         glm::vec2 delta = (mousePos - m_LastMousePosition) * 0.2f;
@@ -239,11 +244,30 @@ void EditorLayer::ResizeViewportIfNeeded() {
 
 void EditorLayer::OnImGuiRender() {
     if (!Project::GetActive()) {
+        m_ProjectLoadedState = false;
         m_HubPanel.OnImGuiRender();
         return;
     }
 
+    // --- LE FIX : Actions à exécuter au moment où le projet s'ouvre ---
+    if (!m_ProjectLoadedState) {
+        m_ProjectLoadedState = true;
+
+        // Option A : Créer une scène vide par défaut
+        NewScene();
+
+        // Option B (Si tu préfères charger une scène précise de ton projet, décommente ceci à la place) :
+        /*
+        std::filesystem::path defaultScene = Project::GetContentDirectory() / "Scenes/Default.cescene";
+        if (std::filesystem::exists(defaultScene)) OpenScene(defaultScene);
+        else NewScene();
+        */
+    }
+
     BeginDockspace();
+
+    HandleShortcuts();
+
     DrawMenuBar();
 
     // 1. La Fenêtre qui contient la barre d'onglets (Le "Master Panel" des onglets)
@@ -731,6 +755,10 @@ void EditorLayer::DrawViewportWindow() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
     ImGui::Begin("Viewport");
 
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        ImGui::SetWindowFocus();
+    }
+
     m_ViewportFocused = ImGui::IsWindowFocused();
     m_ViewportHovered = ImGui::IsWindowHovered();
 
@@ -831,6 +859,52 @@ void EditorLayer::DrawGizmos() {
             tc.Location = translation;
             tc.Rotation = rotation;
             tc.Scale = scale;
+        }
+    }
+}
+
+// =========================================================================================
+// GESTION DES RACCOURCIS ET ACTIONS GLOBALES
+// =========================================================================================
+
+void EditorLayer::NewScene() {
+    auto newScene = std::make_shared<Scene>();
+    m_Tabs.push_back({ "New Scene", "", TabType::Scene, newScene, nullptr });
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ForceTabSelection = true;
+
+    m_ActiveScene = newScene;
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+}
+
+void EditorLayer::HandleShortcuts() {
+    // Si l'utilisateur est en train de taper du texte (ex: renommer une entité), on ignore les raccourcis !
+    if (ImGui::GetIO().WantTextInput) return;
+
+    bool ctrl = ImGui::GetIO().KeyCtrl;
+    bool shift = ImGui::GetIO().KeyShift;
+
+    // --- Sauvegarde (Ctrl + S) ---
+    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        bool hasCustomEditor = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr;
+        if (hasCustomEditor) m_Tabs[m_ActiveTabIndex].CustomEditor->Save();
+        else SaveScene();
+    }
+    // --- Sauvegarder sous (Ctrl + Shift + S) ---
+    else if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        SaveSceneAs();
+    }
+    // --- Nouvelle Scène (Ctrl + N) ---
+    else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        NewScene();
+    }
+    // --- Ouvrir Scène (Ctrl + O) ---
+    else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+        nfdchar_t* outPath = nullptr;
+        nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+        if (NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
+            OpenScene(outPath);
+            NFD::FreePath(outPath);
         }
     }
 }
