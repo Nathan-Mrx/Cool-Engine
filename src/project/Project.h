@@ -28,6 +28,7 @@ public:
     static const std::filesystem::path& GetContentDirectory() { return s_ActiveProject->m_Config.ContentDirectory; }
     static const std::filesystem::path& GetConfigDirectory()  { return s_ActiveProject->m_Config.ConfigDirectory; }
     static const std::filesystem::path& GetBinariesDirectory() { return s_ActiveProject->m_Config.BinariesDirectory; }
+    static std::filesystem::path GetCacheDirectory() { return s_ActiveProject->m_Config.ProjectDirectory / ".ce_cache"; }
 
     static const std::string& GetProjectName() { return s_ActiveProject->m_Config.Name; }
     static const std::string& GetProjectVersion() { return s_ActiveProject->m_Config.Version; }

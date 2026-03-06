@@ -14,6 +14,7 @@
 #include <nfd.hpp>
 
 #include "editor/materials/MaterialNodeRegistry.h"
+#include "project/Project.h"
 
 static void DrawPinIcon(PinType type, bool connected) {
     ImVec2 size(24, 14); // Plus large pour la marge
@@ -1023,16 +1024,20 @@ void MaterialEditorPanel::CompilePreviewShader() {
     std::string fragCode = CompileMaterial();
     if (fragCode.empty()) return;
 
-    // On s'assure que le dossier cache existe
-    std::filesystem::create_directories(".ce_cache");
-    std::string tempPath = ".ce_cache/preview_material.frag";
+    // --- On utilise l'architecture de projet officielle ! ---
+    std::filesystem::path cacheDir = Project::GetCacheDirectory();
+    if (!std::filesystem::exists(cacheDir)) {
+        std::filesystem::create_directories(cacheDir);
+    }
+
+    std::filesystem::path tempPath = cacheDir / "preview_material.frag";
 
     std::ofstream out(tempPath);
     out << fragCode;
     out.close();
 
     // On génère le shader live !
-    m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.c_str());
+    m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.string().c_str());
 }
 
 void MaterialEditorPanel::UpdateWildcardPins() {

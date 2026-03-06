@@ -20,6 +20,7 @@ void Project::New(const std::string& name, const std::filesystem::path& path) {
         std::filesystem::create_directories(projectFolder / "Config");
         std::filesystem::create_directories(projectFolder / "Source");
         std::filesystem::create_directories(projectFolder / "Binaries");
+        std::filesystem::create_directories(projectFolder / ".ce-cache");
 
         // On force la résolution du chemin absolu basé sur le répertoire d'exécution (cmake-build-debug)
         std::filesystem::path engineIniPath = std::filesystem::current_path() / "imgui.ini";

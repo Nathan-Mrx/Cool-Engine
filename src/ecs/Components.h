@@ -19,6 +19,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "core/UUID.h"
+#include "project/Project.h"
 #include "renderer/Shader.h"
 #include "renderer/TextureLoader.h"
 #include "scene/ScriptableNode.h"
@@ -313,12 +314,24 @@ struct MaterialComponent {
 
         if (data.contains("GeneratedGLSL")) {
             std::string glsl = data["GeneratedGLSL"].get<std::string>();
-            std::string fragPath = path + ".frag";
+
+            // --- LE FIX : On crée le fichier dans le dossier .ce_cache ! ---
+            std::filesystem::path cacheDir = Project::GetCacheDirectory();
+            if (!std::filesystem::exists(cacheDir)) {
+                std::filesystem::create_directories(cacheDir); // Crée le dossier s'il manque
+            }
+
+            // On récupère juste le nom du fichier sans l'extension (ex: "MonMat" depuis "MonMat.cemat")
+            std::filesystem::path cematPath = path;
+            std::string fragName = cematPath.filename().stem().string() + ".frag";
+            std::filesystem::path fragPath = cacheDir / fragName;
+
             std::ofstream outFrag(fragPath);
             outFrag << glsl;
             outFrag.close();
 
-            ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.c_str());
+            // On compile le shader depuis son nouvel emplacement
+            ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
         }
 
         // --- NOUVEAU : ON LIT LE JSON POUR CHARGER LES IMAGES ---
