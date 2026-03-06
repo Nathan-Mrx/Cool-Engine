@@ -4,6 +4,9 @@
 #include <nfd.hpp>
 #include "renderer/TextureLoader.h"
 
+// =========================================================================================
+// ENTRY POINT DU RENDU UI
+// =========================================================================================
 void HubPanel::OnImGuiRender() {
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -12,111 +15,149 @@ void HubPanel::OnImGuiRender() {
     ImGuiWindowFlags hubFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar;
     ImGui::Begin("Cool Engine - Hub", nullptr, hubFlags);
 
-    // --- LOGIQUE DE POPUP ---
-    bool triggerNewProject = false; // Flag pour déclencher l'ouverture
+    bool triggerNewProject = false;
 
-    // Header (Logique de police conservée)
-    auto& fonts = ImGui::GetIO().Fonts->Fonts;
-    bool pushed = false;
-    if (fonts.Size > 1) { ImGui::PushFont(fonts[1]); pushed = true; }
-    else { ImGui::SetWindowFontScale(1.5f); }
+    DrawHeader();
 
-    ImGui::Text("COOL ENGINE");
-
-    if (pushed) { ImGui::PopFont(); }
-    else { ImGui::SetWindowFontScale(1.0f); }
-
-    ImGui::Separator();
     ImGui::Spacing();
 
-    if (ImGui::BeginTable("MainLayout", 2, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Recents", ImGuiTableColumnFlags_WidthFixed, 550.0f);
-        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableNextRow();
+    if (ImGui::BeginTable("MainLayout", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+        // --- COLONNE GAUCHE (Actions) ---
         ImGui::TableNextColumn();
+        DrawLeftColumn(triggerNewProject);
 
-        // --- COLONNE GAUCHE : GRILLE DE PROJETS ---
-        ImGui::TextDisabled("RECENT PROJECTS");
-        ImGui::BeginChild("RecentProjectsArea", ImVec2(0, 0), true);
-
-        // Validation unique au démarrage sur CachyOS
-        static bool firstFrame = true;
-        if (firstFrame) { Project::ValidateRecentProjects(); firstFrame = false; }
-
-        auto recents = Project::GetRecentProjects();
-        float cardWidth = 160.0f;
-
-        if (ImGui::BeginTable("ProjectGrid", 3)) {
-            for (const auto& path : recents) {
-                ImGui::TableNextColumn();
-                ImGui::PushID(path.string().c_str());
-
-                ImGui::BeginGroup(); // On groupe l'image et le texte pour le clic droit
-
-                ImTextureID texID = (ImTextureID)(uintptr_t)GetThumbnailTexture(path);
-                if (ImGui::ImageButton("##thumb", texID, ImVec2(cardWidth, cardWidth * 0.56f), ImVec2(0, 1), ImVec2(1, 0))) {
-                    // --- LE FIX : On utilise LoadAsync au lieu de Load ---
-                    Project::LoadAsync(path);
-                }
-
-                ImGui::TextWrapped("%s", path.stem().string().c_str());
-
-                ImGui::EndGroup(); // Fin du groupe "Card"
-
-                // --- LE FIX : MENU CONTEXTUEL CLIC DROIT ---
-                // S'applique au groupe (Image + Texte)
-                if (ImGui::BeginPopupContextItem("ProjectCardMenu")) {
-                    if (ImGui::MenuItem("Forget Project")) {
-                        Project::RemoveFromHistory(path);
-
-                        // OPTIONNEL : Nettoyer aussi la texture du cache pour libérer de la VRAM
-                        if (m_ThumbnailCache.count(path)) {
-                            // glDeleteTextures(1, &m_ThumbnailCache[path]); // Si tu veux être très propre
-                            m_ThumbnailCache.erase(path);
-                        }
-                    }
-                    ImGui::EndPopup();
-                }
-
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", path.string().c_str());
-
-                ImGui::PopID();
-                ImGui::Spacing();
-            }
-            ImGui::EndTable();
-        }
-        ImGui::EndChild();
-
-        // --- COLONNE DROITE : BOUTONS D'ACTION ---
+        // --- COLONNE DROITE (Projets Récents) ---
         ImGui::TableNextColumn();
-        ImGui::Spacing();
-
-        if (ImGui::Button("Open Project...", ImVec2(-1, 40))) {
-            nfdchar_t* outPath = nullptr;
-            if (NFD::OpenDialog(outPath, nullptr, 0, nullptr) == NFD_OKAY) {
-                // --- LE FIX : On utilise LoadAsync ici aussi ---
-                Project::LoadAsync(outPath);
-                NFD::FreePath(outPath);
-            }
-        }
-
-        // Le bouton "joli" utilise maintenant le flag
-        if (ImGui::Button("New Project...", ImVec2(-1, 40))) {
-            triggerNewProject = true;
-        }
+        DrawRightColumn();
 
         ImGui::EndTable();
     }
 
-    // --- LE DEUXIÈME BOUTON A ÉTÉ SUPPRIMÉ ---
+    DrawNewProjectModal(triggerNewProject);
 
-    // --- DÉCLENCHEMENT DU POPUP À LA RACINE ---
+    ImGui::End();
+}
+
+// =========================================================================================
+// 1. EN-TÊTE
+// =========================================================================================
+void HubPanel::DrawHeader() {
+    auto& fonts = ImGui::GetIO().Fonts->Fonts;
+    bool pushed = false;
+    if (fonts.Size > 1) {
+        ImGui::PushFont(fonts[1]);
+        pushed = true;
+    } else {
+        ImGui::SetWindowFontScale(1.5f);
+    }
+
+    ImGui::Text("COOL ENGINE");
+
+    if (pushed) {
+        ImGui::PopFont();
+    } else {
+        ImGui::SetWindowFontScale(1.0f);
+    }
+
+    ImGui::Separator();
+}
+
+// =========================================================================================
+// 2. COLONNE GAUCHE (Boutons d'Action)
+// =========================================================================================
+void HubPanel::DrawLeftColumn(bool& triggerNewProject) {
+    ImGui::TextDisabled("Actions");
+    ImGui::Spacing();
+
+    if (ImGui::Button("New Project", ImVec2(-1, 40))) {
+        triggerNewProject = true;
+    }
+
+    ImGui::Spacing();
+
+    if (ImGui::Button("Open Project", ImVec2(-1, 40))) {
+        nfdchar_t* outPath = nullptr;
+        nfdfilteritem_t filterItem[1] = { { "Cool Engine Project", "ceproj" } };
+
+        if (NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
+            Project::Load(outPath);
+            NFD::FreePath(outPath);
+        }
+    }
+}
+
+// =========================================================================================
+// 3. COLONNE DROITE (Liste des Projets Récents)
+// =========================================================================================
+void HubPanel::DrawRightColumn() {
+    ImGui::TextDisabled("Recent Projects");
+    ImGui::Spacing();
+
+    if (ImGui::BeginChild("RecentProjectsList", ImVec2(0, 0), true)) {
+        std::vector<std::filesystem::path> recents = Project::GetRecentProjects();
+        float thumbnailSize = 64.0f;
+
+        if (recents.empty()) {
+            ImGui::TextDisabled("No recent projects found.");
+        } else {
+            for (const auto& path : recents) {
+                DrawRecentProjectItem(path, thumbnailSize);
+            }
+        }
+    }
+    ImGui::EndChild();
+}
+
+void HubPanel::DrawRecentProjectItem(const std::filesystem::path& projectPath, float thumbnailSize) {
+    ImGui::PushID(projectPath.string().c_str());
+
+    // Utilisation d'un bouton invisible pour capturer les clics sur toute la ligne
+    ImVec2 rowSize = ImVec2(ImGui::GetContentRegionAvail().x, thumbnailSize + 10);
+    ImGui::InvisibleButton("##RowBtn", rowSize);
+
+    bool isHovered = ImGui::IsItemHovered();
+    bool isClicked = ImGui::IsItemClicked();
+
+    if (isHovered) {
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImColor(50, 50, 50, 255));
+    }
+
+    // --- On remonte le curseur pour dessiner PAR DESSUS le bouton invisible ---
+    ImGui::SetCursorPos(ImVec2(ImGui::GetItemRectMin().x - ImGui::GetWindowPos().x + ImGui::GetScrollX(), ImGui::GetItemRectMin().y - ImGui::GetWindowPos().y + ImGui::GetScrollY() + 5));
+
+    // Thumbnail
+    uint32_t texID = GetThumbnailTexture(projectPath);
+    if (texID != 0) {
+        ImGui::Image((ImTextureID)(uintptr_t)texID, ImVec2(thumbnailSize, thumbnailSize), ImVec2(0, 1), ImVec2(1, 0));
+    } else {
+        ImGui::Button("NO\\nIMG", ImVec2(thumbnailSize, thumbnailSize));
+    }
+
+    // Textes
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
+    ImGui::Text("%s", projectPath.stem().string().c_str());
+    ImGui::TextDisabled("%s", projectPath.string().c_str());
+    ImGui::EndGroup();
+
+    // Action d'ouverture
+    if (isClicked) {
+        Project::Load(projectPath);
+    }
+
+    ImGui::PopID();
+}
+
+// =========================================================================================
+// 4. MODAL NOUVEAU PROJET
+// =========================================================================================
+void HubPanel::DrawNewProjectModal(bool& triggerNewProject) {
     if (triggerNewProject) {
         ImGui::OpenPopup("NewProjectPopup");
     }
 
-    // Définition du Modal
     if (ImGui::BeginPopupModal("NewProjectPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         static char projectName[256] = "MyNewProject";
         ImGui::Text("Project Name:");
@@ -133,13 +174,12 @@ void HubPanel::OnImGuiRender() {
             }
         }
         ImGui::SameLine();
+
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
-
-    ImGui::End();
 }
 
 uint32_t HubPanel::GetThumbnailTexture(const std::filesystem::path& path) {
