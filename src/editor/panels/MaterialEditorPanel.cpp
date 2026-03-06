@@ -1096,8 +1096,9 @@ void MaterialEditorPanel::CompilePreviewShader() {
 
 void MaterialEditorPanel::UpdateWildcardPins() {
     for (auto& node : m_Nodes) {
-        if (node.Name == "Multiply" || node.Name == "Add" || node.Name == "Subtract" ||
-            node.Name == "Mix" || node.Name == "Clamp" || node.Name == "Pow" || node.Name == "Reroute") {
+        // On demande au registre si ce type de noeud est un Wildcard
+        auto it = MaterialNodeRegistry::GetRegistry().find(node.Name);
+        if (it != MaterialNodeRegistry::GetRegistry().end() && it->second->IsWildcard()) {
 
             PinType highest = PinType::Float;
             for (auto& input : node.Inputs) {
@@ -1117,6 +1118,6 @@ void MaterialEditorPanel::UpdateWildcardPins() {
             for (auto& output : node.Outputs) {
                 output.Type = highest;
             }
-            }
+        }
     }
 }

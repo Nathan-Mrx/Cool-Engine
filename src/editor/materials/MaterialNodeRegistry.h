@@ -24,6 +24,9 @@ public:
     virtual std::string GetCategory() const { return "General"; }
     virtual ImColor GetColor() const { return ImColor(45, 55, 65, 255); }
 
+    // --- NOUVEAU : Dit au moteur si ce noeud adapte son type dynamiquement ---
+    virtual bool IsWildcard() const { return false; }
+
     virtual void Initialize(MaterialNode& node, int& nextId) const = 0;
 
     // --- LA NOUVELLE MAGIE DE COMPILATION ---
