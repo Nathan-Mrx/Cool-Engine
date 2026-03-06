@@ -1171,9 +1171,35 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
     auto newMIPanel = std::make_shared<MaterialInstanceEditorPanel>();
     newMIPanel->Load(path);
 
-    // TODO: Ajouter le Hot Reload Callback pour la scène ici (comme pour le Material)
+    // --- LE HOT RELOAD POUR LES INSTANCES ---
+    newMIPanel->OnMaterialInstanceSavedCallback = [this](const std::filesystem::path& savedPath) {
+        if (!m_ActiveScene) return;
 
-    // 3. On ajoute l'onglet (On triche en disant que c'est un TabType::Material pour que le système d'UI CustomEditor s'en charge)
+        // On parcourt TOUTES les entités de la scène qui ont un composant Matériau
+        auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
+        for (auto entityID : view) {
+            auto& mat = view.get<MaterialComponent>(entityID);
+
+            // Si l'entité utilise l'instance qu'on vient de sauvegarder...
+            if (mat.AssetPath == savedPath.string()) {
+                // On force le rechargement depuis le disque !
+                mat.SetAndCompile(savedPath.string());
+                std::cout << "[Editor] Hot-Reloaded Material Instance for Entity ID: " << (uint32_t)entityID << std::endl;
+            }
+        }
+    };
+
+    newMIPanel->OnPathChangedCallback = [this, newMIPanel](const std::filesystem::path& newPath) {
+        for (auto& tab : m_Tabs) {
+            if (tab.CustomEditor == newMIPanel) {
+                tab.Filepath = newPath;
+                tab.Name = newPath.filename().string();
+                break;
+            }
+        }
+    };
+
+    // 3. On ajoute l'onglet
     m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMIPanel });
 
     m_ActiveTabIndex = m_Tabs.size() - 1;
