@@ -3,6 +3,8 @@
 #include "../../scene/Entity.h"
 #include <memory>
 
+#include "editor/materials/MaterialNodeRegistry.h"
+
 class SceneHierarchyPanel {
 public:
     SceneHierarchyPanel() = default;
@@ -20,9 +22,23 @@ public:
     void SetIsPrefabScene(bool isPrefab) { m_IsPrefabScene = isPrefab; }
 
 private:
-    void DrawEntityNode(Entity entity);
-    void DrawComponents(Entity entity);
+    // --- NOUVELLES SOUS-FONCTIONS DE RENDU (Refactoring) ---
+    void DrawHierarchyWindow();
+    void DrawInspectorWindow();
 
+    // -- Logique Hierarchy --
+    void HandleHierarchyShortcuts();
+    void HandleHierarchyEmptySpaceDragDrop();
+    void DrawHierarchyContextMenu();
+    void DrawEntityNode(Entity entity);
+
+    // -- Logique Entity Node (Intérieur de la boucle) --
+    bool DrawEntityNodeRenaming(Entity entity, ImGuiTreeNodeFlags flags, uint32_t entityID);
+    void DrawEntityNodeContextMenu(Entity entity, bool hasScript, bool isPrefab);
+    void HandleEntityNodeDragDrop(Entity entity);
+
+    // -- Logique Inspector --
+    void DrawComponents(Entity entity);
     void DrawMiniHierarchy(Entity node);
 
 private:

@@ -57,25 +57,39 @@ void DrawAddComponentEntry(Entity entity) {
     }
 }
 
+// =========================================================================================
+// ENTRY POINT DU RENDU UI
+// =========================================================================================
 void SceneHierarchyPanel::OnImGuiRender() {
+    DrawHierarchyWindow();
+    DrawInspectorWindow();
+
+    // Traitement de la destruction en fin de frame pour ne pas casser les itérateurs ImGui/EnTT
+    if (m_EntityToDestroy) {
+        m_Context->DestroyEntity(m_EntityToDestroy);
+        if (m_SelectionContext == m_EntityToDestroy) m_SelectionContext = {};
+        m_EntityToDestroy = {};
+    }
+}
+
+// =========================================================================================
+// 1. FENÊTRE HIÉRARCHIE (Liste des entités)
+// =========================================================================================
+void SceneHierarchyPanel::DrawHierarchyWindow() {
     ImGui::Begin("Scene Hierarchy");
 
-    if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2) && m_SelectionContext) {
-        m_IsRenaming = true;
-        m_RenamingEntity = m_SelectionContext;
-        snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", m_SelectionContext.GetComponent<TagComponent>().Tag.c_str());
-    }
+    HandleHierarchyShortcuts();
 
-    // On utilise une vue simple pour l'itération
+    // Rendu de l'arbre des entités
     auto view = m_Context->m_Registry.view<TagComponent>();
     for (auto entityID : view) {
         Entity entity{ entityID, m_Context.get() };
 
-        // Est-ce un objet racine ?
+        // N'afficher que les objets racine (les enfants sont gérés récursivement)
         bool isRoot = true;
         if (entity.HasComponent<RelationshipComponent>()) {
             if (entity.GetComponent<RelationshipComponent>().Parent != entt::null) {
-                isRoot = false; // Il a un parent, on ne le dessine pas ici !
+                isRoot = false;
             }
         }
 
@@ -84,8 +98,22 @@ void SceneHierarchyPanel::OnImGuiRender() {
         }
     }
 
-    // --- DRAG & DROP : Instancier un Prefab À LA RACINE ---
-    // On crée une zone invisible qui prend tout le reste de la fenêtre
+    HandleHierarchyEmptySpaceDragDrop();
+    DrawHierarchyContextMenu();
+
+    ImGui::End();
+}
+
+void SceneHierarchyPanel::HandleHierarchyShortcuts() {
+    if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2) && m_SelectionContext) {
+        m_IsRenaming = true;
+        m_RenamingEntity = m_SelectionContext;
+        snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", m_SelectionContext.GetComponent<TagComponent>().Tag.c_str());
+    }
+}
+
+void SceneHierarchyPanel::HandleHierarchyEmptySpaceDragDrop() {
+    // Zone invisible prenant tout le reste de la fenêtre pour accepter les drops
     ImGui::Dummy(ImGui::GetContentRegionAvail());
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
@@ -97,11 +125,11 @@ void SceneHierarchyPanel::OnImGuiRender() {
         }
         ImGui::EndDragDropTarget();
     }
+}
 
-    // Le clic droit dans le vide de la hiérarchie
+void SceneHierarchyPanel::DrawHierarchyContextMenu() {
     if (ImGui::BeginPopupContextWindow("SceneHierarchyContextWindow", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
 
-        // --- LAMBDA MAGIQUE : Parentage automatique pour les Prefabs ---
         auto autoParentToPrefabRoot = [&](Entity newEntity) {
             if (m_IsPrefabScene) {
                 Entity root = {};
@@ -110,7 +138,7 @@ void SceneHierarchyPanel::OnImGuiRender() {
                     Entity e{ entityID, m_Context.get() };
                     if (e != newEntity && (!e.HasComponent<RelationshipComponent>() || e.GetComponent<RelationshipComponent>().Parent == entt::null)) {
                         root = e;
-                        break; // On a trouvé la racine, on arrête de chercher !
+                        break;
                     }
                 }
                 if (root) m_Context->ParentEntity(newEntity, root);
@@ -124,7 +152,6 @@ void SceneHierarchyPanel::OnImGuiRender() {
 
         ImGui::Separator();
 
-        // --- Sous-menu pour les primitives 3D ---
         if (ImGui::BeginMenu("3D Object")) {
             if (ImGui::MenuItem("Cube")) {
                 auto newEntity = m_Context->CreateEntity("Cube");
@@ -133,7 +160,7 @@ void SceneHierarchyPanel::OnImGuiRender() {
                 auto& mesh = newEntity.AddComponent<MeshComponent>();
                 mesh.MeshData = PrimitiveFactory::CreateCube();
                 mesh.AssetPath = "Primitive::Cube";
-                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
+                autoParentToPrefabRoot(newEntity);
             }
             if (ImGui::MenuItem("Sphere")) {
                 auto newEntity = m_Context->CreateEntity("Sphere");
@@ -142,7 +169,7 @@ void SceneHierarchyPanel::OnImGuiRender() {
                 auto& mesh = newEntity.AddComponent<MeshComponent>();
                 mesh.MeshData = PrimitiveFactory::CreateSphere();
                 mesh.AssetPath = "Primitive::Sphere";
-                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
+                autoParentToPrefabRoot(newEntity);
             }
             if (ImGui::MenuItem("Plane")) {
                 auto newEntity = m_Context->CreateEntity("Plane");
@@ -151,7 +178,7 @@ void SceneHierarchyPanel::OnImGuiRender() {
                 auto& mesh = newEntity.AddComponent<MeshComponent>();
                 mesh.MeshData = PrimitiveFactory::CreatePlane();
                 mesh.AssetPath = "Primitive::Plane";
-                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
+                autoParentToPrefabRoot(newEntity);
             }
             ImGui::EndMenu();
         }
@@ -161,7 +188,7 @@ void SceneHierarchyPanel::OnImGuiRender() {
         if (ImGui::MenuItem("Camera")) {
             auto newEntity = m_Context->CreateEntity("Camera");
             newEntity.AddComponent<CameraComponent>();
-            autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
+            autoParentToPrefabRoot(newEntity);
         }
 
         if (ImGui::BeginMenu("Light")) {
@@ -169,28 +196,152 @@ void SceneHierarchyPanel::OnImGuiRender() {
                 auto newEntity = m_Context->CreateEntity("Directional Light");
                 if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
                 newEntity.AddComponent<DirectionalLightComponent>();
-                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
+                autoParentToPrefabRoot(newEntity);
             }
             if (ImGui::MenuItem("Point Light")) {
                 auto newEntity = m_Context->CreateEntity("Point Light");
-                autoParentToPrefabRoot(newEntity); // <-- Sécurisé !
+                autoParentToPrefabRoot(newEntity);
             }
             ImGui::EndMenu();
         }
 
         ImGui::EndPopup();
     }
-    ImGui::End();
+}
 
-    if (m_EntityToDestroy) {
-        m_Context->DestroyEntity(m_EntityToDestroy);
-        if (m_SelectionContext == m_EntityToDestroy) m_SelectionContext = {};
-        m_EntityToDestroy = {};
+// =========================================================================================
+// LOGIQUE D'UN NOEUD (Entité)
+// =========================================================================================
+void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
+    uint32_t entityID = (uint32_t)(entt::entity)entity;
+    ImGui::PushID(entityID);
+
+    auto& tag = entity.GetComponent<TagComponent>().Tag;
+    bool hasScript = entity.HasComponent<NativeScriptComponent>();
+    bool isPrefab = entity.HasComponent<PrefabComponent>();
+    bool hasChildren = entity.HasComponent<RelationshipComponent>() && entity.GetComponent<RelationshipComponent>().FirstChild != entt::null;
+
+    bool isSelected = (m_SelectionContext == entity) || (GetPrefabRoot(m_SelectionContext) == entity);
+    ImGuiTreeNodeFlags flags = (isSelected ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+    if (isPrefab || !hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
+
+    if (isPrefab) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
+
+    bool opened = false;
+
+    // Gestion de l'affichage (Input Text vs Texte Classique)
+    if (m_IsRenaming && m_RenamingEntity == entity) {
+        opened = DrawEntityNodeRenaming(entity, flags, entityID);
+    } else {
+        opened = ImGui::TreeNodeEx((void*)(uintptr_t)entityID, flags, "%s%s", tag.c_str(), hasScript ? " [S]" : "");
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            if (m_SelectionContext == entity && !ImGui::IsItemToggledOpen()) {
+                m_IsRenaming = true;
+                m_RenamingEntity = entity;
+                snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", tag.c_str());
+            } else {
+                m_SelectionContext = entity;
+                m_IsRenaming = false;
+            }
+        }
     }
 
-    // ==========================================
-    // FENÊTRE INSPECTOR
-    // ==========================================
+    if (isPrefab) ImGui::PopStyleColor();
+
+    HandleEntityNodeDragDrop(entity);
+    DrawEntityNodeContextMenu(entity, hasScript, isPrefab);
+
+    // Rendu récursif des enfants
+    if (opened) {
+        if (!isPrefab && hasChildren) {
+            entt::entity childID = entity.GetComponent<RelationshipComponent>().FirstChild;
+            while (childID != entt::null) {
+                Entity child{childID, m_Context.get()};
+                entt::entity nextSibling = child.GetComponent<RelationshipComponent>().NextSibling;
+                DrawEntityNode(child);
+                childID = nextSibling;
+            }
+        }
+        ImGui::TreePop();
+    }
+
+    ImGui::PopID();
+}
+
+bool SceneHierarchyPanel::DrawEntityNodeRenaming(Entity entity, ImGuiTreeNodeFlags flags, uint32_t entityID) {
+    bool opened = ImGui::TreeNodeEx((void*)(uintptr_t)entityID, flags, "");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(-1);
+
+    if (ImGui::InputText("##RenameInput", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
+        if (strlen(m_RenameBuffer) > 0) entity.GetComponent<TagComponent>().Tag = m_RenameBuffer;
+        m_IsRenaming = false;
+    }
+
+    if (!ImGui::IsItemActive() && ImGui::IsWindowFocused()) ImGui::SetKeyboardFocusHere(-1);
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsItemHovered()) m_IsRenaming = false;
+
+    ImGui::PopItemWidth();
+    return opened;
+}
+
+void SceneHierarchyPanel::HandleEntityNodeDragDrop(Entity entity) {
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+            std::filesystem::path filepath = (const char*)payload->Data;
+            if (filepath.extension() == ".ceprefab") {
+                SceneSerializer serializer(m_Context);
+                Entity prefabRoot = serializer.DeserializePrefab(filepath.string());
+                if (prefabRoot) m_Context->ParentEntity(prefabRoot, entity);
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+}
+
+void SceneHierarchyPanel::DrawEntityNodeContextMenu(Entity entity, bool hasScript, bool isPrefab) {
+    if (ImGui::BeginPopupContextItem()) {
+        if (!hasScript) {
+            if (ImGui::BeginMenu("Attach Script...")) {
+                for (auto const& [name, func] : ScriptRegistry::Registry) {
+                    if (ImGui::MenuItem(name.c_str())) {
+                        entity.AddComponent<NativeScriptComponent>();
+                        auto& nsc = entity.GetComponent<NativeScriptComponent>();
+                        func(nsc);
+                        nsc.ScriptName = name;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+        } else {
+            auto& nsc = entity.GetComponent<NativeScriptComponent>();
+            ImGui::TextDisabled("Script: %s", nsc.ScriptName.c_str());
+            if (ImGui::MenuItem("Detach Script")) entity.RemoveComponent<NativeScriptComponent>();
+        }
+
+        ImGui::Separator();
+        if (!isPrefab) {
+            if (ImGui::BeginMenu("Create Child")) {
+                if (ImGui::MenuItem("Empty Node")) {
+                    Entity child = m_Context->CreateEntity("Empty Node");
+                    m_Context->ParentEntity(child, entity);
+                }
+                ImGui::EndMenu();
+            }
+        }
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Delete Node")) m_EntityToDestroy = entity;
+
+        ImGui::EndPopup();
+    }
+}
+
+// =========================================================================================
+// 2. FENÊTRE INSPECTEUR (Détails de l'entité sélectionnée)
+// =========================================================================================
+void SceneHierarchyPanel::DrawInspectorWindow() {
     ImGui::Begin("Inspector");
 
     if (m_SelectionContext) {
@@ -201,6 +352,7 @@ void SceneHierarchyPanel::OnImGuiRender() {
         }
     }
 
+    // Déselection si on clique dans le vide de l'inspecteur
     if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered()) {
         m_SelectionContext = {};
     }
@@ -271,143 +423,6 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
         ImGui::EndPopup();
     }
 
-}
-
-void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
-    // --- LE FIX MAJEUR : Isolation de l'ID Stack ---
-    // On utilise l'ID unique d'entt pour protéger tous les widgets internes (InputText, Popups, etc.)
-    uint32_t entityID = (uint32_t)(entt::entity)entity;
-    ImGui::PushID(entityID);
-
-    auto& tag = entity.GetComponent<TagComponent>().Tag;
-    bool hasScript = entity.HasComponent<NativeScriptComponent>();
-
-    // Détermination de l'état de sélection
-    bool isSelected = (m_SelectionContext == entity) || (GetPrefabRoot(m_SelectionContext) == entity);
-    ImGuiTreeNodeFlags flags = (isSelected ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
-    flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
-
-    bool isPrefab = entity.HasComponent<PrefabComponent>();
-    bool hasChildren = entity.HasComponent<RelationshipComponent>() && entity.GetComponent<RelationshipComponent>().FirstChild != entt::null;
-
-    if (isPrefab || !hasChildren) {
-        flags |= ImGuiTreeNodeFlags_Leaf;
-    }
-
-    bool opened = false;
-
-    // --- CORRECTION DU STYLE ---
-    // On pousse la couleur AVANT le dessin et on la pop APRÈS le dessin du TreeNode
-    if (isPrefab) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 1.0f, 1.0f));
-
-    // ========================================================
-    // LOGIQUE DE RENDU (RENOMMAGE OU CLASSIQUE)
-    // ========================================================
-    if (m_IsRenaming && m_RenamingEntity == entity) {
-        // Mode Renommage
-        opened = ImGui::TreeNodeEx((void*)(uintptr_t)entityID, flags, "");
-        ImGui::SameLine();
-        ImGui::PushItemWidth(-1);
-
-        if (ImGui::InputText("##RenameInput", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
-            if (strlen(m_RenameBuffer) > 0) tag = m_RenameBuffer;
-            m_IsRenaming = false;
-        }
-
-        if (!ImGui::IsItemActive() && ImGui::IsWindowFocused()) ImGui::SetKeyboardFocusHere(-1);
-
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsItemHovered()) {
-             m_IsRenaming = false;
-        }
-        ImGui::PopItemWidth();
-    } else {
-        // Mode Classique
-        opened = ImGui::TreeNodeEx((void*)(uintptr_t)entityID, flags, "%s%s", tag.c_str(), hasScript ? " [S]" : "");
-
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-            if (m_SelectionContext == entity && !ImGui::IsItemToggledOpen()) {
-                m_IsRenaming = true;
-                m_RenamingEntity = entity;
-                snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", tag.c_str());
-            } else {
-                m_SelectionContext = entity;
-                m_IsRenaming = false;
-            }
-        }
-    }
-
-    if (isPrefab) ImGui::PopStyleColor();
-
-    // ========================================================
-    // DRAG & DROP ET POPUPS
-    // ========================================================
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-            std::filesystem::path filepath = (const char*)payload->Data;
-            if (filepath.extension() == ".ceprefab") {
-                SceneSerializer serializer(m_Context);
-                Entity prefabRoot = serializer.DeserializePrefab(filepath.string());
-                if (prefabRoot) m_Context->ParentEntity(prefabRoot, entity);
-            }
-        }
-        ImGui::EndDragDropTarget();
-    }
-
-    if (ImGui::BeginPopupContextItem()) {
-        if (!hasScript) {
-            if (ImGui::BeginMenu("Attach Script...")) {
-                for (auto const& [name, func] : ScriptRegistry::Registry) {
-                    if (ImGui::MenuItem(name.c_str())) {
-                        entity.AddComponent<NativeScriptComponent>();
-                        auto& nsc = entity.GetComponent<NativeScriptComponent>();
-                        func(nsc);
-                        nsc.ScriptName = name;
-                    }
-                }
-                ImGui::EndMenu();
-            }
-        } else {
-            auto& nsc = entity.GetComponent<NativeScriptComponent>();
-            ImGui::TextDisabled("Script: %s", nsc.ScriptName.c_str());
-            if (ImGui::MenuItem("Detach Script")) entity.RemoveComponent<NativeScriptComponent>();
-        }
-
-        ImGui::Separator();
-        if (!isPrefab) {
-            if (ImGui::BeginMenu("Create Child")) {
-                if (ImGui::MenuItem("Empty Node")) {
-                    Entity child = m_Context->CreateEntity("Empty Node");
-                    m_Context->ParentEntity(child, entity);
-                }
-                // ... (Reste de tes menus de création)
-                ImGui::EndMenu();
-            }
-        }
-
-        ImGui::Separator();
-        if (ImGui::MenuItem("Delete Node")) m_EntityToDestroy = entity;
-
-        ImGui::EndPopup();
-    }
-
-    // ========================================================
-    // RÉCURSION DES ENFANTS
-    // ========================================================
-    if (opened) {
-        if (!isPrefab && hasChildren) {
-            entt::entity childID = entity.GetComponent<RelationshipComponent>().FirstChild;
-            while (childID != entt::null) {
-                Entity child{childID, m_Context.get()};
-                entt::entity nextSibling = child.GetComponent<RelationshipComponent>().NextSibling;
-                DrawEntityNode(child);
-                childID = nextSibling;
-            }
-        }
-        ImGui::TreePop();
-    }
-
-    // On ferme l'ID stack
-    ImGui::PopID();
 }
 
 void SceneHierarchyPanel::SetContext(const std::shared_ptr<Scene>& context) {
