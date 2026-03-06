@@ -53,20 +53,28 @@ private:
     void ResetParameterToDefault(const std::string& paramName);
     void EvaluateParameterVisibility();
 
+    // --- SOUS-FONCTIONS DE RENDU (Refactoring) ---
+    void DrawPreviewColumn();
+    void RenderPreview3D(ImVec2 viewportSize);
+    void DrawDetailsColumn();
+    void HandleDragAndDropParent();
+    void DrawParameters();
+
 private:
     std::filesystem::path m_CurrentPath;
     std::string m_ParentMaterialPath = "";
     nlohmann::json m_ParentGraphJson;
 
     std::unordered_map<std::string, MIParameter> m_Parameters;
-
     std::vector<MIStaticTexture> m_StaticTextures;
 
     // --- Preview 3D ---
     std::shared_ptr<Framebuffer> m_PreviewFramebuffer;
-    std::shared_ptr<Shader> m_PreviewShader;
     std::shared_ptr<Mesh> m_PreviewMesh;
+    std::shared_ptr<Shader> m_PreviewShader;
 
-    float m_CameraDistance = 250.0f;
+    // Variables de la caméra/preview
     float m_RotationSpeed = 30.0f;
+    float m_CameraDistance = 250.0f;
+    float m_PreviewRotation = 0.0f;
 };

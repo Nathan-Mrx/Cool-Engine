@@ -270,6 +270,9 @@ void MaterialInstanceEditorPanel::CompilePreviewShader() {
     }
 }
 
+// =========================================================================================
+// ENTRY POINT DU RENDU UI
+// =========================================================================================
 void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Material Instance Editor", &isOpen);
@@ -278,10 +281,20 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
     ImGui::Columns(2, "MI_Columns");
     ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.65f); // 65% pour la 3D
 
-    // ==========================================
-    // COLONNE GAUCHE : PREVIEW 3D
-    // ==========================================
-    // --- NOUVEAUX SLIDERS (Comme dans le MaterialEditor !) ---
+    DrawPreviewColumn();
+
+    ImGui::NextColumn();
+
+    DrawDetailsColumn();
+
+    ImGui::Columns(1);
+    ImGui::End();
+}
+
+// =========================================================================================
+// 1. COLONNE GAUCHE (Preview 3D)
+// =========================================================================================
+void MaterialInstanceEditorPanel::DrawPreviewColumn() {
     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
     ImGui::SliderFloat("Speed", &m_RotationSpeed, -180.0f, 180.0f, "%.1f deg/s");
     ImGui::SameLine();
@@ -291,91 +304,111 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
 
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (m_PreviewFramebuffer && viewportSize.x > 0 && viewportSize.y > 0) {
-        m_PreviewFramebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
-        m_PreviewFramebuffer->Bind();
-        glViewport(0, 0, (int)viewportSize.x, (int)viewportSize.y);
 
-        glEnable(GL_DEPTH_TEST);
-        glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        if (m_PreviewShader && m_PreviewMesh) {
-            m_PreviewShader->Use();
-
-            float aspect = viewportSize.x / viewportSize.y;
-            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
-            glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
-            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-
-            m_PreviewShader->SetMat4("uProjection", proj);
-            m_PreviewShader->SetMat4("uView", view);
-
-            // --- ROTATION FLUIDE (DeltaTime au lieu de Temps Absolu) ---
-            static float s_PreviewRotation = 0.0f;
-            s_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
-
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::rotate(model, glm::radians(s_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
-            model = glm::scale(model, glm::vec3(0.8f));
-            m_PreviewShader->SetMat4("uModel", model);
-
-            m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
-            m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
-            m_PreviewShader->SetVec3("uViewPos", camPos);
-            m_PreviewShader->SetFloat("uTime", (float)glfwGetTime());
-
-            int texSlot = 0;
-            // 1. Textures des Paramètres d'Instance
-            for (auto& [key, param] : m_Parameters) {
-                if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);
-                else if (param.Type == "Color") m_PreviewShader->SetVec4("u_" + key, param.ColorVal);
-                else if (param.Type == "Texture2D" && param.TextureID != 0) {
-                    glActiveTexture(GL_TEXTURE0 + texSlot);
-                    glBindTexture(GL_TEXTURE_2D, param.TextureID);
-                    m_PreviewShader->SetInt("u_" + key, texSlot);
-                    texSlot++;
-                }
-            }
-
-            // 2. Textures Statiques du Parent (C'est ça qui corrige la lumière !)
-            for (auto& st : m_StaticTextures) {
-                if (st.TextureID != 0) {
-                    glActiveTexture(GL_TEXTURE0 + texSlot);
-                    glBindTexture(GL_TEXTURE_2D, st.TextureID);
-                    m_PreviewShader->SetInt(st.UniformName, texSlot);
-                    texSlot++;
-                }
-            }
-
-            m_PreviewMesh->Draw();
-
-            // Nettoyage des slots de texture
-            for (int i = 0; i < 8; i++) {
-                glActiveTexture(GL_TEXTURE0 + i);
-                glBindTexture(GL_TEXTURE_2D, 0);
-            }
-            glActiveTexture(GL_TEXTURE0);
+        // Resize intelligent du Framebuffer
+        if (viewportSize.x != m_PreviewFramebuffer->GetSpecification().Width ||
+            viewportSize.y != m_PreviewFramebuffer->GetSpecification().Height) {
+            m_PreviewFramebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
         }
 
-        m_PreviewFramebuffer->Unbind();
+        RenderPreview3D(viewportSize);
+
+        // Affichage de l'image finale
         ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), viewportSize, ImVec2(0, 1), ImVec2(1, 0));
     }
-    
-    // ==========================================
-    // COLONNE DROITE : DETAILS ET OVERRIDES
-    // ==========================================
-    ImGui::NextColumn();
+}
+
+void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
+    m_PreviewFramebuffer->Bind();
+    glViewport(0, 0, (int)viewportSize.x, (int)viewportSize.y);
+
+    glEnable(GL_DEPTH_TEST);
+    glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    if (m_PreviewShader && m_PreviewMesh) {
+        m_PreviewShader->Use();
+
+        float aspect = viewportSize.x / viewportSize.y;
+        glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
+        glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
+        glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+        m_PreviewShader->SetMat4("uProjection", proj);
+        m_PreviewShader->SetMat4("uView", view);
+
+        // Rotation fluide indexée sur le delta time !
+        m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::rotate(model, glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::scale(model, glm::vec3(0.8f));
+        m_PreviewShader->SetMat4("uModel", model);
+
+        m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
+        m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
+        m_PreviewShader->SetVec3("uViewPos", camPos);
+        m_PreviewShader->SetFloat("uTime", (float)glfwGetTime());
+
+        int texSlot = 0;
+
+        // 1. Textures des Paramètres d'Instance
+        for (auto& [key, param] : m_Parameters) {
+            if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);
+            else if (param.Type == "Color") m_PreviewShader->SetVec4("u_" + key, param.ColorVal);
+            else if (param.Type == "Texture2D" && param.TextureID != 0) {
+                glActiveTexture(GL_TEXTURE0 + texSlot);
+                glBindTexture(GL_TEXTURE_2D, param.TextureID);
+                m_PreviewShader->SetInt("u_" + key, texSlot);
+                texSlot++;
+            }
+        }
+
+        // 2. Textures Statiques du Parent
+        for (auto& st : m_StaticTextures) {
+            if (st.TextureID != 0) {
+                glActiveTexture(GL_TEXTURE0 + texSlot);
+                glBindTexture(GL_TEXTURE_2D, st.TextureID);
+                m_PreviewShader->SetInt(st.UniformName, texSlot);
+                texSlot++;
+            }
+        }
+
+        m_PreviewMesh->Draw();
+
+        // Nettoyage des slots de texture
+        for (int i = 0; i < 8; i++) {
+            glActiveTexture(GL_TEXTURE0 + i);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        glActiveTexture(GL_TEXTURE0);
+    }
+
+    m_PreviewFramebuffer->Unbind();
+}
+
+// =========================================================================================
+// 2. COLONNE DROITE (Détails et Paramètres)
+// =========================================================================================
+void MaterialInstanceEditorPanel::DrawDetailsColumn() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
     ImGui::BeginChild("DetailsPanel");
 
     ImGui::TextDisabled("GENERAL");
     ImGui::Separator();
-    
+
+    HandleDragAndDropParent();
+    DrawParameters();
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+}
+
+void MaterialInstanceEditorPanel::HandleDragAndDropParent() {
     char parentBuf[256];
     strncpy(parentBuf, m_ParentMaterialPath.c_str(), sizeof(parentBuf));
     ImGui::InputText("Parent Material", parentBuf, sizeof(parentBuf), ImGuiInputTextFlags_ReadOnly);
-    
-    // Drag & Drop pour assigner le parent
+
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
             std::string path = (const char*)payload->Data;
@@ -388,11 +421,13 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
         }
         ImGui::EndDragDropTarget();
     }
-    
+}
+
+void MaterialInstanceEditorPanel::DrawParameters() {
     std::string paramToReset = "";
     bool needsRecompileAndEval = false;
 
-    // --- LE TRI PAR CATÉGORIES ET PAR TYPE ---
+    // Tri par catégories et par type (Switches en premier)
     std::map<std::string, std::vector<MIParameter*>> groupedParams;
     for (auto& [key, param] : m_Parameters) {
         if (param.IsVisible) {
@@ -400,20 +435,17 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
         }
     }
 
-    // On trie chaque catégorie pour mettre les Switches en premier, puis par ordre alphabétique
     for (auto& [category, params] : groupedParams) {
         std::sort(params.begin(), params.end(), [](MIParameter* a, MIParameter* b) {
             if (a->Type == "StaticSwitchParameter" && b->Type != "StaticSwitchParameter") return true;
             if (a->Type != "StaticSwitchParameter" && b->Type == "StaticSwitchParameter") return false;
-            return a->Name < b->Name; // Ordre alphabétique si même type
+            return a->Name < b->Name; // Ordre alphabétique
         });
     }
 
     ImGui::Spacing(); ImGui::Spacing();
-    // (Supprime la ligne ImGui::TextDisabled("STATIC SWITCHES") et le Separator() s'ils sont encore là)
 
     for (auto& [category, params] : groupedParams) {
-        // Style Unreal : Un header repliable par catégorie
         if (ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
             for (auto* paramPtr : params) {
                 auto& param = *paramPtr;
@@ -427,7 +459,6 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
 
                 if (!param.IsOverridden) ImGui::BeginDisabled();
 
-                // Dessin selon le type
                 if (param.Type == "StaticSwitchParameter") {
                     ImGui::SameLine(150);
                     if (ImGui::Checkbox("Value", &param.BoolVal)) needsRecompileAndEval = true;
@@ -461,21 +492,16 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
         }
     }
 
-    // --- EXECUTION DES ACTIONS (Pour éviter le crash de l'UI !) ---
+    // Résolution des actions (Évite les crashs d'itérateurs UI !)
     if (!paramToReset.empty()) {
         ResetParameterToDefault(paramToReset);
         if (m_Parameters[paramToReset].Type == "StaticSwitchParameter") needsRecompileAndEval = true;
     }
 
     if (needsRecompileAndEval) {
-        EvaluateParameterVisibility(); // Met à jour ce qui est visible ou caché
-        CompilePreviewShader();        // Recompile le Shader GLSL avec les nouveaux #defines
+        EvaluateParameterVisibility();
+        CompilePreviewShader();
     }
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::Columns(1);
-    ImGui::End();
 }
 
 void MaterialInstanceEditorPanel::Save() {
