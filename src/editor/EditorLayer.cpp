@@ -143,96 +143,6 @@ void EditorLayer::DrawMenuBar() {
     }
 }
 
-void EditorLayer::BeginDockspace() {
-    static bool dockspaceOpen = true;
-    ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::SetNextWindowViewport(viewport->ID);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-    window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-
-    ImGui::Begin("DockSpaceParent", &dockspaceOpen, window_flags);
-    ImGui::PopStyleVar(2);
-
-    // =========================================================================
-    // NOUVEAU : LA BARRE D'ONGLETS GLOBALE (AU-DESSUS DU DOCKSPACE !)
-    // =========================================================================
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-    ImGui::Dummy(ImVec2(0, 4.0f)); // Petite marge
-
-    if (ImGui::BeginTabBar("GlobalWorkspaceTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
-        for (int i = 0; i < m_Tabs.size(); i++) {
-            bool isOpen = true;
-            ImGuiTabItemFlags flags = (m_ActiveTabIndex == i && m_ForceTabSelection) ? ImGuiTabItemFlags_SetSelected : 0;
-
-            if (ImGui::BeginTabItem(m_Tabs[i].Name.c_str(), &isOpen, flags)) {
-                if (m_ActiveTabIndex != i) {
-                    m_ActiveTabIndex = i;
-
-                    // On ne restaure la scène que si c'est un onglet de type scène
-                    if (m_Tabs[i].Type == TabType::Scene) {
-                        m_ActiveScene = m_Tabs[i].SceneContext;
-                        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-                        m_SceneHierarchyPanel.SetSelectedEntity({});
-                        m_SceneHierarchyPanel.SetIsPrefabScene(m_Tabs[i].IsPrefab);
-                    }
-                    else if (m_Tabs[i].Type == TabType::Material) {
-                        // On ne fait RIEN : l'onglet a déjà son graphe en mémoire !
-                    }
-                }
-                ImGui::EndTabItem();
-            }
-
-            if (!isOpen) {
-                CloseTab(i);
-                i--; // Ajustement de l'index car un onglet vient d'être supprimé
-            }
-        }
-        ImGui::EndTabBar();
-    }
-    m_ForceTabSelection = false;
-    ImGui::PopStyleVar();
-    // =========================================================================
-
-    ImGuiID dockspace_id = ImGui::GetID("MyEngineDockSpace");
-    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
-
-    if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr || ImGui::DockBuilderGetNode(dockspace_id)->ChildNodes[0] == 0) {
-        ImGui::DockBuilderRemoveNode(dockspace_id);
-        ImGui::DockBuilderAddNode(dockspace_id, dockspace_flags | ImGuiDockNodeFlags_DockSpace);
-        ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
-
-        ImGuiID dock_id_main = dockspace_id;
-        ImGuiID dock_id_left = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Left, 0.20f, nullptr, &dock_id_main);
-        ImGuiID dock_id_right = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Right, 0.25f, nullptr, &dock_id_main);
-        ImGuiID dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_main, ImGuiDir_Down, 0.30f, nullptr, &dock_id_main);
-
-        ImGui::DockBuilderDockWindow("Scene Hierarchy", dock_id_left);
-        ImGui::DockBuilderDockWindow("Inspector", dock_id_right);
-        ImGui::DockBuilderDockWindow("Content Browser", dock_id_bottom);
-        ImGui::DockBuilderDockWindow("Viewport", dock_id_main);
-
-        // --- On ancre aussi le Material Editor au centre par défaut ! ---
-        ImGui::DockBuilderDockWindow("Material Editor", dock_id_main);
-
-        ImGuiDockNode* node = ImGui::DockBuilderGetNode(dock_id_main);
-        if (node) node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
-
-        ImGui::DockBuilderFinish(dockspace_id);
-    }
-}
-
-void EditorLayer::EndDockspace() {
-    ImGui::End();
-}
-
 void EditorLayer::CloseProjectInternal() {
     Project::Unload();
 
@@ -240,521 +150,75 @@ void EditorLayer::CloseProjectInternal() {
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 }
 
-void EditorLayer::OnUpdate(float ts) {
-    // --- LECTURE DE LA FILE D'ATTENTE ---
-    std::filesystem::path pending = Project::ConsumePendingProject();
-    if (!pending.empty()) {
-        m_PendingProjectPath = pending;
-        ProjectCompiler::Start(pending.parent_path());
-    }
+void EditorLayer::OnUpdate(float deltaTime) {
+    if (!Project::GetActive()) return;
 
-    // Si on est en train de compiler, on gèle l'Update du reste du moteur !
-    if (ProjectCompiler::IsCompiling() || ProjectCompiler::HasFinished()) {
-        return;
-    }
+    ResizeViewportIfNeeded();
 
-    // --- 1. DÉTECTION DE CHARGEMENT DE PROJET AUTOMATIQUE ---
-    static std::shared_ptr<Project> s_LastProject = nullptr;
-    auto currentProject = Project::GetActive();
-
-    if (currentProject && currentProject != s_LastProject) {
-        s_LastProject = currentProject;
-
-        std::filesystem::path scenePath = currentProject->GetProjectDirectory() / currentProject->GetConfig().StartScene;
-
-        if (std::filesystem::exists(scenePath)) {
-            OpenScene(scenePath);
-
-            // Nettoyage : Si le premier onglet est "Untitled" et qu'on vient de charger le projet, on le ferme
-            if (m_Tabs.size() > 1 && m_Tabs[0].Name == "Untitled") {
-                CloseTab(0);
-            }
-
-            std::cout << "[Editor] Loaded default scene: " << currentProject->GetConfig().StartScene << std::endl;
-        } else {
-            std::cout << "[Editor] Warning: Default scene not found at " << scenePath << std::endl;
-        }
-    }
-
-    if (!currentProject) {
-        s_LastProject = nullptr;
-        return;
-    }
-
-    // --- 2. VÉRIFICATIONS DE SÉCURITÉ DU VIEWPORT ---
-    if (!m_ActiveScene || !m_ViewportFramebuffer) return;
-
-    if (m_ViewportSize.x <= 0.0f || m_ViewportSize.y <= 0.0f) return;
-    m_ViewportFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-
-    // --- 3. GESTION DE L'ÉTAT DU JEU ---
-    switch (m_SceneState) {
-        case SceneState::Edit: {
-            // --- 3. GESTION DE LA CAMÉRA ---
-            GLFWwindow* window = Application::Get().GetWindow();
-            double mouseX, mouseY;
-            glfwGetCursorPos(window, &mouseX, &mouseY);
-
-            if (m_ViewportFocused) {
-                if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
-                    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
-                    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
-                    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) m_GizmoType = ImGuizmo::OPERATION::SCALE;
-                }
-            }
-
-            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-                glm::vec2 mousePos = { (float)mouseX, (float)mouseY };
-                glm::vec2 delta = (mousePos - m_LastMousePosition) * 0.003f;
-                m_LastMousePosition = mousePos;
-
-                m_EditorCamera.Yaw += delta.x;
-                m_EditorCamera.Pitch -= delta.y;
-                m_EditorCamera.Pitch = glm::clamp(m_EditorCamera.Pitch, glm::radians(-89.0f), glm::radians(89.0f));
-
-                glm::vec3 front;
-                front.x = cos(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
-                front.y = sin(m_EditorCamera.Yaw) * cos(m_EditorCamera.Pitch);
-                front.z = sin(m_EditorCamera.Pitch);
-                m_EditorCamera.Front = glm::normalize(front);
-
-                float baseSpeed = 500.0f;
-                if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-                    baseSpeed *= 4.0f;
-                }
-
-                float cameraSpeed = baseSpeed * ts;
-                glm::vec3 right = glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front));
-
-                if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) m_EditorCamera.Position += m_EditorCamera.Front * cameraSpeed;
-                if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) m_EditorCamera.Position -= m_EditorCamera.Front * cameraSpeed;
-                if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) m_EditorCamera.Position -= right * cameraSpeed;
-                if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) m_EditorCamera.Position += right * cameraSpeed;
-                if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) m_EditorCamera.Position += m_EditorCamera.WorldUp * cameraSpeed;
-                if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) m_EditorCamera.Position -= m_EditorCamera.WorldUp * cameraSpeed;
-
-            } else {
-                m_LastMousePosition = { (float)mouseX, (float)mouseY };
-            }
-                break;
-            }
-
-        case SceneState::Play: {
-            m_ActiveScene->OnUpdateScripts(ts);
-            m_ActiveScene->OnUpdatePhysics(ts);
-            break;
-        }
-
-        case SceneState::Pause: {
-            // On ne fait rien
-            break;
-        }
-    }
-
-    // --- 4. RENDU DE LA SCÈNE ---
+    // Rendu hors-écran dans le Framebuffer
     m_ViewportFramebuffer->Bind();
-    glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
-    Renderer::Clear();
+    RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+    RenderCommand::Clear();
 
-    m_ViewportFramebuffer->ClearAttachment(1, -1);
-
-    glm::mat4 view;
-    glm::mat4 projection;
-    glm::vec3 cameraPosition;
-    float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
-
-    if (m_SceneState == SceneState::Edit) {
-        // --- MODE ÉDITION : On utilise la caméra de l'éditeur ---
-        projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
-        view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
-        cameraPosition = m_EditorCamera.Position;
-    } else {
-        // --- MODE PLAY : On cherche la caméra du joueur ---
-        auto cameraView = m_ActiveScene->m_Registry.view<TransformComponent, CameraComponent>();
-        bool cameraFound = false;
-
-        for (auto entityID : cameraView) {
-            Entity entity{ entityID, m_ActiveScene.get() };
-            auto& camera = entity.GetComponent<CameraComponent>();
-
-            if (camera.Primary) {
-                // --- LE FIX : On décompose la position GLOBALE de la caméra ---
-                glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(entity);
-                glm::vec3 globalPos, globalScale;
-                glm::quat globalRot;
-                Math::DecomposeTransform(globalTransform, globalPos, globalRot, globalScale);
-
-                projection = glm::perspectiveLH(glm::radians(camera.FOV), aspectRatio, camera.NearClip, camera.FarClip);
-
-                // On utilise la rotation globale pour trouver l'avant et le haut
-                glm::vec3 forward = glm::normalize(globalRot * glm::vec3(1.0f, 0.0f, 0.0f));
-                glm::vec3 up      = glm::normalize(globalRot * glm::vec3(0.0f, 0.0f, 1.0f));
-
-                view = glm::lookAtLH(globalPos, globalPos + forward, up);
-                cameraPosition = globalPos;
-
-                cameraFound = true;
-                break;
-            }
-        }
-
-        // --- FALLBACK : Si le niveau n'a pas de CameraComponent, on garde la vue Éditeur ---
-        if (!cameraFound) {
-            projection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
-            view = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
-            cameraPosition = m_EditorCamera.Position;
-        }
-    }
-
-    // On envoie la bonne vue au moteur de rendu !
-    Renderer::BeginScene(view, projection, cameraPosition);
-
-    Renderer::DrawGrid(m_ShowGrid);
-    Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
-
-    // --- NOUVEAU : RENDU DES COLLISIONS (Avec Hiérarchie) ---
-    if (m_ShowCollisions) {
-        auto view = m_ActiveScene->m_Registry.view<BoxColliderComponent>();
-        for (auto entityID : view) {
-            Entity entity{ entityID, m_ActiveScene.get() };
-            auto& bc = entity.GetComponent<BoxColliderComponent>();
-
-            // On récupère la vraie matrice globale
-            glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(entity);
-
-            // On ajoute l'offset et la taille locale par-dessus
-            glm::mat4 boxTransform = globalTransform
-                                   * glm::translate(glm::mat4(1.0f), bc.Offset)
-                                   * glm::scale(glm::mat4(1.0f), bc.HalfSize);
-
-            Renderer::DrawDebugBox(boxTransform, glm::vec3(0.1f, 0.9f, 0.1f));
-        }
-    }
-
-    auto lightView = m_ActiveScene->m_Registry.view<DirectionalLightComponent>();
-    for (auto entityID : lightView) {
-        Entity entity{ entityID, m_ActiveScene.get() };
-
-        // --- LE FIX : Position et Rotation Globales de la lumière ---
-        glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(entity);
-        glm::vec3 globalPos, globalScale;
-        glm::quat globalRot;
-        Math::DecomposeTransform(globalTransform, globalPos, globalRot, globalScale);
-
-        // On crée un transform temporaire juste pour utiliser tes fonctions mathématiques
-        TransformComponent tempTc;
-        tempTc.Location = globalPos;
-        tempTc.Rotation = globalRot;
-
-        glm::vec3 lightDirection = glm::normalize(globalRot * glm::vec3(0.0f, -1.0f, 0.0f));
-
-        Renderer::DrawDebugArrow(
-            tempTc.Location,
-            lightDirection,
-            tempTc.GetRightVector(),
-            tempTc.GetForwardVector(),
-            glm::vec3(1.0f, 0.9f, 0.1f),
-            view, projection,
-            50.0f
-        );
-    }
-
-    Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-    if (selectedEntity) {
-
-        // 1. On collecte tous les meshes de l'entité et de ses enfants
-        std::vector<std::pair<glm::mat4, MeshComponent*>> meshesToOutline;
-
-        // Fonction récursive
-        auto collectMeshes = [&](Entity e, auto& self) -> void {
-            if (!e) return;
-
-            if (e.HasComponent<MeshComponent>()) {
-                // On stocke la matrice GLOBALE et le mesh
-                meshesToOutline.push_back({ m_ActiveScene->GetWorldTransform(e), &e.GetComponent<MeshComponent>() });
-            }
-
-            if (e.HasComponent<RelationshipComponent>()) {
-                entt::entity childID = e.GetComponent<RelationshipComponent>().FirstChild;
-                while (childID != entt::null) {
-                    Entity child{ childID, m_ActiveScene.get() };
-                    self(child, self); // On descend dans l'arbre
-                    childID = child.GetComponent<RelationshipComponent>().NextSibling;
-                }
-            }
-        };
-
-        // On lance la collecte depuis la racine sélectionnée
-        collectMeshes(selectedEntity, collectMeshes);
-
-        if (!meshesToOutline.empty()) {
-            // Étape 1 : Le masque (On dessine TOUS les masques d'abord)
-            for (auto& [transform, mesh] : meshesToOutline) {
-                if (mesh->MeshData) {
-                    Renderer::BeginOutlineMask(transform);
-                    mesh->MeshData->Draw();
-                }
-            }
-
-            // Étape 2 : L'outline via le fil de fer épais (Sur TOUT le groupe)
-            for (auto& [transform, mesh] : meshesToOutline) {
-                if (mesh->MeshData) {
-                    Renderer::BeginOutlineDraw(transform, glm::vec3(1.0f, 0.5f, 0.0f));
-                    mesh->MeshData->Draw();
-                }
-            }
-
-            // Étape 3 : Nettoyage
-            Renderer::EndOutline();
-        }
-    }
-
-    // --- NOUVEAU : RENDU DU FRUSTUM AVEC HIERARCHIE ---
-    if (m_SceneState == SceneState::Edit && selectedEntity && selectedEntity.HasComponent<CameraComponent>()) {
-        auto& cc = selectedEntity.GetComponent<CameraComponent>();
-
-        // 1. On récupère la matrice globale
-        glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(selectedEntity);
-        glm::vec3 globalPos, globalScale;
-        glm::quat globalRot;
-        Math::DecomposeTransform(globalTransform, globalPos, globalRot, globalScale);
-
-        // 2. On recrée les matrices exactes
-        float aspect = m_ViewportSize.x / m_ViewportSize.y;
-        glm::mat4 camProj = glm::perspectiveLH(glm::radians(cc.FOV), aspect, cc.NearClip, cc.FarClip);
-
-        glm::vec3 forward = glm::normalize(globalRot * glm::vec3(1.0f, 0.0f, 0.0f));
-        glm::vec3 up      = glm::normalize(globalRot * glm::vec3(0.0f, 0.0f, 1.0f));
-        glm::mat4 camView = glm::lookAtLH(globalPos, globalPos + forward, up);
-
-        // 3. L'inverse de Projection * Vue globale
-        glm::mat4 frustumTransform = glm::inverse(camProj * camView);
-
-        Renderer::DrawDebugBox(frustumTransform, glm::vec3(1.0f, 1.0f, 1.0f));
-    }
-
-    Renderer::EndScene();
-
-    // --- 5. LOGIQUE DE FERMETURE ET CAPTURE THUMBNAIL ---
-    bool isAppClosing = glfwWindowShouldClose(Application::Get().GetWindow());
-
-    if (m_RequestCloseProject || isAppClosing) {
-        if (currentProject) {
-            CaptureViewportThumbnail(currentProject->GetProjectDirectory().string());
-
-            if (!isAppClosing) {
-                CloseProjectInternal();
-                m_RequestCloseProject = false;
-            }
-        }
+    // Mise à jour selon l'état
+    switch (m_SceneState) {
+    case SceneState::Edit:
+        UpdateEditor(deltaTime);
+        break;
+    case SceneState::Play:
+        UpdateRuntime(deltaTime);
+        break;
+    case SceneState::Pause:
+        // En pause, on dessine la scène figée mais on peut bouger la caméra éditeur
+        m_EditorCamera.OnUpdate(deltaTime);
+        m_ActiveScene->OnRenderEditor(m_EditorCamera, m_ShowGrid, m_ShowCollisions, m_RenderMode);
+        break;
     }
 
     m_ViewportFramebuffer->Unbind();
 }
 
-void EditorLayer::OnImGuiRender() {
-    BeginDockspace();
-
-    // --- LE SPLASH SCREEN DE COMPILATION ---
-    if (ProjectCompiler::IsCompiling() || ProjectCompiler::HasFinished()) {
-        DrawSplashScreen();
-        EndDockspace();
-        return; // ON BLOQUE L'AFFICHAGE DU RESTE DE L'ÉDITEUR !
+void EditorLayer::UpdateEditor(float deltaTime) {
+    if (m_ViewportFocused) {
+        m_EditorCamera.OnUpdate(deltaTime);
     }
+    m_ActiveScene->OnRenderEditor(m_EditorCamera, m_ShowGrid, m_ShowCollisions, m_RenderMode);
+}
+
+void EditorLayer::UpdateRuntime(float deltaTime) {
+    m_ActiveScene->OnUpdateRuntime(deltaTime, m_ShowCollisions, m_RenderMode);
+}
+
+void EditorLayer::ResizeViewportIfNeeded() {
+    if (FramebufferSpecification spec = m_ViewportFramebuffer->GetSpecification();
+        m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f &&
+        (spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
+    {
+        m_ViewportFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+        m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
+        m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+    }
+}
+
+void EditorLayer::OnImGuiRender() {
+    if (!Project::GetActive()) {
+        m_HubPanel.OnImGuiRender();
+        return;
+    }
+
+    BeginDockspace(); // Cache les 40 lignes de configuration du Dockspace
 
     DrawMenuBar();
+    DrawToolbar();
+    DrawPanels();     // Appelle l'Hierarchy, l'Inspector, le Content Browser
+    DrawViewportWindow();
+    DrawTabs();       // Affiche l'éditeur de matériaux s'il est actif
 
-    bool isSceneTabActive = (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene);
-    if (isSceneTabActive) {
-        UI_Toolbar();
-    }
-
-    // --- RACCOURCIS CLAVIER INTELLIGENTS ---
-    bool control = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
-    bool shift   = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
-
-    if (control && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        if (isSceneTabActive) {
-            if (shift) SaveSceneAs();
-            else SaveScene();
-        } else if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor) {
-            // Ctrl+S envoie l'ordre directement à l'éditeur actif !
-            if (shift) m_Tabs[m_ActiveTabIndex].CustomEditor->SaveAs();
-            else m_Tabs[m_ActiveTabIndex].CustomEditor->Save();
-        }
-    }
-
-    if (control && !shift && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
-        // Nouvelle scène = Nouvel onglet !
-        auto newScene = std::make_shared<Scene>();
-        m_Tabs.push_back({ "Untitled", "", TabType::Scene, newScene, false, nullptr });
-        m_ActiveTabIndex = m_Tabs.size() - 1;
-        m_ActiveScene = newScene;
-        m_ForceTabSelection = true;
-        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-    }
-
-    DrawProjectSettings();
-
-    // --- PANNEAUX DE L'ÉDITEUR ---
-    if (Project::GetActive() == nullptr) {
-        m_HubPanel.OnImGuiRender();
-    } else {
-        // Le Content Browser est commun à tous les modes de travail !
-        m_ContentBrowserPanel->OnImGuiRender();
-
-        if (!m_Tabs.empty()) {
-            auto& activeTab = m_Tabs[m_ActiveTabIndex];
-
-            if (activeTab.Type == TabType::Scene) {
-                // --- MODE SCÈNE ---
-                m_SceneHierarchyPanel.OnImGuiRender();
-
-                // L'ancienne fenêtre Viewport (Sans le bloc TabBar que tu as effacé !)
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-                ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                ImGui::BeginChild("RenderViewport", ImVec2(0, 0), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-                m_ViewportFocused = ImGui::IsWindowFocused();
-                m_ViewportHovered = ImGui::IsWindowHovered();
-
-                // --- 3. LA BARRE D'OUTILS GIZMO ---
-                ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
-                if (ImGui::RadioButton("Translate (W)", m_GizmoType == ImGuizmo::OPERATION::TRANSLATE)) m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Rotate (E)", m_GizmoType == ImGuizmo::OPERATION::ROTATE)) m_GizmoType = ImGuizmo::OPERATION::ROTATE;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Scale (R)", m_GizmoType == ImGuizmo::OPERATION::SCALE)) m_GizmoType = ImGuizmo::OPERATION::SCALE;
-                ImGui::SameLine();
-                ImGui::Dummy(ImVec2(20.0f, 0.0f));
-                ImGui::SameLine();
-                const char* modeStr = (m_GizmoMode == ImGuizmo::LOCAL) ? "Local Space" : "World Space";
-                if (ImGui::Button(modeStr)) m_GizmoMode = (m_GizmoMode == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-
-                // --- 4. GESTION DE LA TAILLE ET CLICS (RAYCAST) ---
-                ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
-                m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
-
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_ViewportHovered && !ImGuizmo::IsOver()) {
-                    ImVec2 mousePos = ImGui::GetMousePos();
-                    ImVec2 windowPos = ImGui::GetWindowPos();
-                    ImVec2 viewportMin = ImGui::GetWindowContentRegionMin();
-
-                    float mouseX = mousePos.x - (windowPos.x + viewportMin.x);
-                    float mouseY = mousePos.y - (windowPos.y + viewportMin.y);
-                    mouseY = m_ViewportSize.y - mouseY; // Inversion Y pour OpenGL
-
-                    if (mouseX >= 0 && mouseY >= 0 && mouseX < m_ViewportSize.x && mouseY < m_ViewportSize.y) {
-                        m_ViewportFramebuffer->Bind();
-                        int pixelData = m_ViewportFramebuffer->ReadPixel(1, (int)mouseX, (int)mouseY);
-                        m_ViewportFramebuffer->Unbind();
-
-                        if (pixelData != -1) {
-                            if (m_ActiveScene->m_Registry.valid((entt::entity)pixelData)) {
-                                Entity clickedEntity((entt::entity)pixelData, m_ActiveScene.get());
-
-                                // --- LE FIX UNREAL (Sélection globale de l'Actor) ---
-                                // Si on clique sur un enfant de Prefab, on sélectionne sa racine !
-                                Entity prefabRoot = m_SceneHierarchyPanel.GetPrefabRoot(clickedEntity);
-                                if (prefabRoot) {
-                                    m_SceneHierarchyPanel.SetSelectedEntity(prefabRoot);
-                                } else {
-                                    m_SceneHierarchyPanel.SetSelectedEntity(clickedEntity);
-                                }
-                            }
-                        } else {
-                            m_SceneHierarchyPanel.SetSelectedEntity({});
-                        }
-                    }
-                }
-
-                // --- 5. L'IMAGE OPENGL ---
-                uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
-                ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
-
-                // --- 6. DRAG & DROP TARGET (Modèles 3D) ---
-                if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                        const char* path = (const char*)payload->Data;
-                        std::filesystem::path filepath = path;
-
-                        if (filepath.extension() == ".obj" || filepath.extension() == ".fbx") {
-                            auto entity = m_ActiveScene->CreateEntity(filepath.stem().string());
-
-                            if (!entity.HasComponent<TransformComponent>()) entity.AddComponent<TransformComponent>();
-                            if (!entity.HasComponent<ColorComponent>()) entity.AddComponent<ColorComponent>(glm::vec3(1.0f));
-                            if (!entity.HasComponent<MeshComponent>()) entity.AddComponent<MeshComponent>();
-
-                            auto& meshComp = entity.GetComponent<MeshComponent>();
-                            meshComp.AssetPath = filepath.string();
-                            meshComp.MeshData = ModelLoader::LoadModel(meshComp.AssetPath);
-                        }
-                        else if (filepath.extension() == ".ceprefab") {
-                            SceneSerializer serializer(m_ActiveScene);
-                            serializer.DeserializePrefab(filepath.string());
-                        }
-                    }
-                    ImGui::EndDragDropTarget();
-                }
-
-                // --- 7. IMGUIZMO (MANIPULATION 3D) ---
-                if (m_SceneHierarchyPanel.GetSelectedEntity() && m_GizmoType != -1) {
-                    Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-
-                    ImGuizmo::SetDrawlist();
-                    ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, ImGui::GetWindowWidth(), ImGui::GetWindowHeight());
-
-                    if (m_ViewportSize.y > 0.0f) {
-                        float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
-                        glm::mat4 cameraProjection = glm::perspectiveLH(glm::radians(45.0f), aspectRatio, 0.1f, 100000.0f);
-                        glm::mat4 cameraView = glm::lookAtLH(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
-
-                        glm::mat4 globalTransform = m_ActiveScene->GetWorldTransform(selectedEntity);
-
-                        ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-                                             (ImGuizmo::OPERATION)m_GizmoType, (ImGuizmo::MODE)m_GizmoMode, glm::value_ptr(globalTransform));
-
-                        if (ImGuizmo::IsUsing()) {
-                            glm::mat4 localTransform = globalTransform;
-
-                            if (selectedEntity.HasComponent<RelationshipComponent>()) {
-                                entt::entity parentID = selectedEntity.GetComponent<RelationshipComponent>().Parent;
-                                if (parentID != entt::null) {
-                                    Entity parent{ parentID, m_ActiveScene.get() };
-                                    glm::mat4 parentGlobal = m_ActiveScene->GetWorldTransform(parent);
-                                    localTransform = glm::inverse(parentGlobal) * globalTransform;
-                                }
-                            }
-
-                            glm::vec3 translation, scale;
-                            glm::quat rotation;
-                            Math::DecomposeTransform(localTransform, translation, rotation, scale);
-
-                            auto& tc = selectedEntity.GetComponent<TransformComponent>();
-                            tc.Location = translation;
-                            tc.Rotation = rotation;
-                            tc.RotationEuler = glm::degrees(glm::eulerAngles(rotation));
-                            tc.Scale = scale;
-                        }
-                    }
-                }
-
-                ImGui::EndChild();
-                ImGui::End();
-                ImGui::PopStyleVar();
-
-            } else if (activeTab.Type == TabType::Material) {
-                // --- MODE CUSTOM EDITOR ---
-                bool open = true;
-                if (activeTab.CustomEditor) {
-                    activeTab.CustomEditor->OnImGuiRender(open);
-                }
-            }
-        }
-    }
+    if (m_ShowProjectSettings) DrawProjectSettings();
 
     EndDockspace();
 }
+
 void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
     if (!m_ViewportFramebuffer) return;
 
@@ -1204,4 +668,76 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
 
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
+}
+
+// --- LE BOILERPLATE DU DOCKSPACE ---
+void EditorLayer::BeginDockspace() {
+    static bool dockspaceOpen = true;
+    static bool opt_fullscreen = true;
+    static bool opt_padding = false;
+    static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
+
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    if (opt_fullscreen) {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+    }
+
+    if (!opt_padding) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+
+    ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
+
+    if (!opt_padding) ImGui::PopStyleVar();
+    if (opt_fullscreen) ImGui::PopStyleVar(2);
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+        ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+    }
+}
+
+void EditorLayer::EndDockspace() {
+    ImGui::End();
+}
+
+// --- LES PANELS MINEURS ---
+void EditorLayer::DrawPanels() {
+    m_SceneHierarchyPanel.OnImGuiRender();
+    if (m_ContentBrowserPanel) m_ContentBrowserPanel->OnImGuiRender();
+
+    // Si tu as un panel de logs, de stats, etc., ajoute-les ici !
+}
+
+// --- LE CŒUR : LE VIEWPORT 3D ---
+void EditorLayer::DrawViewportWindow() {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
+    ImGui::Begin("Viewport");
+
+    auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
+    auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
+    auto viewportOffset = ImGui::GetWindowPos();
+    // Calcul exact de la taille du rendu (sans les bordures ImGui)
+    // ... copie ta logique existante pour calculer m_ViewportSize et les bounds ...
+
+    m_ViewportFocused = ImGui::IsWindowFocused();
+    m_ViewportHovered = ImGui::IsWindowHovered();
+    Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
+
+    ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
+    m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
+
+    uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
+    ImGui::Image((void*)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+
+    HandleViewportDragAndDrop();
+    DrawGizmos();
+
+    ImGui::End();
+    ImGui::PopStyleVar();
 }

@@ -57,18 +57,55 @@ public:
     void CaptureViewportThumbnail(const std::string& projectPath);
 
 private:
-    void DrawMenuBar();
+    // ==========================================
+    // 1. UPDATE LOGIC (La Boucle Principale)
+    // ==========================================
+    void UpdateEditor(float deltaTime);
+    void UpdateRuntime(float deltaTime);
+    void HandleShortcuts();
+
+    // ==========================================
+    // 2. RENDU IMGUI (L'Interface)
+    // ==========================================
     void BeginDockspace();
     void EndDockspace();
+    void DrawMenuBar();
+    void DrawToolbar();
+    void DrawPanels();
+    void DrawTabs();
 
-    void UI_Toolbar();
-    void OnScenePlay();
-    void OnSceneStop();
-    void OnScenePause();
+    // ==========================================
+    // 3. LE VIEWPORT (La vue 3D)
+    // ==========================================
+    void DrawViewportWindow();
+    void HandleViewportDragAndDrop();
+    void DrawGizmos();
+    void ResizeViewportIfNeeded();
 
+    // ==========================================
+    // 4. GESTION DE SCÈNE ET D'ÉTAT
+    // ==========================================
+    void NewScene();
     void OpenScene(const std::filesystem::path& path);
+    void SaveScene();
+    void SaveSceneAs();
+    void OnScenePlay();
+    void OnScenePause();
+    void OnSceneStop();
+
+    // ==========================================
+    // 5. GESTION DES ONGLETS (Tabs)
+    // ==========================================
     void OpenPrefab(const std::filesystem::path& path);
+    void OpenMaterial(const std::filesystem::path& path);
+    void OpenMaterialInstance(const std::filesystem::path& path);
     void CloseTab(int index);
+
+    // ==========================================
+    // 6. GESTION DE PROJET
+    // ==========================================
+    void CloseProjectInternal();
+    void DrawProjectSettings();
 
 private:
     std::shared_ptr<Scene> m_ActiveScene;
