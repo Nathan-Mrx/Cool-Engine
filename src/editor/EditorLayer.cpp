@@ -249,19 +249,18 @@ void EditorLayer::OnImGuiRender() {
         return;
     }
 
-    // --- LE FIX : Actions à exécuter au moment où le projet s'ouvre ---
     if (!m_ProjectLoadedState) {
         m_ProjectLoadedState = true;
 
-        // Option A : Créer une scène vide par défaut
-        NewScene();
+        // --- NOUVEAU : Chargement de la scène par défaut ---
+        std::filesystem::path startScene = Project::GetActive()->GetConfig().StartScene;
+        std::filesystem::path fullPath = Project::GetProjectDirectory() / startScene;
 
-        // Option B (Si tu préfères charger une scène précise de ton projet, décommente ceci à la place) :
-        /*
-        std::filesystem::path defaultScene = Project::GetContentDirectory() / "Scenes/Default.cescene";
-        if (std::filesystem::exists(defaultScene)) OpenScene(defaultScene);
-        else NewScene();
-        */
+        if (!startScene.empty() && std::filesystem::exists(fullPath)) {
+            OpenScene(fullPath);
+        } else {
+            NewScene(); // Fallback : Scène vide si aucune n'est configurée
+        }
     }
 
     BeginDockspace();
@@ -303,7 +302,6 @@ void EditorLayer::OnImGuiRender() {
 
 void EditorLayer::DrawTabs() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    // Une fenêtre dédiée juste pour la barre de navigation !
     ImGui::Begin("Documents", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
 
     if (ImGui::BeginTabBar("EditorTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
@@ -313,26 +311,79 @@ void EditorLayer::DrawTabs() {
 
             ImGuiTabItemFlags flags = (m_ForceTabSelection && m_ActiveTabIndex == i) ? ImGuiTabItemFlags_SetSelected : 0;
 
-            if (ImGui::BeginTabItem(tab.Name.c_str(), &isOpen, flags)) {
-                // Changement de contexte automatique
+            // --- 1. DÉTECTION DU TYPE D'ASSET ---
+            std::string extension = ".cescene"; // Type par défaut pour une nouvelle scène vide
+            if (tab.Type == TabType::Material) extension = ".cemat";
+            else if (tab.Type == TabType::MaterialInstance) extension = ".cematinst";
+
+            if (!tab.Filepath.empty()) {
+                extension = tab.Filepath.extension().string();
+            }
+
+            AssetTypeInfo info;
+            bool isKnownAsset = AssetRegistry::GetInfo(extension, info);
+
+            // --- 2. APPLICATION DES COULEURS ---
+            if (isKnownAsset) {
+                // Couleurs basées sur l'AssetRegistry (Assombries pour ne pas agresser l'œil)
+                ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(info.Color.x * 0.4f, info.Color.y * 0.4f, info.Color.z * 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(info.Color.x * 0.6f, info.Color.y * 0.6f, info.Color.z * 0.6f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4(info.Color.x * 0.8f, info.Color.y * 0.8f, info.Color.z * 0.8f, 1.0f));
+            }
+
+            // On ajoute des espaces vides au nom pour décaler le texte et laisser la place à l'icône
+            std::string tabTitle = "    " + tab.Name;
+
+            bool isSelected = ImGui::BeginTabItem(tabTitle.c_str(), &isOpen, flags);
+
+            if (isKnownAsset) {
+                ImGui::PopStyleColor(3); // On n'oublie pas de dépiler les couleurs !
+            }
+
+            // --- 3. DESSIN DE L'ICÔNE (La Ruse ImGui) ---
+            ImVec2 itemMin = ImGui::GetItemRectMin(); // Récupère le rectangle exact de l'onglet dessiné
+            ImVec2 itemMax = ImGui::GetItemRectMax();
+            float iconSize = ImGui::GetTextLineHeight();
+
+            // On calcule la position de l'icône pour qu'elle soit centrée verticalement à gauche
+            ImVec2 iconPos = ImVec2(itemMin.x + ImGui::GetStyle().FramePadding.x, itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f);
+
+            if (isKnownAsset && info.IconID != 0) {
+                // On ajoute les UVs inversés : ImVec2(0, 1) et ImVec2(1, 0) pour remettre l'image à l'endroit !
+                ImGui::GetWindowDrawList()->AddImage(
+                    (ImTextureID)(uintptr_t)info.IconID,
+                    iconPos,
+                    ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
+                    ImVec2(0, 1), // uv_min
+                    ImVec2(1, 0)  // uv_max
+                );
+            }
+
+            // --- 4. GESTION DU FOCUS ---
+            if (isSelected) {
                 if (m_ActiveTabIndex != i) {
                     m_ActiveTabIndex = i;
                     if (tab.Type == TabType::Scene) {
                         m_ActiveScene = tab.SceneContext;
                         m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+                        // On réapplique automatiquement le mode Prefab si l'onglet est un Prefab !
+                        m_SceneHierarchyPanel.SetIsPrefabScene(extension == ".ceprefab");
                     }
                 }
                 ImGui::EndTabItem();
             }
 
+            // --- 5. FERMETURE ---
             if (!isOpen) {
                 CloseTab(i);
-                i--; // L'onglet a été supprimé, on recule l'index
+                i--;
             }
         }
+
         if (m_ForceTabSelection) m_ForceTabSelection = false;
         ImGui::EndTabBar();
     }
+
     ImGui::End();
     ImGui::PopStyleVar();
 }
@@ -509,7 +560,7 @@ void EditorLayer::SaveSceneAs() {
         // On met à jour l'onglet actif
         auto& activeTab = m_Tabs[m_ActiveTabIndex];
         activeTab.Filepath = filepath;
-        activeTab.Name = filepath.filename().string();
+        activeTab.Name = filepath.stem().string();
 
         SceneSerializer serializer(activeTab.SceneContext);
         serializer.Serialize(filepath.string());
@@ -530,7 +581,7 @@ void EditorLayer::OpenScene(const std::filesystem::path& path) {
     SceneSerializer serializer(newScene);
     serializer.Deserialize(path.string());
 
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Scene, newScene, nullptr });
+    m_Tabs.push_back({ path.stem().string(), path, TabType::Scene, newScene, nullptr });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
 
@@ -556,7 +607,7 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
         }
     };
 
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, newMatPanel });
+    m_Tabs.push_back({ path.stem().string(), path, TabType::Material, nullptr, newMatPanel });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
 }
@@ -576,7 +627,7 @@ void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
     serializer.Deserialize(path.string()); // On charge le prefab comme une scène
 
     // On crée un nouvel onglet de type "Scene", mais on indique au HierarchyPanel que c'est un Prefab
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Scene, newScene, nullptr });
+    m_Tabs.push_back({ path.stem().string(), path, TabType::Scene, newScene, nullptr });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
 
@@ -617,7 +668,7 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
     };
 
     // On ajoute l'onglet
-    m_Tabs.push_back({ path.filename().string(), path, TabType::MaterialInstance, nullptr, newMIPanel });
+    m_Tabs.push_back({ path.stem().string(), path, TabType::MaterialInstance, nullptr, newMIPanel });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
 }
