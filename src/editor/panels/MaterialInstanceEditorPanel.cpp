@@ -63,6 +63,7 @@ void MaterialInstanceEditorPanel::OpenAsset(const std::filesystem::path& path) {
 
 void MaterialInstanceEditorPanel::LoadParentParameters() {
     m_Parameters.clear();
+    m_StaticTextures.clear(); // <-- On nettoie au chargement
     if (m_ParentMaterialPath.empty()) return;
 
     std::filesystem::path fullParentPath = Project::GetProjectDirectory() / m_ParentMaterialPath;
@@ -74,21 +75,32 @@ void MaterialInstanceEditorPanel::LoadParentParameters() {
                 if (nodeJson.contains("IsParameter") && nodeJson["IsParameter"].get<bool>()) {
                     MIParameter param;
                     param.Name = nodeJson["ParameterName"].get<std::string>();
-                    param.Type = nodeJson["Name"].get<std::string>(); // "Float", "Color", "Texture2D"
-                    
-                    if (param.Type == "Float") param.FloatVal = nodeJson["FloatValue"].get<float>();
+                    param.Type = nodeJson["Name"].get<std::string>();
+
+                    if (param.Type == "Float") param.FloatVal = nodeJson.value("FloatValue", 0.0f);
                     else if (param.Type == "Color") {
                         auto col = nodeJson["ColorValue"];
                         param.ColorVal = {col[0], col[1], col[2], col[3]};
                     }
                     else if (param.Type == "Texture2D") {
-                        param.TexturePath = nodeJson["TexturePath"].get<std::string>();
+                        param.TexturePath = nodeJson.value("TexturePath", "");
                         if (!param.TexturePath.empty()) {
                             std::filesystem::path fullTex = Project::GetProjectDirectory() / param.TexturePath;
                             param.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
                         }
                     }
                     m_Parameters[param.Name] = param;
+                }
+                // --- LE FIX DES TEXTURES : On charge les textures "Statiques" du parent ! ---
+                else if (nodeJson["Name"].get<std::string>() == "Texture2D") {
+                    std::string path = nodeJson.value("TexturePath", "");
+                    if (!path.empty()) {
+                        MIStaticTexture st;
+                        st.UniformName = "u_Tex_" + std::to_string(nodeJson["ID"].get<int>());
+                        std::filesystem::path fullTex = Project::GetProjectDirectory() / path;
+                        st.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
+                        m_StaticTextures.push_back(st);
+                    }
                 }
             }
         }
@@ -120,13 +132,20 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
     // ==========================================
     // COLONNE GAUCHE : PREVIEW 3D
     // ==========================================
+    // --- NOUVEAUX SLIDERS (Comme dans le MaterialEditor !) ---
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+    ImGui::SliderFloat("Speed", &m_RotationSpeed, -180.0f, 180.0f, "%.1f deg/s");
+    ImGui::SameLine();
+    ImGui::SliderFloat("Zoom", &m_CameraDistance, 50.0f, 500.0f, "%.0f cm");
+    ImGui::PopItemWidth();
+    ImGui::Separator();
+
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (m_PreviewFramebuffer && viewportSize.x > 0 && viewportSize.y > 0) {
         m_PreviewFramebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
         m_PreviewFramebuffer->Bind();
         glViewport(0, 0, (int)viewportSize.x, (int)viewportSize.y);
 
-        // --- FIX : On active la profondeur et on nettoie comme dans l'éditeur parent ---
         glEnable(GL_DEPTH_TEST);
         glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -134,7 +153,6 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
         if (m_PreviewShader && m_PreviewMesh) {
             m_PreviewShader->Use();
 
-            // --- FIX : Matrices exactes attendues par le Vertex Shader par défaut ---
             float aspect = viewportSize.x / viewportSize.y;
             glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
             glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
@@ -143,19 +161,22 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
             m_PreviewShader->SetMat4("uProjection", proj);
             m_PreviewShader->SetMat4("uView", view);
 
+            // --- ROTATION FLUIDE (DeltaTime au lieu de Temps Absolu) ---
+            static float s_PreviewRotation = 0.0f;
+            s_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+
             glm::mat4 model = glm::mat4(1.0f);
-            model = glm::rotate(model, glm::radians(m_RotationSpeed * (float)glfwGetTime()), glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::rotate(model, glm::radians(s_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
             model = glm::scale(model, glm::vec3(0.8f));
             m_PreviewShader->SetMat4("uModel", model);
 
-            // --- FIX : Éclairage PBR indispensable pour ne pas être noir ---
             m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
             m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
             m_PreviewShader->SetVec3("uViewPos", camPos);
             m_PreviewShader->SetFloat("uTime", (float)glfwGetTime());
 
-            // --- Envoi des paramètres modifiés (Uniforms) ---
             int texSlot = 0;
+            // 1. Textures des Paramètres d'Instance
             for (auto& [key, param] : m_Parameters) {
                 if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);
                 else if (param.Type == "Color") m_PreviewShader->SetVec3("u_" + key, param.ColorVal);
@@ -163,6 +184,16 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
                     glActiveTexture(GL_TEXTURE0 + texSlot);
                     glBindTexture(GL_TEXTURE_2D, param.TextureID);
                     m_PreviewShader->SetInt("u_" + key, texSlot);
+                    texSlot++;
+                }
+            }
+
+            // 2. Textures Statiques du Parent (C'est ça qui corrige la lumière !)
+            for (auto& st : m_StaticTextures) {
+                if (st.TextureID != 0) {
+                    glActiveTexture(GL_TEXTURE0 + texSlot);
+                    glBindTexture(GL_TEXTURE_2D, st.TextureID);
+                    m_PreviewShader->SetInt(st.UniformName, texSlot);
                     texSlot++;
                 }
             }
@@ -176,7 +207,7 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
             }
             glActiveTexture(GL_TEXTURE0);
         }
-        
+
         m_PreviewFramebuffer->Unbind();
         ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), viewportSize, ImVec2(0, 1), ImVec2(1, 0));
     }

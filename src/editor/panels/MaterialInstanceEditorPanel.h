@@ -20,6 +20,11 @@ struct MIParameter {
     bool IsOverridden = false;
 };
 
+struct MIStaticTexture {
+    std::string UniformName;
+    uint32_t TextureID = 0;
+};
+
 class MaterialInstanceEditorPanel : public IAssetEditor {
 public:
     MaterialInstanceEditorPanel() = default;
@@ -43,6 +48,8 @@ private:
     std::filesystem::path m_CurrentPath;
     std::string m_ParentMaterialPath = "";
     std::unordered_map<std::string, MIParameter> m_Parameters;
+
+    std::vector<MIStaticTexture> m_StaticTextures;
 
     // --- Preview 3D ---
     std::shared_ptr<Framebuffer> m_PreviewFramebuffer;
