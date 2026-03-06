@@ -18,6 +18,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include "AssetRegistry.h"
+#include "CommandHistory.h"
 
 
 void EditorLayer::OnAttach() {
@@ -561,6 +562,8 @@ void EditorLayer::SaveSceneAs() {
 }
 
 void EditorLayer::OpenScene(const std::filesystem::path& path) {
+    CommandHistory::Clear();
+
     // Vérifie si la scène est déjà ouverte
     for (int i = 0; i < m_Tabs.size(); ++i) {
         if (m_Tabs[i].Filepath == path) {
@@ -602,6 +605,8 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
 }
 
 void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
+    CommandHistory::Clear();
+
     // Vérifie si le prefab est déjà ouvert dans un onglet
     for (int i = 0; i < m_Tabs.size(); ++i) {
         if (m_Tabs[i].Filepath == path) {
@@ -873,23 +878,53 @@ void EditorLayer::DrawGizmos() {
         if (m_GizmoType == ImGuizmo::OPERATION::ROTATE) snapValue = 45.0f;
         float snapValues[3] = { snapValue, snapValue, snapValue };
 
-        // Dessin du Gizmo et récupération des manipulations
+        // --- VARIABLES STATIQUES POUR RETENIR L'ÉTAT AVANT LE MOUVEMENT ---
+        static bool s_WasUsingGizmo = false;
+        static glm::vec3 s_StartPos, s_StartScale;
+        static glm::quat s_StartRot;
+
         ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-                             static_cast<ImGuizmo::OPERATION>(m_GizmoType), static_cast<ImGuizmo::MODE>(m_GizmoMode), glm::value_ptr(transform),
+                             (ImGuizmo::OPERATION)m_GizmoType, (ImGuizmo::MODE)m_GizmoMode, glm::value_ptr(transform),
                              nullptr, snap ? snapValues : nullptr);
 
-        // Si l'utilisateur est en train de tirer sur la flèche du Gizmo
         if (ImGuizmo::IsUsing()) {
+            // Le moment exact où on vient de cliquer sur le Gizmo
+            if (!s_WasUsingGizmo) {
+                s_StartPos = tc.Location;
+                s_StartRot = tc.Rotation;
+                s_StartScale = tc.Scale;
+                s_WasUsingGizmo = true;
+            }
+
             glm::vec3 translation, scale;
             glm::quat rotation;
-
-            // On décompose la matrice de manipulation
             Math::DecomposeTransform(transform, translation, rotation, scale);
 
-            // On assigne directement sans passer par un "delta"
             tc.Location = translation;
             tc.Rotation = rotation;
             tc.Scale = scale;
+        }
+        else {
+            // Le moment exact où on vient de lâcher le clic de la souris !
+            if (s_WasUsingGizmo) {
+                s_WasUsingGizmo = false;
+
+                glm::vec3 endPos = tc.Location;
+                glm::quat endRot = tc.Rotation;
+                glm::vec3 endScale = tc.Scale;
+
+                // On pousse l'action dans l'historique avec nos deux Lambdas
+                CommandHistory::AddCommand(std::make_unique<ActionCommand>(
+                    [ent = selectedEntity, p = s_StartPos, r = s_StartRot, s = s_StartScale]() mutable {
+                        auto& t = ent.GetComponent<TransformComponent>();
+                        t.Location = p; t.Rotation = r; t.Scale = s;
+                    },
+                    [ent = selectedEntity, p = endPos, r = endRot, s = endScale]() mutable {
+                        auto& t = ent.GetComponent<TransformComponent>();
+                        t.Location = p; t.Rotation = r; t.Scale = s;
+                    }
+                ));
+            }
         }
     }
 }
@@ -899,6 +934,8 @@ void EditorLayer::DrawGizmos() {
 // =========================================================================================
 
 void EditorLayer::NewScene() {
+    CommandHistory::Clear();
+
     const auto newScene = std::make_shared<Scene>();
     m_Tabs.push_back({ "New Scene", "", TabType::Scene, newScene, nullptr });
     m_ActiveTabIndex = m_Tabs.size() - 1;
@@ -909,10 +946,20 @@ void EditorLayer::NewScene() {
 }
 
 void EditorLayer::HandleShortcuts() {
-    // Si l'utilisateur est en train de taper du texte (ex: renommer une entité), on ignore les raccourcis !
     if (ImGui::GetIO().WantTextInput) return;
 
-    const bool ctrl = ImGui::GetIO().KeyCtrl;
+    bool ctrl = ImGui::GetIO().KeyCtrl;
+    bool shift = ImGui::GetIO().KeyShift;
+
+    // --- ANNULER (Ctrl + Z) ---
+    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        CommandHistory::Undo();
+    }
+    // --- REFAIRE (Ctrl + Y ou Ctrl + Shift + Z) ---
+    else if ((ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) ||
+             (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Y, false))) {
+        CommandHistory::Redo();
+             }
 
     // --- Sauvegarde (Ctrl + S) ---
     if (const bool shift = ImGui::GetIO().KeyShift; ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
