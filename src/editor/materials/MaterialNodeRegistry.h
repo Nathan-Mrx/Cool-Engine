@@ -37,14 +37,20 @@ public:
     }
 
     // On passe le noeud en référence pour pouvoir retourner un succès/échec
+    // On passe le noeud en référence pour pouvoir retourner un succès/échec
     static bool CreateNode(const std::string& name, int& nextId, MaterialNode& outNode) {
         if (GetRegistry().find(name) != GetRegistry().end()) {
             outNode.ID = ed::NodeId(nextId++);
             outNode.Name = name;
+
+            // --- L'AIRBAG MÉMOIRE : On verrouille la taille pour éviter les crashs de strings ! ---
+            outNode.Inputs.reserve(16);
+            outNode.Outputs.reserve(16);
+
             GetRegistry()[name]->Initialize(outNode, nextId);
             return true;
         }
-        return false; // Le noeud n'existe pas dans le moteur !
+        return false;
     }
 
     static ImColor GetNodeColor(const std::string& name) {

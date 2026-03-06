@@ -97,24 +97,25 @@ MaterialEditorPanel::~MaterialEditorPanel() {
 void MaterialEditorPanel::BuildDefaultNodes() {
     m_Nodes.clear();
     m_Links.clear();
-    m_NextId = 1; // On reset l'ID global
+    m_NextId = 1;
 
-    // 1. Création du Master Node (Sécurisée)
+    // --- L'AIRBAG MÉMOIRE : On prévient le déplacement des Noeuds ---
+    m_Nodes.reserve(100);
+
     MaterialNode baseNode;
     if (MaterialNodeRegistry::CreateNode("Base Material", m_NextId, baseNode)) {
-        ed::SetNodePosition(baseNode.ID, ImVec2(400, 100));
         m_Nodes.push_back(baseNode);
+        ed::SetNodePosition(m_Nodes.back().ID, ImVec2(400, 100)); // Toujours positionner la copie finale !
     }
 
-    // 2. Bonus : On lui attache une couleur par défaut pour avoir un matériau visuel direct !
     MaterialNode colorNode;
     if (MaterialNodeRegistry::CreateNode("Color", m_NextId, colorNode)) {
-        ed::SetNodePosition(colorNode.ID, ImVec2(50, 100));
         m_Nodes.push_back(colorNode);
+        ed::SetNodePosition(m_Nodes.back().ID, ImVec2(50, 100));
 
-        // On crée automatiquement le câble entre RGB et Base Color
-        if (!colorNode.Outputs.empty() && !baseNode.Inputs.empty()) {
-            m_Links.push_back({ ed::LinkId(m_NextId++), colorNode.Outputs[0].ID, baseNode.Inputs[0].ID });
+        // Branchement par défaut
+        if (!m_Nodes[1].Outputs.empty() && !m_Nodes[0].Inputs.empty()) {
+            m_Links.push_back({ ed::LinkId(m_NextId++), m_Nodes[1].Outputs[0].ID, m_Nodes[0].Inputs[0].ID });
         }
     }
 }
@@ -205,14 +206,21 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
     ImVec2 previewAvail = ImGui::GetContentRegionAvail();
 
-    // On redimensionne dynamiquement le Framebuffer
-    if (previewAvail.x > 0 && previewAvail.y > 0 &&
-       (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
-        m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
+    // --- LE FIX EST ICI : On vérifie que le pointeur existe avant de le lire ! ---
+    if (m_PreviewFramebuffer) {
+        // On redimensionne dynamiquement le Framebuffer
+        if (previewAvail.x > 0 && previewAvail.y > 0 &&
+           (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
+            m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
+           }
+
+        // On affiche l'image
+        ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
+    } else {
+        // Optionnel : un texte de debug pour te prévenir si ça charge mal
+        ImGui::Text("Preview Loading...");
     }
 
-    // On affiche l'image (l'ID OpenGL retourné en texture ImGui)
-    ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
     ImGui::End();
     // ========================================================
 
@@ -734,9 +742,10 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
     m_Nodes.clear();
     m_Links.clear();
 
-    if (!data.contains("Nodes")) {
+    if (!data.contains("Nodes") || data["Nodes"].empty()) { // <--- Ajout du empty()
         BuildDefaultNodes();
         ed::SetCurrentEditor(nullptr);
+        CompilePreviewShader(); // On n'oublie pas de compiler la sphère par défaut !
         return;
     }
 
