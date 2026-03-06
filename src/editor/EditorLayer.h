@@ -71,7 +71,6 @@ private:
     void EndDockspace();
     void DrawMenuBar();
     void DrawToolbar();
-    void DrawPanels();
     void DrawTabs();
 
     // ==========================================

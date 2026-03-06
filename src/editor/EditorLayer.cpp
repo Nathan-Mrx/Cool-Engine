@@ -232,13 +232,34 @@ void EditorLayer::OnImGuiRender() {
         return;
     }
 
-    BeginDockspace(); // Cache les 40 lignes de configuration du Dockspace
+    BeginDockspace();
 
     DrawMenuBar();
     DrawToolbar();
-    DrawPanels();     // Appelle l'Hierarchy, l'Inspector, le Content Browser
-    DrawViewportWindow();
-    DrawTabs();       // Affiche l'éditeur de matériaux s'il est actif
+
+    // 1. Les Onglets et le Content Browser sont communs à TOUS les modes
+    DrawTabs();
+    if (m_ContentBrowserPanel) m_ContentBrowserPanel->OnImGuiRender();
+
+    // 2. Gestion de l'affichage en fonction de l'onglet actif
+    if (!m_Tabs.empty() && m_ActiveTabIndex >= 0 && m_ActiveTabIndex < m_Tabs.size()) {
+        auto& activeTab = m_Tabs[m_ActiveTabIndex];
+
+        if (activeTab.Type == TabType::Scene) {
+            // Mode Scène : On affiche la Hiérarchie, l'Inspector et le Viewport 3D
+            m_SceneHierarchyPanel.OnImGuiRender();
+            DrawViewportWindow();
+        }
+        else if (activeTab.CustomEditor) {
+            // Mode Asset (Ex: Material) : On cache la scène et on affiche l'éditeur dédié
+            bool dummyOpen = true;
+            activeTab.CustomEditor->OnImGuiRender(dummyOpen);
+        }
+    } else {
+        // Par défaut si aucun onglet n'est ouvert (Fallback)
+        m_SceneHierarchyPanel.OnImGuiRender();
+        DrawViewportWindow();
+    }
 
     if (m_ShowProjectSettings) DrawProjectSettings();
 
@@ -732,14 +753,6 @@ void EditorLayer::EndDockspace() {
     ImGui::End();
 }
 
-// --- LES PANELS MINEURS ---
-void EditorLayer::DrawPanels() {
-    m_SceneHierarchyPanel.OnImGuiRender();
-    if (m_ContentBrowserPanel) m_ContentBrowserPanel->OnImGuiRender();
-
-    // Si tu as un panel de logs, de stats, etc., ajoute-les ici !
-}
-
 // --- LE CŒUR : LE VIEWPORT 3D ---
 void EditorLayer::DrawViewportWindow() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
@@ -778,7 +791,6 @@ void EditorLayer::DrawTabs() {
             auto& tab = m_Tabs[i];
             bool isOpen = true;
 
-            // Force la sélection si on vient d'ouvrir un nouvel onglet
             ImGuiTabItemFlags flags = (m_ForceTabSelection && m_ActiveTabIndex == i) ? ImGuiTabItemFlags_SetSelected : 0;
 
             if (ImGui::BeginTabItem(tab.Name.c_str(), &isOpen, flags)) {
@@ -792,13 +804,12 @@ void EditorLayer::DrawTabs() {
                     }
                 }
 
-                // 1. Si c'est un éditeur externe (Material), on le dessine DANS l'onglet
-                if (tab.CustomEditor) {
-                    tab.CustomEditor->OnImGuiRender(isOpen);
-                }
-                // 2. Si c'est une scène, l'action se passe dans la vue 3D à côté
-                else if (tab.Type == TabType::Scene) {
-                    ImGui::TextDisabled("Scene is currently active in the Viewport.");
+                // Plus propre : on affiche juste un petit texte d'indication dans l'onglet
+                ImGui::Dummy(ImVec2(0, 10));
+                if (tab.Type == TabType::Scene) {
+                    ImGui::TextDisabled("   Scene Viewport is active.");
+                } else {
+                    ImGui::TextDisabled("   Asset Editor is active.");
                 }
 
                 ImGui::EndTabItem();
