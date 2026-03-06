@@ -25,4 +25,10 @@ private:
     char m_NewAssetName[128] = "";
 
     uint32_t m_DirectoryIcon = 0;
+
+    // --- ÉTAT DE SÉLECTION ET RENOMMAGE ---
+    std::filesystem::path m_SelectedPath;
+    std::filesystem::path m_RenamingPath;
+    bool m_IsRenaming = false;
+    char m_RenameBuffer[256] = "";
 };
