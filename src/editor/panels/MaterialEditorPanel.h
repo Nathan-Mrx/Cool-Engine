@@ -36,9 +36,7 @@ public:
     void Save(const std::filesystem::path& path);
     void Load(const std::filesystem::path& path);
 
-    // --- NOUVEAU : Le Callback de Hot-Reload ---
     std::function<void(const std::filesystem::path&)> OnMaterialSavedCallback;
-    //...
 
 private:
     void BuildDefaultNodes();
@@ -108,4 +106,25 @@ private:
     void UpdateWildcardPins();
 
     std::filesystem::path m_CurrentPath;
+
+    // --- VARIABLES D'UI ET DE PREVIEW ---
+    float m_PreviewRotation = 0.0f;
+    float m_RotationSpeed = 30.0f;
+    float m_CameraDistance = 250.0f;
+    float m_TotalTime = 0.0f;
+    bool m_RequestNodeMenu = false; // Utilisé pour ouvrir le menu après création d'un câble
+
+    // --- SOUS-FONCTIONS DE RENDU (Refactoring) ---
+    void RenderPreview3D();
+    void DrawPreviewWindow();
+    void DrawNodeEditorWindow(bool& isOpen);
+
+    void HandleShortcuts();
+    void DrawNodes();
+    void DrawCommentNode(MaterialNode& node);
+    void DrawRerouteNode(MaterialNode& node);
+    void DrawStandardNode(MaterialNode& node);
+    void DrawLinks();
+    void HandleInteraction();
+    void DrawContextMenus();
 };
