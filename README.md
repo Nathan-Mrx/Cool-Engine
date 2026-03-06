@@ -1,49 +1,107 @@
-# 🚀 Cool Engine (3D)
+🚀 Cool Engine (3D)
 
-**Cool Engine** est un moteur de jeu 3D développé en C++20, conçu avec une architecture "Industry-Ready" orientée performance et modularité. Pensé avec une approche **Linux-first** (idéal pour Arch/CachyOS), il repose sur les standards modernes de l'industrie du jeu vidéo.
+Cool Engine est un moteur de jeu 3D moderne développé en C++20, axé sur la performance, la modularité et un workflow orienté données. Conçu avec une approche Linux-first (optimisé pour CachyOS/Arch), il intègre des technologies standards de l'industrie pour offrir un environnement de développement professionnel et extensible.
+🌟 Architecture & Core
 
-## 🌟 Présentation du Projet
+Le cœur du moteur repose sur des bases solides et automatisées :
 
-Le but de Cool Engine est d'offrir une plateforme de création visuelle performante et un environnement de développement optimisé. À la croisée entre la puissance d'un moteur C++ bas niveau et la flexibilité d'un éditeur moderne, le moteur s'articule autour de concepts clés :
+    Entity Component System (ECS) : Utilisation de EnTT pour une gestion ultra-performante des entités et des données.
 
-* **Entity Component System (ECS) :** Architecture de traitement ultra-rapide basée sur [EnTT](https://github.com/skypjack/entt) pour la gestion optimisée des données en jeu.
-* **Éditeur Intégré :** Un éditeur professionnel complet offrant une hiérarchie dynamique (`ScriptableNode`), un système d'Inspector temps réel via réflexion statique, et des modificateurs interactifs (Gizmos 3D).
-* **Rendu & Physique :** Un rendu basé sur OpenGL 4.6 (Modern Pipeline) couplé à une implémentation grandissante du moteur physique AAA [Jolt Physics](https://github.com/jrouwe/JoltPhysics).
-* **Workflow Avancé :** Support du rechargement à chaud (Hot-Reloading), d'une compilation asynchrone pour les projets avec écrans de démarrage, et d'une conception par modules dynamiques. Un éditeur de matériaux par nœuds est également de la partie.
-* **Gestion d'Assets :** Un navigateur de contenu ("Content Browser") avec glisser-déposer, assurant une sérialisation complète des scènes (.cescene) au format JSON.
+    Gestion de Projet AAA : Structure de dossiers normalisée (Content, Binaries, Config) et support du chargement asynchrone des projets avec écran de démarrage.
 
----
+    Métaprogrammation (CoolHeaderTool) : Un outil Python personnalisé (CHT) analyse le code source pour générer automatiquement les registres de scripts, de nœuds de matériaux et de types d'assets, éliminant ainsi le code de boilerplate manuel.
 
-## 🗺️ Roadmap
+    Identification Unique : Système de UUID (Universally Unique Identifier) pour la gestion persistante des entités et des assets.
 
-L'objectif est d'étendre progressivement les capacités du moteur pour en faire une solution toujours plus polyvalente. Voici les prochaines étapes majeures de développement :
+🎨 Rendu & Graphismes
 
-* [ ] **Éditeur de Matériaux :** Finaliser et étendre l'éditeur de matériaux basé sur des nœuds (Material node based editor).
-* [ ] **Physique :** Intégration plus poussée de Jolt Physics (Deeper Jolt physics integration).
-* [ ] **Audio :** Intégration du middleware audio FMOD.
-* [ ] **Input :** Implémenter un système d'entrées multi-appareils (Multi-device input system).
-* [ ] **Play Mode :** Ajouter un bouton Play/Stop pour tester la scène sans quitter l'éditeur.
-* [ ] **Scripting :** Système de "Native Scripting" en C++ pour la logique de gameplay.
-* [ ] **Networking :** Protocole personnalisé pour le multijoueur en ligne.
+Le pipeline de rendu exploite OpenGL 4.6 moderne :
 
----
+    Modèle de Shading PBR : Implémentation complète du modèle de micro-facettes Cook-Torrance (Albedo, Metallic, Roughness, Normal Mapping, Ambient Occlusion).
 
-## 🏗️ Installation & Build (Linux / CachyOS)
+    Éclairage Dynamique : Support des lumières directionnelles et ponctuelles.
 
-La gestion des dépendances du moteur est gérée sans heurts par **vcpkg**.
+    Post-Process & Debug : Système d'outline pour la sélection d'objets, rendu en fil de fer (wireframe) et grille de référence dynamique.
 
-```bash
-# 1. Cloner le dépôt
-git clone https://github.com/Nathan/CoolEngine.git
+    Gestion des Shaders : Système de cache automatisé dans .ce_cache pour les shaders générés, évitant l'encombrement du navigateur de contenu.
+
+🛠️ Éditeur de Matériaux (Nodal)
+
+L'une des pièces maîtresses du moteur est son éditeur visuel :
+
+    Graph de Matériau : Création de shaders complexes via une interface de nœuds intuitive (Maths, Textures, Couleurs, Reroute).
+
+    Live Preview : Compilation en temps réel et prévisualisation sur une sphère 3D avec contrôle de la caméra et de la rotation.
+
+    Hot-Reloading : Mise à jour instantanée de tous les matériaux dans la scène principale dès la sauvegarde, sans redémarrage.
+
+    Système Wildcard : Adaptation dynamique du type des connecteurs (float vers vec3, etc.) pour une flexibilité maximale.
+
+📂 Gestion d'Assets & UX
+
+L'éditeur offre une expérience utilisateur fluide inspirée des standards du marché :
+
+    Content Browser Evolué : Navigation par icônes, tri intelligent (Dossiers > Type > Nom), et masquage des extensions de fichiers.
+
+    Asset Registry : Système extensible permettant de définir de nouveaux types d'assets (.cemat, .ceprefab, .cescene, .cewav) avec leurs propres couleurs et icônes via AssetDefinitions.h.
+
+    Édition Directe : Renommage rapide via la touche F2 ou clic contextuel, tant pour les assets que pour les entités de la scène.
+
+    Drag & Drop : Importation de modèles (.obj, .fbx) et assignation de matériaux par glisser-déposer.
+
+    Viewport Interactif : Intégration de Gizmos (ImGuizmo) pour la manipulation directe des objets dans l'espace 3D.
+
+⚖️ Physique & Gameplay
+
+    Jolt Physics : Intégration avancée du moteur physique AAA pour la gestion des corps rigides (Statiques, Cinématiques, Dynamiques).
+
+    Collisions : Boîtes de collision avec paramètres de friction et de restitution réglables.
+
+    Native Scripting : Système de scripts C++ attachables aux entités, avec enregistrement automatique via le CoolHeaderTool.
+
+🗺️ Roadmap
+
+    [ ] Material Instances : Création de variantes de matériaux sans recompilation.
+
+    [ ] Audio System : Intégration de la librairie FMOD ou SoLoud.
+
+    [ ] Networking : Système de réseau pour les jeux multijoueurs. (dedicated game server avec protocole custom)
+
+    [ ] UX : Ctrl+Z, Ctrl+Y, multi-sélection, duplication d'entités, etc.
+
+    [ ] Cache : Meilleure gestion des fichiers temporaires
+
+    [ ] Nodes : creer une liste de premade Nodes avec le UHT et retirer le bouton Add Component
+
+    [ ] Physics : Integration plus avancee de Jolt Physics
+
+    [ ] UI : Ajouter un theme, des icones et rendre l'UI plus intuitive et complete
+
+    [ ] Documentation : Guide de l'utilisateur et tutoriels vidéo.
+
+🏗️ Installation & Build (Linux)
+
+Le moteur utilise vcpkg pour une gestion simplifiée des dépendances.
+Bash
+
+# 1. Cloner le dépôt et ses sous-modules
+git clone --recursive https://github.com/Nathan/CoolEngine.git
 cd CoolEngine
 
-# 2. Installer les dépendances via vcpkg
+# 2. Installer les dépendances
 ./vcpkg/vcpkg install
 
-# 3. Configurer et compiler avec CMake
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
-cmake --build build -j$(nproc)
-```
+# 3. Préparer les icônes (nécessite Python & Pillow)
+python3 tools/FormatIcons.py
 
----
-*Développé par Nathan Merieux*
+# 4. Compiler avec CMake
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=[path_to_vcpkg]/scripts/buildsystems/vcpkg.cmake
+cmake --build build -j $(nproc)
+
+🛠️ Outils Inclus
+
+    FormatIcons.py : Normalise, centre et blanchit automatiquement les icônes de l'UI pour un rendu uniforme.
+
+    CoolHeaderTool.py : Automatise la réflexion C++ et le registre des classes.
+
+Cool Engine est un projet en développement actif par Nathan.
