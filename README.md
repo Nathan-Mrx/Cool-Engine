@@ -84,17 +84,25 @@ L'éditeur offre une expérience utilisateur fluide inspirée des standards du m
 Le moteur utilise vcpkg pour une gestion simplifiée des dépendances.
 Bash
 
-# 1. Cloner le dépôt et ses sous-modules
+1. Cloner le dépôt et ses sous-modules
+
+
     git clone --recursive https://github.com/Nathan/CoolEngine.git
     cd CoolEngine
 
-# 2. Installer les dépendances
+2. Installer les dépendances
+
+
     ./vcpkg/vcpkg install
 
-# 3. Préparer les icônes (nécessite Python & Pillow)
+3. Préparer les icônes (nécessite Python & Pillow)
+
+
     python3 tools/FormatIcons.py
 
-# 4. Compiler avec CMake
+4. Compiler avec CMake
+
+
     cmake -B build -DCMAKE_TOOLCHAIN_FILE=[path_to_vcpkg]/scripts/buildsystems/vcpkg.cmake
     cmake --build build -j $(nproc)
 
