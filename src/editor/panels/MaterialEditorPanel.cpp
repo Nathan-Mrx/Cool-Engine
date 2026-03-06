@@ -198,6 +198,13 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             glBindVertexArray(m_PreviewMesh->GetVAO());
             glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
             glBindVertexArray(0);
+
+            // ========================================================
+            // --- LE FIX EST ICI : NETTOYAGE DE L'ÉTAT OPENGL ---
+            // ========================================================
+            glActiveTexture(GL_TEXTURE0);    // On remet l'aiguille à zéro
+            glBindTexture(GL_TEXTURE_2D, 0); // On vide le slot
+            glUseProgram(0);                 // On lâche le shader
         }
         m_PreviewFramebuffer->Unbind();
     }
