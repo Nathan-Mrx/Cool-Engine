@@ -11,6 +11,7 @@ public:
     std::function<void(const std::filesystem::path&)> OnSceneOpenCallback;
     std::function<void(const std::filesystem::path&)> OnPrefabOpenCallback;
     std::function<void(const std::filesystem::path&)> OnMaterialOpenCallback;
+    std::function<void(const std::filesystem::path&)> OnMaterialInstanceOpenCallback;
 
 private:
     std::filesystem::path m_CurrentDirectory;

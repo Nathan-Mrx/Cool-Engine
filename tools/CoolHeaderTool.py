@@ -137,5 +137,7 @@ if __name__ == "__main__":
         generate_script_registry(source_dir, output_file)
     elif mode == "--materials":
         generate_material_registry(source_dir, output_file)
+    elif mode == "--assets":
+        generate_asset_registry(source_dir, output_file)
     else:
         print("Mode inconnu. Utilisez --scripts ou --materials")

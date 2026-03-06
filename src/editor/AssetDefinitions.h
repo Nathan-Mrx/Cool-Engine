@@ -46,7 +46,21 @@ struct MaterialAsset : public IAssetType {
     }
 };
 
-// --- NOUVEAU ---
+CE_ASSET()
+struct MaterialInstanceAsset : public IAssetType {
+    std::string GetName() const override { return "Material Instance"; }
+    std::string GetExtension() const override { return ".cematinst"; }
+    // Un vert un peu plus vif que le Material classique pour les différencier
+    ImVec4 GetColor() const override { return ImVec4(0.4f, 0.9f, 0.4f, 1.0f); }
+    std::string GetIconPath() const override { return "icons/material.png"; } // Tu pourras changer l'icône plus tard
+
+    void CreateDefaultAsset(const std::filesystem::path& path) const override {
+        std::ofstream file(path);
+        // On crée un JSON avec un Parent vide et des Overrides vides
+        file << "{\n    \"Parent\": \"\",\n    \"Overrides\": {}\n}";
+    }
+};
+
 CE_ASSET()
 struct AudioAsset : public IAssetType {
     std::string GetName() const override { return "Audio"; }

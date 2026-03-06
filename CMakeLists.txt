@@ -62,6 +62,8 @@ set(SOURCES
         src/renderer/stb_image_impl.cpp
         src/editor/panels/MaterialEditorPanel.cpp
         src/editor/panels/MaterialEditorPanel.h
+        src/editor/panels/MaterialInstanceEditorPanel.cpp
+        src/editor/panels/MaterialInstanceEditorPanel.h
         src/editor/materials/MaterialGraph.h
         src/editor/materials/MaterialNodeRegistry.h
         src/editor/materials/NodeDefinitions.h
@@ -69,6 +71,7 @@ set(SOURCES
         src/editor/IAssetEditor.h
         src/editor/AssetRegistry.h
         src/editor/AssetDefinitions.h
+        src/editor/AssetRegistry.generated.cpp
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---

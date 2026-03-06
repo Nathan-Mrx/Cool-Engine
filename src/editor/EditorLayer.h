@@ -115,5 +115,6 @@ private:
     bool m_ShowMaterialEditor = false;
 
     void OpenMaterial(const std::filesystem::path& path);
+    void OpenMaterialInstance(const std::filesystem::path& path);
 
 };

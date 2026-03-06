@@ -182,6 +182,7 @@ void ContentBrowserPanel::OnImGuiRender() {
                     if (path.extension() == ".cescene" && OnSceneOpenCallback) OnSceneOpenCallback(path);
                     else if (path.extension() == ".ceprefab" && OnPrefabOpenCallback) OnPrefabOpenCallback(path);
                     else if (path.extension() == ".cemat" && OnMaterialOpenCallback) OnMaterialOpenCallback(path);
+                    else if (path.extension() == ".cematinst" && OnMaterialInstanceOpenCallback) OnMaterialInstanceOpenCallback(path);
                 }
 
                 if (ImGui::BeginDragDropSource()) {

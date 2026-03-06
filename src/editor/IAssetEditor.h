@@ -1,5 +1,8 @@
 #pragma once
 #include <imgui.h>
+#include <functional>
+#include <filesystem>
+#include <memory>
 
 class IAssetEditor {
 public:

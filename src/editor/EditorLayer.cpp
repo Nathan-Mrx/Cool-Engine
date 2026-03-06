@@ -11,12 +11,14 @@
 #include "scene/SceneSerializer.h"
 #include <stb_image_write.h>
 #include <math/Math.h>
+#include "panels/MaterialInstanceEditorPanel.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <stb_image.h>
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include "AssetRegistry.h"
+
 
 void EditorLayer::OnAttach() {
     int width, height, channels;
@@ -51,6 +53,9 @@ void EditorLayer::OnAttach() {
     };
     m_ContentBrowserPanel->OnMaterialOpenCallback = [this](const std::filesystem::path& path) {
         OpenMaterial(path);
+    };
+    m_ContentBrowserPanel->OnMaterialInstanceOpenCallback = [this](const std::filesystem::path& path) {
+        OpenMaterialInstance(path);
     };
 
     FramebufferSpecification fbSpec;
@@ -1147,6 +1152,29 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
 
     // 3. On ajoute le nouvel onglet
     m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMatPanel });
+
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ForceTabSelection = true;
+}
+
+void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
+    // 1. On vérifie si l'onglet est déjà ouvert
+    for (int i = 0; i < m_Tabs.size(); i++) {
+        if (m_Tabs[i].Filepath == path) {
+            m_ActiveTabIndex = i;
+            m_ForceTabSelection = true;
+            return;
+        }
+    }
+
+    // 2. On crée le nouveau panel
+    auto newMIPanel = std::make_shared<MaterialInstanceEditorPanel>();
+    newMIPanel->Load(path);
+
+    // TODO: Ajouter le Hot Reload Callback pour la scène ici (comme pour le Material)
+
+    // 3. On ajoute l'onglet (On triche en disant que c'est un TabType::Material pour que le système d'UI CustomEditor s'en charge)
+    m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMIPanel });
 
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
