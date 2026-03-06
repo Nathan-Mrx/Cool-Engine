@@ -51,46 +51,43 @@ static void DrawPinIcon(PinType type, bool connected) {
 
 
 MaterialEditorPanel::MaterialEditorPanel() {
+    // 1. On charge tous les noeuds générés par le script Python !
+    MaterialNodeRegistry::RegisterAllNodes();
+
     ed::Config config;
-    // --- LE KILL SWITCH (Bloque la corruption de caméra) ---
-    config.SettingsFile = nullptr;
+    config.SettingsFile = nullptr; // Bloque la corruption de caméra
     m_Context = ed::CreateEditor(&config);
 
-    // =========================================================
-    // --- NOUVEAU : LE THÈME VISUEL (Façon Unreal Engine) ---
-    // =========================================================
+    // 2. On active le contexte pour TOUTE la durée de l'initialisation
     ed::SetCurrentEditor(m_Context);
     ed::Style& style = ed::GetStyle();
 
     // Formes et épaisseurs
     style.NodeRounding = 8.0f;
     style.PinRounding = 4.0f;
-    style.LinkStrength = 4.0f;          // Câbles plus lisses et courbés
+    style.LinkStrength = 100.0f; // Câbles tendus
     style.NodeBorderWidth = 1.5f;
     style.HoveredNodeBorderWidth = 2.5f;
     style.SelectedNodeBorderWidth = 3.0f;
     style.PinBorderWidth = 1.0f;
 
-    // Palette de Couleurs "Dark Mode Professionnel"
-    style.Colors[ed::StyleColor_Bg]                 = ImColor(30, 30, 30, 255);
-    style.Colors[ed::StyleColor_Grid]               = ImColor(50, 50, 50, 100);
-    style.Colors[ed::StyleColor_NodeBg]             = ImColor(45, 48, 51, 255);
-    style.Colors[ed::StyleColor_NodeBorder]         = ImColor(30, 30, 30, 255);
+    // Couleurs
+    style.Colors[ed::StyleColor_Bg]             = ImColor(30, 30, 30, 255);
+    style.Colors[ed::StyleColor_Grid]           = ImColor(50, 50, 50, 100);
+    style.Colors[ed::StyleColor_NodeBg]         = ImColor(35, 35, 35, 255);
+    style.Colors[ed::StyleColor_NodeBorder]     = ImColor(30, 30, 30, 255);
     style.Colors[ed::StyleColor_HovNodeBorder]  = ImColor(80, 120, 200, 255);
     style.Colors[ed::StyleColor_SelNodeBorder]  = ImColor(255, 165, 0, 255);
     style.Colors[ed::StyleColor_HovLinkBorder]  = ImColor(80, 120, 200, 255);
     style.Colors[ed::StyleColor_SelLinkBorder]  = ImColor(255, 165, 0, 255);
-    style.Colors[ed::StyleColor_PinRect]            = ImColor(80, 120, 200, 255);
-    style.Colors[ed::StyleColor_PinRectBorder]      = ImColor(80, 120, 200, 255);
+    style.Colors[ed::StyleColor_PinRect]        = ImColor(80, 120, 200, 255);
+    style.Colors[ed::StyleColor_PinRectBorder]  = ImColor(80, 120, 200, 255);
 
-    ed::SetCurrentEditor(nullptr);
-    // =========================================================
-
-    // Dans ton constructeur MaterialEditorPanel()
-    style.LinkStrength = 100.0f; // <-- Augmenté pour un look plus "droit" en sortie de pin
-    style.Colors[ed::StyleColor_NodeBg] = ImColor(35, 35, 35, 255); // Fond un peu plus sombre
-
+    // 3. On construit les noeuds PENDANT que le contexte est actif
     BuildDefaultNodes();
+
+    // 4. On peut refermer le contexte en toute sécurité
+    ed::SetCurrentEditor(nullptr);
 }
 
 MaterialEditorPanel::~MaterialEditorPanel() {
@@ -734,7 +731,6 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
     try { file >> data; } catch(...) { return; }
 
     ed::SetCurrentEditor(m_Context);
-
     m_Nodes.clear();
     m_Links.clear();
 
@@ -745,21 +741,23 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
     }
 
     m_NextId = data.value("NextID", 1);
-    auto& registry = MaterialNodeRegistry::GetRegistry();
 
-    // --- CHARGEMENT DES NOEUDS ---
+    // L'Airbag Mémoire (Empêche les pointeurs de mourir)
+    m_Nodes.reserve(data["Nodes"].size());
+
+    // --- CHARGEMENT DES NOEUDS (Méthode AAA) ---
     for (auto& nodeJson : data["Nodes"]) {
         std::string nodeName = nodeJson["Name"].get<std::string>();
 
-        // L'AIRBAG ABSOLU : Si le noeud sauvegardé a été supprimé du code source du moteur, on l'ignore !
-        if (registry.find(nodeName) == registry.end()) {
-            std::cout << "[MaterialEditor] Warning: Le noeud '" << nodeName << "' n'existe plus dans le moteur. Il sera ignore." << std::endl;
+        // 1. On demande au registre de créer le noeud PARFAIT avec la structure C++ actuelle !
+        MaterialNode node;
+        if (!MaterialNodeRegistry::CreateNode(nodeName, m_NextId, node)) {
+            std::cout << "[MaterialEditor] Warning: Noeud '" << nodeName << "' obsolete ignore." << std::endl;
             continue;
         }
 
-        MaterialNode node;
+        // 2. On écrase ses propriétés avec celles de la sauvegarde
         node.ID = ed::NodeId(nodeJson["ID"].get<int>());
-        node.Name = nodeName;
 
         if (nodeJson.contains("FloatValue")) node.FloatValue = nodeJson["FloatValue"].get<float>();
         if (nodeJson.contains("ColorValue")) {
@@ -767,38 +765,36 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
         }
         if (nodeJson.contains("TexturePath")) {
             node.TexturePath = nodeJson["TexturePath"].get<std::string>();
-            if (!node.TexturePath.empty()) {
-                node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
-            }
+            if (!node.TexturePath.empty()) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
         }
 
-        // On recharge les Pins
+        // 3. On restaure les IDs des Pins en les cherchant PAR NOM (Rétro-compatibilité absolue)
         if (nodeJson.contains("Inputs")) {
             for (auto& pinJson : nodeJson["Inputs"]) {
-                MaterialPin pin;
-                pin.ID = ed::PinId(pinJson["ID"].get<int>());
-                pin.NodeID = node.ID;
-                pin.Name = pinJson["Name"].get<std::string>();
-                pin.Kind = ed::PinKind::Input;
-                pin.Type = pinJson.contains("Type") ? (PinType)pinJson["Type"].get<int>() : PinType::Vec3;
+                std::string pinName = pinJson["Name"].get<std::string>();
+                for (auto& pin : node.Inputs) {
+                    if (pin.Name == pinName) { // On a trouvé le connecteur correspondant !
+                        pin.ID = ed::PinId(pinJson["ID"].get<int>()); // On lui redonne son vieil ID pour que les câbles le trouvent
+                        pin.Type = pinJson.contains("Type") ? (PinType)pinJson["Type"].get<int>() : pin.Type;
 
-                if (pinJson.contains("FloatValue")) pin.FloatValue = pinJson["FloatValue"].get<float>();
-                if (pinJson.contains("Vec2Value")) pin.Vec2Value = { pinJson["Vec2Value"][0], pinJson["Vec2Value"][1] };
-                if (pinJson.contains("Vec3Value")) pin.Vec3Value = { pinJson["Vec3Value"][0], pinJson["Vec3Value"][1], pinJson["Vec3Value"][2] };
-
-                node.Inputs.push_back(pin);
+                        if (pinJson.contains("FloatValue")) pin.FloatValue = pinJson["FloatValue"].get<float>();
+                        if (pinJson.contains("Vec2Value")) pin.Vec2Value = { pinJson["Vec2Value"][0], pinJson["Vec2Value"][1] };
+                        if (pinJson.contains("Vec3Value")) pin.Vec3Value = { pinJson["Vec3Value"][0], pinJson["Vec3Value"][1], pinJson["Vec3Value"][2] };
+                        break;
+                    }
+                }
             }
         }
         if (nodeJson.contains("Outputs")) {
             for (auto& pinJson : nodeJson["Outputs"]) {
-                MaterialPin pin;
-                pin.ID = ed::PinId(pinJson["ID"].get<int>());
-                pin.NodeID = node.ID;
-                pin.Name = pinJson["Name"].get<std::string>();
-                pin.Kind = ed::PinKind::Output;
-                pin.Type = pinJson.contains("Type") ? (PinType)pinJson["Type"].get<int>() : PinType::Vec3;
-
-                node.Outputs.push_back(pin);
+                std::string pinName = pinJson["Name"].get<std::string>();
+                for (auto& pin : node.Outputs) {
+                    if (pin.Name == pinName) {
+                        pin.ID = ed::PinId(pinJson["ID"].get<int>());
+                        pin.Type = pinJson.contains("Type") ? (PinType)pinJson["Type"].get<int>() : pin.Type;
+                        break;
+                    }
+                }
             }
         }
 
@@ -815,15 +811,12 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
             ed::PinId startId = ed::PinId(linkJson["StartPinID"].get<int>());
             ed::PinId endId = ed::PinId(linkJson["EndPinID"].get<int>());
 
-            // L'AIRBAG DES CÂBLES : On vérifie que les connecteurs existent vraiment avant de brancher le fil
             if (FindPin(startId) && FindPin(endId)) {
                 MaterialLink link;
                 link.ID = ed::LinkId(linkJson["ID"].get<int>());
                 link.StartPinID = startId;
                 link.EndPinID = endId;
                 m_Links.push_back(link);
-            } else {
-                std::cout << "[MaterialEditor] Warning: Lien orphelin supprime." << std::endl;
             }
         }
     }
@@ -922,12 +915,13 @@ vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
     std::unordered_set<int> visitedNodes;
     std::stringstream bodyBuilder;
 
-    std::string v_baseColor = EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder);
-    std::string v_normal    = EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder);
-    std::string v_metallic  = EvaluatePinGLSL(rootNode->Inputs[2].ID, visitedNodes, bodyBuilder);
-    std::string v_roughness = EvaluatePinGLSL(rootNode->Inputs[3].ID, visitedNodes, bodyBuilder);
-    std::string v_specular  = EvaluatePinGLSL(rootNode->Inputs[4].ID, visitedNodes, bodyBuilder);
-    std::string v_ao        = EvaluatePinGLSL(rootNode->Inputs[5].ID, visitedNodes, bodyBuilder);
+    // --- L'AIRBAG RÉTRO-COMPATIBILITÉ (On vérifie la taille avant de lire !) ---
+    std::string v_baseColor = (rootNode->Inputs.size() > 0) ? EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder) : "vec3(1.0)";
+    std::string v_normal    = (rootNode->Inputs.size() > 1) ? EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder) : "vec3(0.0)";
+    std::string v_metallic  = (rootNode->Inputs.size() > 2) ? EvaluatePinGLSL(rootNode->Inputs[2].ID, visitedNodes, bodyBuilder) : "0.0";
+    std::string v_roughness = (rootNode->Inputs.size() > 3) ? EvaluatePinGLSL(rootNode->Inputs[3].ID, visitedNodes, bodyBuilder) : "0.5";
+    std::string v_specular  = (rootNode->Inputs.size() > 4) ? EvaluatePinGLSL(rootNode->Inputs[4].ID, visitedNodes, bodyBuilder) : "0.5";
+    std::string v_ao        = (rootNode->Inputs.size() > 5) ? EvaluatePinGLSL(rootNode->Inputs[5].ID, visitedNodes, bodyBuilder) : "1.0";
 
     // Sécurité : On s'assure qu'aucune variable n'est vide
     if (v_baseColor.empty() || v_baseColor.find("vec3(0") != std::string::npos) v_baseColor = "vec3(1.0)";
@@ -1023,6 +1017,10 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
     }
 
     MaterialPin* outputPin = FindPin(connectedLink->StartPinID);
+
+    // --- L'AIRBAG CÂBLE (Nouveau) ---
+    if (!outputPin) return "vec3(0.0)";
+
     MaterialNode* sourceNode = FindNode(outputPin->NodeID);
     if (!sourceNode) return "vec3(0.0)";
 
