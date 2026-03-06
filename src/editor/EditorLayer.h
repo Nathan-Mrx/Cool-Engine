@@ -71,7 +71,6 @@ private:
     void EndDockspace();
     void DrawMenuBar();
     void DrawToolbar();
-    void DrawTabs();
 
     // ==========================================
     // 3. LE VIEWPORT (La vue 3D)
@@ -98,6 +97,7 @@ private:
     void OpenPrefab(const std::filesystem::path& path);
     void OpenMaterial(const std::filesystem::path& path);
     void OpenMaterialInstance(const std::filesystem::path& path);
+    void DrawTabs();
     void CloseTab(int index);
 
     // ==========================================
@@ -132,7 +132,17 @@ private:
     bool m_ShowCollisions = false;
     int m_RenderMode = 0; // 0: Lit, 1: Unlit, 2: Wireframe
 
-    // --- NOUVEAU SYSTÈME D'ONGLETS ---
+    // --- LE VRAI SYSTÈME D'ONGLETS ---
+    enum class TabType { Scene, Material, MaterialInstance };
+
+    struct EditorTab {
+        std::string Name;
+        std::filesystem::path Filepath;
+        TabType Type;
+        std::shared_ptr<Scene> SceneContext;
+        std::shared_ptr<IAssetEditor> CustomEditor;
+    };
+
     std::vector<EditorTab> m_Tabs;
     int m_ActiveTabIndex = 0;
     bool m_ForceTabSelection = false;

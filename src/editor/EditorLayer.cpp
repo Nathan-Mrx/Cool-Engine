@@ -22,7 +22,7 @@
 
 void EditorLayer::OnAttach() {
     int width, height, channels;
-    stbi_set_flip_vertically_on_load(false); // ImGui préfère le haut en haut !
+    stbi_set_flip_vertically_on_load(false);
     unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4);
     if (data) {
         glGenTextures(1, &m_SplashTextureID);
@@ -33,39 +33,23 @@ void EditorLayer::OnAttach() {
         stbi_image_free(data);
     }
 
-    // --- LE CHT GÈRE TOUT SEUL ! ---
     AssetRegistry::RegisterAllAssets();
 
-    // 1. Initialisation du premier onglet vierge
-    m_Tabs.push_back({ "Untitled", "", TabType::Scene, std::make_shared<Scene>(), false, nullptr });
-    m_ActiveTabIndex = 0;
-    m_ActiveScene = m_Tabs[0].SceneContext;
-
+    // 1. Initialisation pure de la Scène
+    m_ActiveScene = std::make_shared<Scene>();
     m_SceneHierarchyPanel.SetContext(m_ActiveScene);
     m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
 
-    // 2. Connexion des callbacks du Content Browser !
-    m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) {
-        OpenScene(path);
-    };
-    m_ContentBrowserPanel->OnPrefabOpenCallback = [this](const std::filesystem::path& path) {
-        OpenPrefab(path);
-    };
-    m_ContentBrowserPanel->OnMaterialOpenCallback = [this](const std::filesystem::path& path) {
-        OpenMaterial(path);
-    };
-    m_ContentBrowserPanel->OnMaterialInstanceOpenCallback = [this](const std::filesystem::path& path) {
-        OpenMaterialInstance(path);
-    };
+    // 2. Callbacks du Content Browser
+    m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) { OpenScene(path); };
+    m_ContentBrowserPanel->OnPrefabOpenCallback = [this](const std::filesystem::path& path) { OpenPrefab(path); };
+    m_ContentBrowserPanel->OnMaterialOpenCallback = [this](const std::filesystem::path& path) { OpenMaterial(path); };
+    m_ContentBrowserPanel->OnMaterialInstanceOpenCallback = [this](const std::filesystem::path& path) { OpenMaterialInstance(path); };
 
     FramebufferSpecification fbSpec;
     fbSpec.Width = 1280;
     fbSpec.Height = 720;
     m_ViewportFramebuffer = std::make_unique<Framebuffer>(fbSpec);
-
-    if (Project::GetActive()) {
-        // Optionnel : Tu pourras charger la scène de démarrage ici via OpenScene()
-    }
 }
 
 void EditorLayer::OnDetach() {
@@ -74,12 +58,14 @@ void EditorLayer::OnDetach() {
 
 void EditorLayer::DrawMenuBar() {
     if (ImGui::BeginMenuBar()) {
-        auto& activeTab = m_Tabs[m_ActiveTabIndex];
-
         if (ImGui::BeginMenu("File")) {
-            // 1. Actions Globales
             if (ImGui::MenuItem("New Scene", "Ctrl+N")) {
-                m_ActiveScene = std::make_shared<Scene>();
+                auto newScene = std::make_shared<Scene>();
+                m_Tabs.push_back({ "New Scene", "", TabType::Scene, newScene, nullptr });
+                m_ActiveTabIndex = m_Tabs.size() - 1;
+                m_ForceTabSelection = true;
+
+                m_ActiveScene = newScene;
                 m_SceneHierarchyPanel.SetContext(m_ActiveScene);
             }
             if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) {
@@ -93,17 +79,15 @@ void EditorLayer::DrawMenuBar() {
 
             ImGui::Separator();
 
-            // ========================================================
-            // 2. LA MAGIE CONTEXTUELLE EST ICI !
-            // ========================================================
-            if (activeTab.Type == TabType::Scene) {
+            // La sauvegarde dépend de l'onglet actif
+            bool hasCustomEditor = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr;
+
+            if (hasCustomEditor) {
+                m_Tabs[m_ActiveTabIndex].CustomEditor->OnImGuiMenuFile();
+            } else {
                 if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
                 if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) SaveSceneAs();
-            } else if (activeTab.CustomEditor) {
-                // L'éditeur actif dessine LUI-MÊME ses propres boutons !
-                activeTab.CustomEditor->OnImGuiMenuFile();
             }
-            // ========================================================
 
             ImGui::Separator();
             if (ImGui::MenuItem("Close Project")) m_RequestCloseProject = true;
@@ -114,16 +98,19 @@ void EditorLayer::DrawMenuBar() {
         if (ImGui::BeginMenu("Edit")) {
             if (ImGui::MenuItem("Project Settings")) m_ShowProjectSettings = true;
 
-            // L'éditeur actif peut aussi ajouter des trucs dans Edit !
-            if (activeTab.CustomEditor) {
+            bool hasCustomEditor = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr;
+            if (hasCustomEditor) {
                 ImGui::Separator();
-                activeTab.CustomEditor->OnImGuiMenuEdit();
+                m_Tabs[m_ActiveTabIndex].CustomEditor->OnImGuiMenuEdit();
             }
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("View")) {
-            if (activeTab.Type == TabType::Scene) {
+            bool isSceneTab = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene;
+            bool hasCustomEditor = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr;
+
+            if (isSceneTab) {
                 ImGui::MenuItem("Show Grid", nullptr, &m_ShowGrid);
                 ImGui::MenuItem("Show Collisions", nullptr, &m_ShowCollisions);
                 ImGui::Separator();
@@ -133,8 +120,8 @@ void EditorLayer::DrawMenuBar() {
                     if (ImGui::MenuItem("Wireframe", nullptr, m_RenderMode == 2)) m_RenderMode = 2;
                     ImGui::EndMenu();
                 }
-            } else if (activeTab.CustomEditor) {
-                activeTab.CustomEditor->OnImGuiMenuView();
+            } else if (hasCustomEditor) {
+                m_Tabs[m_ActiveTabIndex].CustomEditor->OnImGuiMenuView();
             }
             ImGui::EndMenu();
         }
@@ -199,14 +186,38 @@ void EditorLayer::OnUpdate(float deltaTime) {
 
 void EditorLayer::UpdateEditor(float deltaTime) {
     if (m_ViewportFocused) {
-        float speed = 10.0f * deltaTime;
-        if (Input::IsKeyPressed(GLFW_KEY_LEFT_SHIFT)) speed *= 3.0f; // FIX
+        float speed = 1000.0f * deltaTime;
+        if (Input::IsKeyPressed(GLFW_KEY_LEFT_SHIFT)) speed *= 3.0f;
 
-        // Déplacement basique ZQSD / WASD
-        if (Input::IsKeyPressed(GLFW_KEY_Z) || Input::IsKeyPressed(GLFW_KEY_W)) m_EditorCamera.Position += speed * m_EditorCamera.Front;
+        if (Input::IsKeyPressed(GLFW_KEY_W)) m_EditorCamera.Position += speed * m_EditorCamera.Front;
         if (Input::IsKeyPressed(GLFW_KEY_S)) m_EditorCamera.Position -= speed * m_EditorCamera.Front;
-        if (Input::IsKeyPressed(GLFW_KEY_Q) || Input::IsKeyPressed(GLFW_KEY_A)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
+        if (Input::IsKeyPressed(GLFW_KEY_A)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
         if (Input::IsKeyPressed(GLFW_KEY_D)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
+        if (Input::IsKeyPressed(GLFW_KEY_Q)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
+        if (Input::IsKeyPressed(GLFW_KEY_E)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
+
+        glm::vec2 mousePos = Input::GetMousePosition();
+        glm::vec2 delta = (mousePos - m_LastMousePosition) * 0.2f;
+        m_LastMousePosition = mousePos;
+
+        // Le clic droit est la touche 1 dans GLFW
+        if (Input::IsMouseButtonPressed(1)) {
+            m_EditorCamera.Yaw -= delta.x;
+            m_EditorCamera.Pitch -= delta.y;
+
+            if (m_EditorCamera.Pitch > 89.0f) m_EditorCamera.Pitch = 89.0f;
+            if (m_EditorCamera.Pitch < -89.0f) m_EditorCamera.Pitch = -89.0f;
+
+            // --- LE FIX Z-UP EST ICI ---
+            glm::vec3 front;
+            front.x = cos(glm::radians(m_EditorCamera.Yaw)) * cos(glm::radians(m_EditorCamera.Pitch));
+            front.y = sin(glm::radians(m_EditorCamera.Yaw)) * cos(glm::radians(m_EditorCamera.Pitch));
+            front.z = sin(glm::radians(m_EditorCamera.Pitch)); // Z est l'axe vertical !
+
+            m_EditorCamera.Front = glm::normalize(front);
+        }
+    } else {
+        m_LastMousePosition = Input::GetMousePosition();
     }
 }
 
@@ -233,37 +244,88 @@ void EditorLayer::OnImGuiRender() {
     }
 
     BeginDockspace();
-
     DrawMenuBar();
-    DrawToolbar();
 
-    // 1. Les Onglets et le Content Browser sont communs à TOUS les modes
+    // 1. La Fenêtre qui contient la barre d'onglets (Le "Master Panel" des onglets)
     DrawTabs();
+
     if (m_ContentBrowserPanel) m_ContentBrowserPanel->OnImGuiRender();
 
-    // 2. Gestion de l'affichage en fonction de l'onglet actif
+    // 2. Affichage conditionnel des Layouts !
     if (!m_Tabs.empty() && m_ActiveTabIndex >= 0 && m_ActiveTabIndex < m_Tabs.size()) {
         auto& activeTab = m_Tabs[m_ActiveTabIndex];
 
         if (activeTab.Type == TabType::Scene) {
-            // Mode Scène : On affiche la Hiérarchie, l'Inspector et le Viewport 3D
+            // Mode Scène : On affiche l'Inspector et le Viewport
             m_SceneHierarchyPanel.OnImGuiRender();
             DrawViewportWindow();
         }
         else if (activeTab.CustomEditor) {
-            // Mode Asset (Ex: Material) : On cache la scène et on affiche l'éditeur dédié
+            // Mode Asset : On affiche uniquement les fenêtres de l'éditeur custom
             bool dummyOpen = true;
             activeTab.CustomEditor->OnImGuiRender(dummyOpen);
         }
     } else {
-        // Par défaut si aucun onglet n'est ouvert (Fallback)
-        m_SceneHierarchyPanel.OnImGuiRender();
-        DrawViewportWindow();
+        // Fond par défaut si tout est fermé
+        ImGui::Begin("Viewport");
+        ImGui::TextDisabled("No active document open.");
+        ImGui::End();
     }
 
     if (m_ShowProjectSettings) DrawProjectSettings();
 
     EndDockspace();
+}
+
+void EditorLayer::DrawTabs() {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    // Une fenêtre dédiée juste pour la barre de navigation !
+    ImGui::Begin("Documents", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+
+    if (ImGui::BeginTabBar("EditorTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
+        for (int i = 0; i < m_Tabs.size(); i++) {
+            auto& tab = m_Tabs[i];
+            bool isOpen = true;
+
+            ImGuiTabItemFlags flags = (m_ForceTabSelection && m_ActiveTabIndex == i) ? ImGuiTabItemFlags_SetSelected : 0;
+
+            if (ImGui::BeginTabItem(tab.Name.c_str(), &isOpen, flags)) {
+                // Changement de contexte automatique
+                if (m_ActiveTabIndex != i) {
+                    m_ActiveTabIndex = i;
+                    if (tab.Type == TabType::Scene) {
+                        m_ActiveScene = tab.SceneContext;
+                        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+                    }
+                }
+                ImGui::EndTabItem();
+            }
+
+            if (!isOpen) {
+                CloseTab(i);
+                i--; // L'onglet a été supprimé, on recule l'index
+            }
+        }
+        if (m_ForceTabSelection) m_ForceTabSelection = false;
+        ImGui::EndTabBar();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
+void EditorLayer::CloseTab(int index) {
+    if (index < 0 || index >= m_Tabs.size()) return;
+    m_Tabs.erase(m_Tabs.begin() + index);
+
+    if (m_ActiveTabIndex >= m_Tabs.size()) m_ActiveTabIndex = m_Tabs.size() - 1;
+
+    // Restaure la scène si le nouvel onglet actif est une scène
+    if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene) {
+        m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
+        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+    } else {
+        m_ActiveScene = nullptr; // Désactive la scène en arrière plan
+    }
 }
 
 void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
@@ -394,88 +456,146 @@ void EditorLayer::DrawProjectSettings() {
 }
 
 void EditorLayer::SaveScene() {
-    if (m_ActiveTabIndex >= 0 && m_ActiveTabIndex < m_Tabs.size()) {
-        auto& activeTab = m_Tabs[m_ActiveTabIndex];
+    if (m_Tabs.empty()) return;
+    auto& activeTab = m_Tabs[m_ActiveTabIndex];
 
-        if (activeTab.Type == TabType::Scene) {
-            if (!activeTab.Filepath.empty()) {
-                SceneSerializer serializer(activeTab.SceneContext);
-                serializer.Serialize(activeTab.Filepath.string());
-                std::cout << "[Editor] Saved " << (activeTab.IsPrefab ? "Prefab" : "Scene") << " to " << activeTab.Filepath << std::endl;
-            } else {
-                SaveSceneAs();
-            }
-        }
-        else if (activeTab.CustomEditor) {
-            // Le système général délègue la sauvegarde (utilisé par le bouton Save de l'UI globale)
-            activeTab.CustomEditor->Save();
+    if (activeTab.CustomEditor) {
+        activeTab.CustomEditor->Save();
+    } else if (activeTab.Type == TabType::Scene) {
+        if (!activeTab.Filepath.empty()) {
+            SceneSerializer serializer(activeTab.SceneContext);
+            serializer.Serialize(activeTab.Filepath.string());
+            std::cout << "[Editor] Saved Scene to " << activeTab.Filepath << std::endl;
+        } else {
+            SaveSceneAs();
         }
     }
 }
 
 void EditorLayer::SaveSceneAs() {
-    if (m_ActiveTabIndex < 0 || m_ActiveTabIndex >= m_Tabs.size()) return;
-    auto& activeTab = m_Tabs[m_ActiveTabIndex];
+    if (m_Tabs.empty() || m_Tabs[m_ActiveTabIndex].Type != TabType::Scene) return;
 
     nfdchar_t* outPath = nullptr;
-    const char* filterName = activeTab.IsPrefab ? "Cool Engine Prefab" : "Cool Engine Scene";
-    const char* filterExt = activeTab.IsPrefab ? "ceprefab" : "cescene";
-    nfdfilteritem_t filterItem[1] = { { filterName, filterExt } };
+    nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
 
     if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, nullptr) == NFD_OKAY) {
         std::filesystem::path filepath = outPath;
-        std::string ext = activeTab.IsPrefab ? ".ceprefab" : ".cescene";
+        if (filepath.extension() != ".cescene") filepath += ".cescene";
 
-        if (filepath.extension() != ext) {
-            filepath += ext;
-        }
-
+        // On met à jour l'onglet actif
+        auto& activeTab = m_Tabs[m_ActiveTabIndex];
         activeTab.Filepath = filepath;
         activeTab.Name = filepath.filename().string();
-        if (activeTab.IsPrefab) activeTab.Name = "[Prefab] " + activeTab.Name;
 
         SceneSerializer serializer(activeTab.SceneContext);
-        serializer.Serialize(activeTab.Filepath.string());
+        serializer.Serialize(filepath.string());
 
         NFD::FreePath(outPath);
     }
 }
 
-void EditorLayer::DrawToolbar() {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 2));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-
-    auto& colors = ImGui::GetStyle().Colors;
-    const auto& buttonHovered = colors[ImGuiCol_ButtonHovered];
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(buttonHovered.x, buttonHovered.y, buttonHovered.z, 0.5f));
-    const auto& buttonActive = colors[ImGuiCol_ButtonActive];
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(buttonActive.x, buttonActive.y, buttonActive.z, 0.5f));
-
-    ImGui::Begin("##Toolbar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-    float size = ImGui::GetWindowHeight() - 4.0f;
-    ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x * 0.5f) - (size * 1.5f));
-
-    bool isPlaying = m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause;
-    const char* playStopIcon = isPlaying ? "STOP" : "PLAY";
-
-    if (ImGui::Button(playStopIcon, ImVec2(size * 2.0f, size))) {
-        if (m_SceneState == SceneState::Edit)
-            OnScenePlay();
-        else if (isPlaying)
-            OnSceneStop();
+void EditorLayer::OpenScene(const std::filesystem::path& path) {
+    // Vérifie si la scène est déjà ouverte
+    for (int i = 0; i < m_Tabs.size(); ++i) {
+        if (m_Tabs[i].Filepath == path) {
+            m_ActiveTabIndex = i; m_ForceTabSelection = true; return;
+        }
     }
 
-    ImGui::SameLine();
+    auto newScene = std::make_shared<Scene>();
+    SceneSerializer serializer(newScene);
+    serializer.Deserialize(path.string());
 
-    if (ImGui::Button("PAUSE", ImVec2(size * 2.0f, size))) {
-        OnScenePause();
+    m_Tabs.push_back({ path.filename().string(), path, TabType::Scene, newScene, nullptr });
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ForceTabSelection = true;
+
+    m_ActiveScene = newScene;
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+}
+
+void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
+    for (int i = 0; i < m_Tabs.size(); ++i) {
+        if (m_Tabs[i].Filepath == path) {
+            m_ActiveTabIndex = i; m_ForceTabSelection = true; return;
+        }
     }
 
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(3);
-    ImGui::End();
+    auto newMatPanel = std::make_shared<MaterialEditorPanel>();
+    newMatPanel->Load(path);
+    newMatPanel->OnMaterialSavedCallback = [this](const std::filesystem::path& savedPath) {
+        if (!m_ActiveScene) return;
+        auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
+        for (auto entityID : view) {
+            auto& mat = view.get<MaterialComponent>(entityID);
+            if (mat.AssetPath == savedPath.string()) mat.SetAndCompile(savedPath.string());
+        }
+    };
+
+    m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, newMatPanel });
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ForceTabSelection = true;
+}
+
+void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
+    // Vérifie si le prefab est déjà ouvert dans un onglet
+    for (int i = 0; i < m_Tabs.size(); ++i) {
+        if (m_Tabs[i].Filepath == path) {
+            m_ActiveTabIndex = i;
+            m_ForceTabSelection = true;
+            return;
+        }
+    }
+
+    auto newScene = std::make_shared<Scene>();
+    SceneSerializer serializer(newScene);
+    serializer.Deserialize(path.string()); // On charge le prefab comme une scène
+
+    // On crée un nouvel onglet de type "Scene", mais on indique au HierarchyPanel que c'est un Prefab
+    m_Tabs.push_back({ path.filename().string(), path, TabType::Scene, newScene, nullptr });
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ForceTabSelection = true;
+
+    m_ActiveScene = newScene;
+    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+    m_SceneHierarchyPanel.SetIsPrefabScene(true); // Indique à l'UI que c'est un Prefab
+}
+
+void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
+    // Vérifie si l'instance est déjà ouverte
+    for (int i = 0; i < m_Tabs.size(); ++i) {
+        if (m_Tabs[i].Filepath == path) {
+            m_ActiveTabIndex = i;
+            m_ForceTabSelection = true;
+            return;
+        }
+    }
+
+    auto newMIPanel = std::make_shared<MaterialInstanceEditorPanel>();
+    newMIPanel->Load(path);
+
+    // --- LE HOT RELOAD POUR LES INSTANCES ---
+    newMIPanel->OnMaterialInstanceSavedCallback = [this](const std::filesystem::path& savedPath) {
+        if (!m_ActiveScene) return;
+
+        // On parcourt TOUTES les entités de la scène qui ont un composant Matériau
+        auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
+        for (auto entityID : view) {
+            auto& mat = view.get<MaterialComponent>(entityID);
+
+            // Si l'entité utilise l'instance qu'on vient de sauvegarder...
+            if (mat.AssetPath == savedPath.string()) {
+                // On force le rechargement depuis le disque !
+                mat.SetAndCompile(savedPath.string());
+                std::cout << "[Editor] Hot-Reloaded Material Instance for Entity ID: " << (uint32_t)entityID << std::endl;
+            }
+        }
+    };
+
+    // On ajoute l'onglet
+    m_Tabs.push_back({ path.filename().string(), path, TabType::MaterialInstance, nullptr, newMIPanel });
+    m_ActiveTabIndex = m_Tabs.size() - 1;
+    m_ForceTabSelection = true;
 }
 
 void EditorLayer::OnScenePlay() {
@@ -512,54 +632,6 @@ void EditorLayer::OnScenePause() {
         m_SceneState = SceneState::Pause;
     } else if (m_SceneState == SceneState::Pause) {
         m_SceneState = SceneState::Play;
-    }
-}
-
-void EditorLayer::OpenScene(const std::filesystem::path& path) {
-    for (int i = 0; i < m_Tabs.size(); i++) {
-        if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i; m_ForceTabSelection = true; return;
-        }
-    }
-    auto newScene = std::make_shared<Scene>();
-    SceneSerializer serializer(newScene);
-    serializer.Deserialize(path.string());
-
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Scene, newScene, false, nullptr });
-    m_ActiveTabIndex = m_Tabs.size() - 1;
-    m_ActiveScene = newScene;
-    m_ForceTabSelection = true;
-    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-}
-
-void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
-    for (int i = 0; i < m_Tabs.size(); i++) {
-        if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i; m_ForceTabSelection = true; return;
-        }
-    }
-    auto newPrefabScene = std::make_shared<Scene>();
-    SceneSerializer serializer(newPrefabScene);
-    serializer.Deserialize(path.string());
-
-    m_Tabs.push_back({ "[Prefab] " + path.filename().string(), path, TabType::Scene, newPrefabScene, true, nullptr });
-    m_ActiveTabIndex = m_Tabs.size() - 1;
-    m_ActiveScene = newPrefabScene;
-    m_ForceTabSelection = true;
-    m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-}
-
-void EditorLayer::CloseTab(int index) {
-    if (index < 0 || index >= m_Tabs.size()) return;
-    m_Tabs.erase(m_Tabs.begin() + index);
-
-    if (m_Tabs.empty()) m_Tabs.push_back({ "Untitled", "", TabType::Scene, std::make_shared<Scene>(), false });
-    if (m_ActiveTabIndex >= m_Tabs.size()) m_ActiveTabIndex = m_Tabs.size() - 1;
-
-    // Fix sécurité
-    if (m_Tabs[m_ActiveTabIndex].Type == TabType::Scene) {
-        m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
-        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
     }
 }
 
@@ -618,105 +690,6 @@ void EditorLayer::DrawSplashScreen() {
     ImGui::PopStyleVar();
 }
 
-void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
-    // 1. On vérifie si l'onglet est déjà ouvert
-    for (int i = 0; i < m_Tabs.size(); i++) {
-        if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i;
-            m_ForceTabSelection = true;
-            return;
-        }
-    }
-
-    // 2. Si ce n'est pas ouvert, on crée un NOUVEAU panel indépendant
-    auto newMatPanel = std::make_shared<MaterialEditorPanel>();
-    newMatPanel->Load(path);
-
-    // --- LE HOT RELOAD MAGIQUE ---
-    newMatPanel->OnMaterialSavedCallback = [this](const std::filesystem::path& savedPath) {
-        if (!m_ActiveScene) return;
-
-        // On parcourt TOUTES les entités de la scène qui ont un composant Matériau
-        auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
-        for (auto entityID : view) {
-            auto& mat = view.get<MaterialComponent>(entityID);
-
-            // Si l'entité utilise le matériau qu'on vient de sauvegarder...
-            if (mat.AssetPath == savedPath.string()) {
-                // On force le rechargement depuis le disque !
-                mat.SetAndCompile(savedPath.string());
-                std::cout << "[Editor] Hot-Reloaded Material for Entity ID: " << (uint32_t)entityID << std::endl;
-            }
-        }
-    };
-
-    newMatPanel->OnPathChangedCallback = [this, newMatPanel](const std::filesystem::path& newPath) {
-        // On cherche à quel onglet appartient cet éditeur et on le renomme
-        for (auto& tab : m_Tabs) {
-            if (tab.CustomEditor == newMatPanel) {
-                tab.Filepath = newPath;
-                tab.Name = newPath.filename().string();
-                break;
-            }
-        }
-    };
-
-    // 3. On ajoute le nouvel onglet
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMatPanel });
-
-    m_ActiveTabIndex = m_Tabs.size() - 1;
-    m_ForceTabSelection = true;
-}
-
-void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
-    // 1. On vérifie si l'onglet est déjà ouvert
-    for (int i = 0; i < m_Tabs.size(); i++) {
-        if (m_Tabs[i].Filepath == path) {
-            m_ActiveTabIndex = i;
-            m_ForceTabSelection = true;
-            return;
-        }
-    }
-
-    // 2. On crée le nouveau panel
-    auto newMIPanel = std::make_shared<MaterialInstanceEditorPanel>();
-    newMIPanel->Load(path);
-
-    // --- LE HOT RELOAD POUR LES INSTANCES ---
-    newMIPanel->OnMaterialInstanceSavedCallback = [this](const std::filesystem::path& savedPath) {
-        if (!m_ActiveScene) return;
-
-        // On parcourt TOUTES les entités de la scène qui ont un composant Matériau
-        auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
-        for (auto entityID : view) {
-            auto& mat = view.get<MaterialComponent>(entityID);
-
-            // Si l'entité utilise l'instance qu'on vient de sauvegarder...
-            if (mat.AssetPath == savedPath.string()) {
-                // On force le rechargement depuis le disque !
-                mat.SetAndCompile(savedPath.string());
-                std::cout << "[Editor] Hot-Reloaded Material Instance for Entity ID: " << (uint32_t)entityID << std::endl;
-            }
-        }
-    };
-
-    newMIPanel->OnPathChangedCallback = [this, newMIPanel](const std::filesystem::path& newPath) {
-        for (auto& tab : m_Tabs) {
-            if (tab.CustomEditor == newMIPanel) {
-                tab.Filepath = newPath;
-                tab.Name = newPath.filename().string();
-                break;
-            }
-        }
-    };
-
-    // 3. On ajoute l'onglet
-    m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMIPanel });
-
-    m_ActiveTabIndex = m_Tabs.size() - 1;
-    m_ForceTabSelection = true;
-}
-
 // --- LE BOILERPLATE DU DOCKSPACE ---
 void EditorLayer::BeginDockspace() {
     static bool dockspaceOpen = true;
@@ -758,12 +731,6 @@ void EditorLayer::DrawViewportWindow() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
     ImGui::Begin("Viewport");
 
-    auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
-    auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
-    auto viewportOffset = ImGui::GetWindowPos();
-    // Calcul exact de la taille du rendu (sans les bordures ImGui)
-    // ... copie ta logique existante pour calculer m_ViewportSize et les bounds ...
-
     m_ViewportFocused = ImGui::IsWindowFocused();
     m_ViewportHovered = ImGui::IsWindowHovered();
 
@@ -772,6 +739,28 @@ void EditorLayer::DrawViewportWindow() {
 
     uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
     ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+
+    // --- L'INCRUSTATION DE LA BARRE D'OUTILS (OVERLAY) ---
+    ImGui::SetCursorPos(ImVec2(m_ViewportSize.x / 2.0f - 50.0f, 15.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.8f)); // Fond semi-transparent
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+
+    bool isPlaying = m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause;
+    const char* playStopIcon = isPlaying ? "STOP" : "PLAY";
+
+    if (ImGui::Button(playStopIcon, ImVec2(50, 30))) {
+        if (m_SceneState == SceneState::Edit) OnScenePlay();
+        else if (isPlaying) OnSceneStop();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("PAUSE", ImVec2(50, 30))) {
+        OnScenePause();
+    }
+
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    // -----------------------------------------------------
+
     HandleViewportDragAndDrop();
     DrawGizmos();
 
@@ -782,53 +771,6 @@ void EditorLayer::DrawViewportWindow() {
 // =========================================================================================
 // IMPLEMENTATION DES SOUS-FONCTIONS MANQUANTES
 // =========================================================================================
-
-void EditorLayer::DrawTabs() {
-    ImGui::Begin("Workspace");
-
-    if (ImGui::BeginTabBar("EditorTabs")) {
-        for (int i = 0; i < m_Tabs.size(); i++) {
-            auto& tab = m_Tabs[i];
-            bool isOpen = true;
-
-            ImGuiTabItemFlags flags = (m_ForceTabSelection && m_ActiveTabIndex == i) ? ImGuiTabItemFlags_SetSelected : 0;
-
-            if (ImGui::BeginTabItem(tab.Name.c_str(), &isOpen, flags)) {
-
-                // Si on change d'onglet, on met à jour le contexte
-                if (m_ActiveTabIndex != i) {
-                    m_ActiveTabIndex = i;
-                    if (tab.Type == TabType::Scene) {
-                        m_ActiveScene = tab.SceneContext;
-                        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-                    }
-                }
-
-                // Plus propre : on affiche juste un petit texte d'indication dans l'onglet
-                ImGui::Dummy(ImVec2(0, 10));
-                if (tab.Type == TabType::Scene) {
-                    ImGui::TextDisabled("   Scene Viewport is active.");
-                } else {
-                    ImGui::TextDisabled("   Asset Editor is active.");
-                }
-
-                ImGui::EndTabItem();
-            }
-
-            // Gestion de la croix pour fermer l'onglet
-            if (!isOpen) {
-                CloseTab(i);
-                i--; // Ajuste l'index car le tableau a rétréci
-            }
-        }
-
-        if (m_ForceTabSelection) m_ForceTabSelection = false;
-
-        ImGui::EndTabBar();
-    }
-
-    ImGui::End();
-}
 
 void EditorLayer::HandleViewportDragAndDrop() {
     if (ImGui::BeginDragDropTarget()) {
