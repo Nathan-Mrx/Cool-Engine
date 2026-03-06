@@ -43,6 +43,10 @@ struct MaterialNode {
     float FloatValue = 0.0f;
     std::string TexturePath = "";
     uint32_t TextureID = 0;
+
+    // --- NOUVEAU : PARAMÈTRES D'INSTANCE ---
+    bool IsParameter = false;
+    std::string ParameterName = "";
 };
 
 struct MaterialLink {

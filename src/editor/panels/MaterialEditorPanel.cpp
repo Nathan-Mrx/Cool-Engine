@@ -183,8 +183,15 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 if (node.Name == "Texture2D" && node.TextureID != 0) {
                     glActiveTexture(GL_TEXTURE0 + slot);
                     glBindTexture(GL_TEXTURE_2D, node.TextureID);
-                    m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
+                    if (node.IsParameter) m_PreviewShader->SetInt("u_" + node.ParameterName, slot);
+                    else m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
                     slot++;
+                }
+
+                // Envoi des valeurs des paramètres en live !
+                if (node.IsParameter) {
+                    if (node.Name == "Float") m_PreviewShader->SetFloat("u_" + node.ParameterName, node.FloatValue);
+                    if (node.Name == "Color") m_PreviewShader->SetVec3("u_" + node.ParameterName, node.ColorValue);
                 }
             }
 
@@ -290,9 +297,16 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             // STANDARD NODE
             ed::BeginNode(node.ID);
 
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f);
-            ImGui::TextUnformatted(node.Name.c_str());
+            // --- NOUVEAU HEADER ---
+            if (node.IsParameter) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.9f, 0.4f, 1.0f)); // Vert
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f);
+                ImGui::TextUnformatted((node.ParameterName + " (Param)").c_str());
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f)); // Blanc normal
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f);
+                ImGui::TextUnformatted(node.Name.c_str());
+            }
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0, 8));
 
@@ -554,6 +568,38 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             }
             ImGui::EndPopup();
         } else m_NewNodeLinkPinId = 0;
+
+        // --- MENU CONTEXTUEL DES NOEUDS (PARAMETRES) ---
+        ed::NodeId contextNodeId = 0;
+        if (ed::ShowNodeContextMenu(&contextNodeId)) {
+            m_ContextNodeId = contextNodeId;
+            ImGui::OpenPopup("NodePropertiesPopup");
+        }
+
+        if (ImGui::BeginPopup("NodePropertiesPopup")) {
+            MaterialNode* node = FindNode(m_ContextNodeId);
+            if (node && (node->Name == "Float" || node->Name == "Color" || node->Name == "Texture2D")) {
+                if (ImGui::Checkbox("Is Parameter", &node->IsParameter)) {
+                    if (node->IsParameter && node->ParameterName.empty()) {
+                        node->ParameterName = "Param_" + std::to_string((int)node->ID.Get());
+                    }
+                    CompilePreviewShader();
+                }
+
+                if (node->IsParameter) {
+                    char buf[128];
+                    strncpy(buf, node->ParameterName.c_str(), sizeof(buf));
+                    if (ImGui::InputText("Name", buf, sizeof(buf))) {
+                        node->ParameterName = buf;
+                        CompilePreviewShader();
+                    }
+                }
+            } else {
+                ImGui::TextDisabled("No properties available");
+            }
+            ImGui::EndPopup();
+        }
+
         ed::Resume();
 
         // PLACEMENT INITIAL
@@ -606,6 +652,9 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
         nodeJson["FloatValue"] = node.FloatValue;
         nodeJson["ColorValue"] = { node.ColorValue.r, node.ColorValue.g, node.ColorValue.b, node.ColorValue.a };
         nodeJson["TexturePath"] = node.TexturePath;
+
+        nodeJson["IsParameter"] = node.IsParameter;
+        nodeJson["ParameterName"] = node.ParameterName;
 
         for (auto& pin : node.Inputs) {
             nodeJson["Inputs"].push_back({
@@ -708,6 +757,9 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
                     if (pin.Name == pinName) { // On a trouvé le connecteur correspondant !
                         pin.ID = ed::PinId(pinJson["ID"].get<int>()); // On lui redonne son vieil ID pour que les câbles le trouvent
 
+                        if (nodeJson.contains("IsParameter")) node.IsParameter = nodeJson["IsParameter"].get<bool>();
+                        if (nodeJson.contains("ParameterName")) node.ParameterName = nodeJson["ParameterName"].get<std::string>();
+
                         if (pinJson.contains("FloatValue")) pin.FloatValue = pinJson["FloatValue"].get<float>();
                         if (pinJson.contains("Vec2Value")) pin.Vec2Value = { pinJson["Vec2Value"][0], pinJson["Vec2Value"][1] };
                         if (pinJson.contains("Vec3Value")) pin.Vec3Value = { pinJson["Vec3Value"][0], pinJson["Vec3Value"][1], pinJson["Vec3Value"][2] };
@@ -790,9 +842,13 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << "uniform int uEntityID;\n";
     shaderCode << "uniform int uRenderMode;\n\n";
 
-    // --- TEXTURES ---
+    // --- PARAMÈTRES (INSTANCES) ET TEXTURES ---
     for (auto& node : m_Nodes) {
-        if (node.Name == "Texture2D" && !node.TexturePath.empty()) {
+        if (node.IsParameter) {
+            if (node.Name == "Float") shaderCode << "uniform float u_" << node.ParameterName << ";\n";
+            else if (node.Name == "Color") shaderCode << "uniform vec4 u_" << node.ParameterName << ";\n";
+            else if (node.Name == "Texture2D") shaderCode << "uniform sampler2D u_" << node.ParameterName << ";\n";
+        } else if (node.Name == "Texture2D" && !node.TexturePath.empty()) {
             shaderCode << "uniform sampler2D u_Tex_" << node.ID.Get() << ";\n";
         }
     }

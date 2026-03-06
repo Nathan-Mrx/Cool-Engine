@@ -63,6 +63,7 @@ private:
     int m_NextId = 1;
     int GetNextId() { return m_NextId++; }
 
+    ed::NodeId m_ContextNodeId = 0;
     ed::PinId m_NewNodeLinkPinId = 0;
 
     // --- NOUVEAU : Auto-Casting GLSL ---

@@ -35,7 +35,9 @@ struct ColorNodeDef : public IMaterialNodeDef {
     }
     std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
         std::string varName = "val_" + std::to_string((int)node.ID.Get());
-        bodyBuilder << "    vec4 " << varName << " = vec4(" << node.ColorValue.r << ", " << node.ColorValue.g << ", " << node.ColorValue.b << ", " << node.ColorValue.a << ");\n";
+        // SI PARAMETRE -> On lit l'uniform ! SINON -> Valeur hardcodée.
+        if (node.IsParameter) bodyBuilder << "    vec4 " << varName << " = u_" << node.ParameterName << ";\n";
+        else bodyBuilder << "    vec4 " << varName << " = vec4(" << node.ColorValue.r << ", " << node.ColorValue.g << ", " << node.ColorValue.b << ", " << node.ColorValue.a << ");\n";
         return varName;
     }
 };
@@ -51,7 +53,8 @@ struct FloatNodeDef : public IMaterialNodeDef {
     }
     std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
         std::string varName = "val_" + std::to_string((int)node.ID.Get());
-        bodyBuilder << "    float " << varName << " = " << node.FloatValue << ";\n";
+        if (node.IsParameter) bodyBuilder << "    float " << varName << " = u_" << node.ParameterName << ";\n";
+        else bodyBuilder << "    float " << varName << " = " << node.FloatValue << ";\n";
         return varName;
     }
 };
@@ -66,6 +69,7 @@ struct Texture2DNodeDef : public IMaterialNodeDef {
     ImColor GetColor() const override { return ImColor(120, 40, 40, 255); }
 
     void Initialize(MaterialNode& node, int& nextId) const override {
+        // ... (Ne change pas ton code Initialize)
         node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "UV", ed::PinKind::Input, PinType::Vec2 });
         node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "RGBA", ed::PinKind::Output, PinType::Vec4 });
         node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "RGB", ed::PinKind::Output, PinType::Vec3 });
@@ -76,9 +80,14 @@ struct Texture2DNodeDef : public IMaterialNodeDef {
     }
     std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
         std::string varName = "val_" + std::to_string((int)node.ID.Get());
-        std::string uv = evaluateInput(0, "vTexCoords"); // Magie : vTexCoords automatique si non branché !
-        if (node.TexturePath.empty()) bodyBuilder << "    vec4 " << varName << " = vec4(1.0, 0.0, 1.0, 1.0);\n";
-        else bodyBuilder << "    vec4 " << varName << " = texture(u_Tex_" << node.ID.Get() << ", " << uv << ");\n";
+        std::string uv = evaluateInput(0, "vTexCoords");
+
+        if (node.TexturePath.empty() && !node.IsParameter) {
+            bodyBuilder << "    vec4 " << varName << " = vec4(1.0, 0.0, 1.0, 1.0);\n";
+        } else {
+            std::string samplerName = node.IsParameter ? "u_" + node.ParameterName : "u_Tex_" + std::to_string((int)node.ID.Get());
+            bodyBuilder << "    vec4 " << varName << " = texture(" << samplerName << ", " << uv << ");\n";
+        }
         return varName;
     }
 };
