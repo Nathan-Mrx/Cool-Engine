@@ -129,13 +129,6 @@ private:
     bool m_ViewportHovered = false;
 
     bool m_RequestCloseProject = false;
-    void CloseProjectInternal();
-
-    bool m_ShowProjectSettings = false;
-    void DrawProjectSettings();
-
-    void SaveScene();
-    void SaveSceneAs();
 
     bool m_ShowCollisions = false;
     int m_RenderMode = 0; // 0: Lit, 1: Unlit, 2: Wireframe
@@ -151,7 +144,5 @@ private:
 
     bool m_ShowMaterialEditor = false;
 
-    void OpenMaterial(const std::filesystem::path& path);
-    void OpenMaterialInstance(const std::filesystem::path& path);
-
+    bool m_ShowProjectSettings = false;
 };

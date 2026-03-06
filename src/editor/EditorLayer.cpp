@@ -157,46 +157,72 @@ void EditorLayer::OnUpdate(float deltaTime) {
 
     // Rendu hors-écran dans le Framebuffer
     m_ViewportFramebuffer->Bind();
-    RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
-    RenderCommand::Clear();
 
-    // Mise à jour selon l'état
+    // --- LE VRAI APPEL DE TON RENDERER ---
+    Renderer::Clear();
+
+    // 1. LOGIQUE D'UPDATE
     switch (m_SceneState) {
-    case SceneState::Edit:
-        UpdateEditor(deltaTime);
-        break;
-    case SceneState::Play:
-        UpdateRuntime(deltaTime);
-        break;
-    case SceneState::Pause:
-        // En pause, on dessine la scène figée mais on peut bouger la caméra éditeur
-        m_EditorCamera.OnUpdate(deltaTime);
-        m_ActiveScene->OnRenderEditor(m_EditorCamera, m_ShowGrid, m_ShowCollisions, m_RenderMode);
-        break;
+        case SceneState::Edit:
+            UpdateEditor(deltaTime);
+            break;
+        case SceneState::Play:
+            UpdateRuntime(deltaTime);
+            break;
+        case SceneState::Pause:
+            // En pause, on met quand même à jour la caméra pour pouvoir bouger
+            UpdateEditor(deltaTime);
+            break;
     }
+
+    // 2. PREPARATION DES MATRICES
+    // Calcul de la vue et projection depuis l'EditorCamera
+    glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+    float aspect = m_ViewportSize.x / m_ViewportSize.y;
+    if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
+    glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+
+    // 3. RENDU
+    // --- TES VRAIES FONCTIONS DE RENDERER.H ---
+    Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+
+    Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+
+    if (m_ShowGrid) {
+        Renderer::DrawGrid(true);
+    }
+
+    Renderer::EndScene();
 
     m_ViewportFramebuffer->Unbind();
 }
 
 void EditorLayer::UpdateEditor(float deltaTime) {
     if (m_ViewportFocused) {
-        m_EditorCamera.OnUpdate(deltaTime);
+        float speed = 10.0f * deltaTime;
+        if (Input::IsKeyPressed(GLFW_KEY_LEFT_SHIFT)) speed *= 3.0f; // FIX
+
+        // Déplacement basique ZQSD / WASD
+        if (Input::IsKeyPressed(GLFW_KEY_Z) || Input::IsKeyPressed(GLFW_KEY_W)) m_EditorCamera.Position += speed * m_EditorCamera.Front;
+        if (Input::IsKeyPressed(GLFW_KEY_S)) m_EditorCamera.Position -= speed * m_EditorCamera.Front;
+        if (Input::IsKeyPressed(GLFW_KEY_Q) || Input::IsKeyPressed(GLFW_KEY_A)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
+        if (Input::IsKeyPressed(GLFW_KEY_D)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
     }
-    m_ActiveScene->OnRenderEditor(m_EditorCamera, m_ShowGrid, m_ShowCollisions, m_RenderMode);
 }
 
 void EditorLayer::UpdateRuntime(float deltaTime) {
-    m_ActiveScene->OnUpdateRuntime(deltaTime, m_ShowCollisions, m_RenderMode);
+    // --- TES VRAIES FONCTIONS DE SCENE.H ---
+    m_ActiveScene->OnUpdateScripts(deltaTime);
+    m_ActiveScene->OnUpdatePhysics(deltaTime);
 }
 
 void EditorLayer::ResizeViewportIfNeeded() {
-    if (FramebufferSpecification spec = m_ViewportFramebuffer->GetSpecification();
-        m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f &&
+    FramebufferSpecification spec = m_ViewportFramebuffer->GetSpecification();
+    if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f &&
         (spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
     {
+        // On ne resize QUE le Framebuffer, la scène n'a pas de OnResize()
         m_ViewportFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-        m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
-        m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
     }
 }
 
@@ -394,7 +420,7 @@ void EditorLayer::SaveSceneAs() {
     }
 }
 
-void EditorLayer::UI_Toolbar() {
+void EditorLayer::DrawToolbar() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 2));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -727,17 +753,131 @@ void EditorLayer::DrawViewportWindow() {
 
     m_ViewportFocused = ImGui::IsWindowFocused();
     m_ViewportHovered = ImGui::IsWindowHovered();
-    Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
 
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
     m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
     uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
-    ImGui::Image((void*)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
-
+    ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
     HandleViewportDragAndDrop();
     DrawGizmos();
 
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+// =========================================================================================
+// IMPLEMENTATION DES SOUS-FONCTIONS MANQUANTES
+// =========================================================================================
+
+void EditorLayer::DrawTabs() {
+    ImGui::Begin("Workspace");
+
+    if (ImGui::BeginTabBar("EditorTabs")) {
+        for (int i = 0; i < m_Tabs.size(); i++) {
+            auto& tab = m_Tabs[i];
+            bool isOpen = true;
+
+            // Force la sélection si on vient d'ouvrir un nouvel onglet
+            ImGuiTabItemFlags flags = (m_ForceTabSelection && m_ActiveTabIndex == i) ? ImGuiTabItemFlags_SetSelected : 0;
+
+            if (ImGui::BeginTabItem(tab.Name.c_str(), &isOpen, flags)) {
+
+                // Si on change d'onglet, on met à jour le contexte
+                if (m_ActiveTabIndex != i) {
+                    m_ActiveTabIndex = i;
+                    if (tab.Type == TabType::Scene) {
+                        m_ActiveScene = tab.SceneContext;
+                        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+                    }
+                }
+
+                // 1. Si c'est un éditeur externe (Material), on le dessine DANS l'onglet
+                if (tab.CustomEditor) {
+                    tab.CustomEditor->OnImGuiRender(isOpen);
+                }
+                // 2. Si c'est une scène, l'action se passe dans la vue 3D à côté
+                else if (tab.Type == TabType::Scene) {
+                    ImGui::TextDisabled("Scene is currently active in the Viewport.");
+                }
+
+                ImGui::EndTabItem();
+            }
+
+            // Gestion de la croix pour fermer l'onglet
+            if (!isOpen) {
+                CloseTab(i);
+                i--; // Ajuste l'index car le tableau a rétréci
+            }
+        }
+
+        if (m_ForceTabSelection) m_ForceTabSelection = false;
+
+        ImGui::EndTabBar();
+    }
+
+    ImGui::End();
+}
+
+void EditorLayer::HandleViewportDragAndDrop() {
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+            std::filesystem::path path = (const char*)payload->Data;
+
+            if (path.extension() == ".cescene") {
+                OpenScene(path);
+            } else if (path.extension() == ".ceprefab") {
+                OpenPrefab(path);
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+}
+
+void EditorLayer::DrawGizmos() {
+    Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+
+    // On ne dessine les Gizmos que si on est en mode "Edit" et qu'un objet est sélectionné
+    if (selectedEntity && m_GizmoType != -1 && m_SceneState == SceneState::Edit) {
+        ImGuizmo::SetOrthographic(false);
+        ImGuizmo::SetDrawlist();
+
+        // Calcule la zone exacte de la fenêtre Viewport
+        ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, ImGui::GetWindowWidth(), ImGui::GetWindowHeight());
+
+        // Projection et Vue de la caméra éditeur
+        glm::mat4 cameraView = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+        float aspect = m_ViewportSize.x / m_ViewportSize.y;
+        if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
+        glm::mat4 cameraProjection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+
+        // Transform global de l'entité
+        auto& tc = selectedEntity.GetComponent<TransformComponent>();
+        glm::mat4 transform = m_ActiveScene->GetWorldTransform(selectedEntity);
+
+        // Système de Snapping (Aimant avec CTRL)
+        bool snap = Input::IsKeyPressed(GLFW_KEY_LEFT_CONTROL);
+        float snapValue = 0.5f;
+        if (m_GizmoType == ImGuizmo::OPERATION::ROTATE) snapValue = 45.0f;
+        float snapValues[3] = { snapValue, snapValue, snapValue };
+
+        // Dessin du Gizmo et récupération des manipulations
+        ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+                             (ImGuizmo::OPERATION)m_GizmoType, (ImGuizmo::MODE)m_GizmoMode, glm::value_ptr(transform),
+                             nullptr, snap ? snapValues : nullptr);
+
+        // Si l'utilisateur est en train de tirer sur la flèche du Gizmo
+        if (ImGuizmo::IsUsing()) {
+            glm::vec3 translation, scale;
+            glm::quat rotation;
+
+            // On décompose la matrice de manipulation
+            Math::DecomposeTransform(transform, translation, rotation, scale);
+
+            // On assigne directement sans passer par un "delta"
+            tc.Location = translation;
+            tc.Rotation = rotation;
+            tc.Scale = scale;
+        }
+    }
 }
