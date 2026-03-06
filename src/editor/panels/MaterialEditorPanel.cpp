@@ -134,7 +134,6 @@ void MaterialEditorPanel::BuildDefaultNodes() {
 void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     if (!isOpen) return;
 
-    // --- VARIABLES STATIQUES POUR L'ANIMATION ---
     static float s_PreviewRotation = 0.0f;
     static float s_RotationSpeed = 30.0f;
     static float s_CameraDistance = 250.0f;
@@ -149,18 +148,15 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         m_PreviewFramebuffer->Bind();
         glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
         glEnable(GL_DEPTH_TEST);
-        glClearColor(0.12f, 0.12f, 0.12f, 1.0f); // Fond anthracite
+        glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         if (m_PreviewShader && m_PreviewMesh) {
             m_PreviewShader->Use();
-
-            // 1. Calcul de l'Aspect Ratio avec sécurité anti-crash
             float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
             float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
             float aspect = (height > 0.0f) ? (width / height) : 1.0f;
 
-            // 2. Caméra reculée et Clipping ajusté pour l'échelle en centimètres !
             glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
             glm::vec3 camPos = glm::vec3(0.0f, 0.0f, s_CameraDistance);
             glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -168,22 +164,17 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             m_PreviewShader->SetMat4("uProjection", proj);
             m_PreviewShader->SetMat4("uView", view);
 
-            // 3. Animation indépendante du framerate
             s_PreviewRotation += s_RotationSpeed * ImGui::GetIO().DeltaTime;
-
-            // On convertit les degrés en radians pour OpenGL, et on scale un peu la sphère au cas où
             glm::mat4 model = glm::mat4(1.0f);
             model = glm::rotate(model, glm::radians(s_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
-            model = glm::scale(model, glm::vec3(0.8f)); // On réduit sa taille de 20%
+            model = glm::scale(model, glm::vec3(0.8f));
             m_PreviewShader->SetMat4("uModel", model);
 
-            // Météo, Lumière et Temps
             m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
             m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
             m_PreviewShader->SetVec3("uViewPos", camPos);
             m_PreviewShader->SetFloat("uTime", s_TotalTime);
 
-            // Branchement des textures
             int slot = 0;
             for (auto& node : m_Nodes) {
                 if (node.Name == "Texture2D" && node.TextureID != 0) {
@@ -194,21 +185,16 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 }
             }
 
-            // Appel de dessin OpenGL
             glBindVertexArray(m_PreviewMesh->GetVAO());
             glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
             glBindVertexArray(0);
 
-            // ========================================================
-            // --- LE FIX (V2) : CHASSE D'EAU COMPLÈTE OPENGL ---
-            // ========================================================
-            // On vide agressivement les 8 premiers slots de texture
             for (int i = 0; i < 8; i++) {
                 glActiveTexture(GL_TEXTURE0 + i);
                 glBindTexture(GL_TEXTURE_2D, 0);
             }
-            glActiveTexture(GL_TEXTURE0); // On remet l'aiguille sur 0
-            glUseProgram(0);              // On lâche le shader
+            glActiveTexture(GL_TEXTURE0);
+            glUseProgram(0);
         }
         m_PreviewFramebuffer->Unbind();
     }
@@ -218,8 +204,7 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     // ========================================================
     ImGui::Begin("Material Preview");
 
-    // --- LES SLIDERS DE CONTRÔLE ---
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f); // Sliders à mi-largeur
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
     ImGui::SliderFloat("Speed", &s_RotationSpeed, -180.0f, 180.0f, "%.1f deg/s");
     ImGui::SameLine();
     ImGui::SliderFloat("Zoom", &s_CameraDistance, 50.0f, 1000.0f, "%.0f cm");
@@ -227,39 +212,27 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     ImGui::Separator();
 
     ImVec2 previewAvail = ImGui::GetContentRegionAvail();
-
-    // --- LE FIX EST ICI : On vérifie que le pointeur existe avant de le lire ! ---
     if (m_PreviewFramebuffer) {
-        // On redimensionne dynamiquement le Framebuffer
         if (previewAvail.x > 0 && previewAvail.y > 0 &&
            (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
             m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
            }
-
-        // On affiche l'image
         ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
-    } else {
-        // Optionnel : un texte de debug pour te prévenir si ça charge mal
-        ImGui::Text("Preview Loading...");
     }
-
     ImGui::End();
-    // ========================================================
 
-    // On enlève les marges pour que la grille remplisse l'onglet du graphe nodal
+    // ========================================================
+    // --- 3. L'ÉDITEUR NODAL ---
+    // ========================================================
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
     if (ImGui::Begin("Material Editor", &isOpen)) {
 
-        // --- BOUTON DE COMPILATION MANUELLE ---
+        // Le bouton manuel existe toujours au cas où, mais n'est plus obligatoire !
         ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
-        if (ImGui::Button("Compile Shader", ImVec2(150, 30))) {
-            CompilePreviewShader(); // Régénère la preview
-        }
+        if (ImGui::Button("Force Update Preview", ImVec2(150, 30))) CompilePreviewShader();
         ImGui::SameLine();
-
-        // --- TEXTE DE DIAGNOSTIC ---
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[DEBUG] Noeuds: %zu | Liens: %zu", m_Nodes.size(), m_Links.size());
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Preview is Live. Press Ctrl+S to Apply to Scene.");
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (avail.x < 100.0f) avail.x = 800.0f;
@@ -270,18 +243,11 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
         UpdateWildcardPins();
 
-        // =========================================================
-        // 1. DESSINER LES NOEUDS DYNAMIQUEMENT
-        // =========================================================
         for (auto& node : m_Nodes) {
-
-            // ==========================================
-            // RENDU SPÉCIAL POUR REROUTE NODE (Unreal Style)
-            // ==========================================
+            // REROUTE NODE
             if (node.Name == "Reroute") {
                 ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0, 0, 0, 0));
                 ed::PushStyleColor(ed::StyleColor_NodeBorder, ImVec4(0, 0, 0, 0));
-
                 ed::BeginNode(node.ID);
 
                 bool isConnectedIn = false;
@@ -291,7 +257,6 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
                 ImVec2 cursorPos = ImGui::GetCursorScreenPos();
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
-
                 ImVec2 center(cursorPos.x + 12, cursorPos.y + 7);
                 ImVec4 color;
                 switch (node.Inputs[0].Type) {
@@ -302,46 +267,32 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 }
                 ImU32 color32 = ImGui::GetColorU32(color);
 
-                if (isConnectedIn || isConnectedOut) {
-                    drawList->AddCircleFilled(center, 5.0f, color32);
-                } else {
+                if (isConnectedIn || isConnectedOut) drawList->AddCircleFilled(center, 5.0f, color32);
+                else {
                     drawList->AddCircle(center, 5.0f, color32, 0, 2.0f);
                     drawList->AddCircleFilled(center, 3.0f, ImGui::GetColorU32(ImVec4(color.x, color.y, color.z, 0.2f)));
                 }
 
                 ImGui::BeginGroup();
-                ed::BeginPin(node.Inputs[0].ID, node.Inputs[0].Kind);
-                ImGui::Dummy(ImVec2(12, 14));
-                ed::EndPin();
-
+                ed::BeginPin(node.Inputs[0].ID, node.Inputs[0].Kind); ImGui::Dummy(ImVec2(12, 14)); ed::EndPin();
                 ImGui::SameLine(0, 0);
-
-                ed::BeginPin(node.Outputs[0].ID, node.Outputs[0].Kind);
-                ImGui::Dummy(ImVec2(12, 14));
-                ed::EndPin();
+                ed::BeginPin(node.Outputs[0].ID, node.Outputs[0].Kind); ImGui::Dummy(ImVec2(12, 14)); ed::EndPin();
                 ImGui::EndGroup();
 
                 ed::EndNode();
                 ed::PopStyleColor(2);
-
                 continue;
             }
 
-            // === DEBUT DU NOEUD STANDARD ===
+            // STANDARD NODE
             ed::BeginNode(node.ID);
 
-            // ==========================================
-            // TEXTE DU HEADER
-            // ==========================================
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 8.0f);
             ImGui::TextUnformatted(node.Name.c_str());
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0, 8));
 
-            // ==========================================
-            // COLONNE 1 : GAUCHE (Inputs + Interface)
-            // ==========================================
             ImGui::BeginGroup();
             for (auto& input : node.Inputs) {
                 bool isConnected = false;
@@ -356,32 +307,38 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 if (!isConnected) {
                     ImGui::SameLine(0, 6);
                     ImGui::PushID((int)input.ID.Get());
+
+                    // --- AUTO-COMPILE SUR LES SLIDERS ---
                     if (input.Type == PinType::Float) {
                         ImGui::PushItemWidth(60.0f);
                         ImGui::DragFloat("##v", &input.FloatValue, 0.01f);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) CompilePreviewShader();
                         ImGui::PopItemWidth();
                     } else if (input.Type == PinType::Vec2) {
                         ImGui::PushItemWidth(100.0f);
                         ImGui::DragFloat2("##v", &input.Vec2Value[0], 0.01f);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) CompilePreviewShader();
                         ImGui::PopItemWidth();
                     } else if (input.Type == PinType::Vec3) {
                         ImGui::PushItemWidth(60.0f);
                         ImGui::ColorEdit3("##v", &input.Vec3Value[0], ImGuiColorEditFlags_NoInputs);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) CompilePreviewShader();
                         ImGui::PopItemWidth();
                     }
                     ImGui::PopID();
                 }
             }
 
-            // ... UI Centrale (Inline) ...
             ImGui::PushID((int)node.ID.Get());
             if (node.Name == "Color") {
                 ImGui::PushItemWidth(120.0f);
                 ImGui::ColorEdit4("##val", &node.ColorValue[0], ImGuiColorEditFlags_NoInputs);
+                if (ImGui::IsItemDeactivatedAfterEdit()) CompilePreviewShader();
                 ImGui::PopItemWidth();
             } else if (node.Name == "Float") {
                 ImGui::PushItemWidth(80.0f);
                 ImGui::DragFloat("##val", &node.FloatValue, 0.01f);
+                if (ImGui::IsItemDeactivatedAfterEdit()) CompilePreviewShader();
                 ImGui::PopItemWidth();
             } else if (node.Name == "Texture2D") {
                 ImGui::PushItemWidth(120.0f);
@@ -389,16 +346,17 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                     ImGui::Button("Drop Texture", ImVec2(120, 30));
                 } else {
                     if (node.TextureID == 0) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
-                    if (node.TextureID != 0) {
-                        ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
-                    }
+                    if (node.TextureID != 0) ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
                 }
+
+                // --- AUTO-COMPILE AU DRAG & DROP ---
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                         std::filesystem::path path = (const char*)p->Data;
                         if (path.extension() == ".png" || path.extension() == ".jpg") {
                             node.TexturePath = path.string();
                             node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                            CompilePreviewShader();
                         }
                     }
                     ImGui::EndDragDropTarget();
@@ -408,33 +366,22 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             ImGui::PopID();
             ImGui::EndGroup();
 
-            // ==========================================
-            // COLONNE 2 : DROITE (Outputs Alignés à droite !)
-            // ==========================================
             if (!node.Outputs.empty()) {
                 ImGui::SameLine(0, 40.0f);
-
                 ImGui::BeginGroup();
                 float maxOutputWidth = 0.0f;
                 for (auto& output : node.Outputs) {
                     float w = ImGui::CalcTextSize(output.Name.c_str()).x;
                     if (w > maxOutputWidth) maxOutputWidth = w;
                 }
-
                 for (auto& output : node.Outputs) {
                     bool isConnected = false;
                     for (auto& link : m_Links) { if (link.StartPinID == output.ID) { isConnected = true; break; } }
-
                     float textWidth = ImGui::CalcTextSize(output.Name.c_str()).x;
                     float padding = maxOutputWidth - textWidth;
 
                     ed::BeginPin(output.ID, output.Kind);
-
-                    if (padding > 0) {
-                        ImGui::Dummy(ImVec2(padding, 0));
-                        ImGui::SameLine(0, 0);
-                    }
-
+                    if (padding > 0) { ImGui::Dummy(ImVec2(padding, 0)); ImGui::SameLine(0, 0); }
                     ImGui::TextUnformatted(output.Name.c_str());
                     ImGui::SameLine(0, 6);
                     DrawPinIcon(output.Type, isConnected);
@@ -445,32 +392,24 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
             ed::EndNode();
 
-            // ==========================================
-            // LE DESSIN MAGIQUE DU HEADER (En arrière-plan)
-            // ==========================================
             if (ImGui::IsItemVisible()) {
                 ImVec2 nodeMin = ImGui::GetItemRectMin();
                 ImVec2 nodeMax = ImGui::GetItemRectMax();
-
                 auto drawList = ed::GetNodeBackgroundDrawList(node.ID);
                 float headerHeight = ImGui::GetTextLineHeight() + 8.0f;
                 ImVec2 headerMax = ImVec2(nodeMax.x, nodeMin.y + headerHeight);
-
-                // On interroge le registre pour la couleur
                 ImColor headerColor = MaterialNodeRegistry::GetNodeColor(node.Name);
-
                 drawList->AddRectFilled(nodeMin, headerMax, headerColor, ed::GetStyle().NodeRounding, ImDrawFlags_RoundCornersTop);
                 drawList->AddLine(ImVec2(nodeMin.x, headerMax.y), headerMax, ImColor(30, 30, 30, 255), 2.0f);
             }
         }
 
         // =========================================================
-        // 2. DESSINER LES CÂBLES EXISTANTS
+        // DESSINER LES CÂBLES EXISTANTS
         // =========================================================
         for (auto& link : m_Links) {
             MaterialPin* startPin = FindPin(link.StartPinID);
             ImVec4 linkColor = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
-
             if (startPin) {
                 switch (startPin->Type) {
                 case PinType::Float: linkColor = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); break;
@@ -483,17 +422,15 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         }
 
         // =========================================================
-        // 3. LOGIQUE DE CRÉATION DE CÂBLE
+        // LOGIQUE DE CRÉATION DE CÂBLE (Auto-Compile !)
         // =========================================================
         bool openNodeMenu = false;
 
         if (ed::BeginCreate(ImVec4(0.3f, 0.5f, 0.8f, 1.0f), 2.5f)) {
             ed::PinId startPinId = 0, endPinId = 0;
-
             if (ed::QueryNewLink(&startPinId, &endPinId)) {
                 auto startPin = FindPin(startPinId);
                 auto endPin = FindPin(endPinId);
-
                 if (startPin && endPin) {
                     if (startPin == endPin || startPin->NodeID == endPin->NodeID) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
                     else if (startPin->Kind == endPin->Kind) { ed::RejectNewItem(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.0f); }
@@ -506,11 +443,12 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                             m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
                                 [endPinId](const MaterialLink& link) { return link.EndPinID == endPinId; }), m_Links.end());
                             m_Links.push_back({ ed::LinkId(GetNextId()), startPinId, endPinId });
+
+                            CompilePreviewShader(); // <-- LIVE UPDATE !
                         }
                     }
                 }
             }
-
             ed::PinId newNodePinId = 0;
             if (ed::QueryNewNode(&newNodePinId)) {
                 if (ed::AcceptNewItem()) {
@@ -523,17 +461,18 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         ed::EndCreate();
 
         // =========================================================
-        // 4. LOGIQUE DE SUPPRESSION
+        // LOGIQUE DE SUPPRESSION (Auto-Compile !)
         // =========================================================
         if (ed::BeginDelete()) {
+            bool hasDeleted = false;
             ed::LinkId deletedLinkId = 0;
             while (ed::QueryDeletedLink(&deletedLinkId)) {
                 if (ed::AcceptDeletedItem()) {
                     m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
                         [deletedLinkId](const MaterialLink& link) { return link.ID == deletedLinkId; }), m_Links.end());
+                    hasDeleted = true;
                 }
             }
-
             ed::NodeId deletedNodeId = 0;
             while (ed::QueryDeletedNode(&deletedNodeId)) {
                 auto node = FindNode(deletedNodeId);
@@ -546,81 +485,64 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                             MaterialPin* p2 = FindPin(link.EndPinID);
                             return (p1 && p1->NodeID == deletedNodeId) || (p2 && p2->NodeID == deletedNodeId);
                         }), m_Links.end());
-
                     m_Nodes.erase(std::remove_if(m_Nodes.begin(), m_Nodes.end(),
                         [deletedNodeId](const MaterialNode& n) { return n.ID == deletedNodeId; }), m_Nodes.end());
+                    hasDeleted = true;
                 }
             }
+            if (hasDeleted) CompilePreviewShader(); // <-- LIVE UPDATE !
         }
         ed::EndDelete();
 
-        // =========================================================
         // RACCOURCIS SOURIS SUR LES PINS (Alt + Clic)
-        // =========================================================
         ed::PinId hoveredPin = ed::GetHoveredPin();
-        if (hoveredPin) {
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                if (ImGui::GetIO().KeyAlt) {
-                    m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
-                        [hoveredPin](const MaterialLink& link) {
-                            return link.StartPinID == hoveredPin || link.EndPinID == hoveredPin;
-                        }), m_Links.end());
-                }
-            }
+        if (hoveredPin && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyAlt) {
+            size_t beforeSize = m_Links.size();
+            m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(),
+                [hoveredPin](const MaterialLink& link) { return link.StartPinID == hoveredPin || link.EndPinID == hoveredPin; }), m_Links.end());
+            if (m_Links.size() < beforeSize) CompilePreviewShader(); // <-- LIVE UPDATE !
         }
 
         // =========================================================
-        // 5. MENU CONTEXTUEL & AUTO-CONNEXION
+        // MENU CONTEXTUEL & AUTO-CONNEXION
         // =========================================================
         ed::Suspend();
-
         if (ed::ShowBackgroundContextMenu()) {
             m_NewNodeLinkPinId = 0;
             m_ContextPopupPos = ed::ScreenToCanvas(ImGui::GetMousePos());
             ImGui::OpenPopup("NodeContextMenu");
         }
-
-        if (openNodeMenu) {
-            ImGui::OpenPopup("NodeContextMenu");
-        }
+        if (openNodeMenu) ImGui::OpenPopup("NodeContextMenu");
 
         if (ImGui::BeginPopup("NodeContextMenu")) {
             auto popupPos = ImGui::GetMousePosOnOpeningCurrentPopup();
             m_ContextPopupPos = ed::ScreenToCanvas(popupPos);
 
             std::map<std::string, std::vector<std::shared_ptr<IMaterialNodeDef>>> categorizedNodes;
-            for (const auto& [name, def] : MaterialNodeRegistry::GetRegistry()) {
-                categorizedNodes[def->GetCategory()].push_back(def);
-            }
+            for (const auto& [name, def] : MaterialNodeRegistry::GetRegistry()) categorizedNodes[def->GetCategory()].push_back(def);
 
             for (const auto& [category, nodes] : categorizedNodes) {
                 if (ImGui::BeginMenu(category.c_str())) {
                     for (const auto& def : nodes) {
                         if (ImGui::MenuItem(def->GetName().c_str())) {
-
-                            // --- LE FIX EST LÀ : Création sécurisée ---
                             MaterialNode newNode;
                             if (MaterialNodeRegistry::CreateNode(def->GetName(), m_NextId, newNode)) {
                                 ed::SetNodePosition(newNode.ID, m_ContextPopupPos);
                                 m_Nodes.push_back(newNode);
 
-                                // Auto-Connexion Intelligente
                                 if (m_NewNodeLinkPinId.Get() != 0) {
                                     MaterialPin* startPin = FindPin(m_NewNodeLinkPinId);
                                     if (startPin) {
                                         MaterialPin* targetPin = nullptr;
                                         auto& pinsList = (startPin->Kind == ed::PinKind::Output) ? m_Nodes.back().Inputs : m_Nodes.back().Outputs;
-                                        for (auto& pin : pinsList) {
-                                            if (pin.Type == startPin->Type) { targetPin = &pin; break; }
-                                        }
+                                        for (auto& pin : pinsList) if (pin.Type == startPin->Type) { targetPin = &pin; break; }
                                         if (!targetPin && !pinsList.empty()) targetPin = &pinsList[0];
 
-                                        if (targetPin) {
-                                            m_Links.push_back({ ed::LinkId(m_NextId++), startPin->ID, targetPin->ID });
-                                        }
+                                        if (targetPin) m_Links.push_back({ ed::LinkId(m_NextId++), startPin->ID, targetPin->ID });
                                     }
                                     m_NewNodeLinkPinId = 0;
                                 }
+                                CompilePreviewShader(); // <-- LIVE UPDATE !
                             }
                         }
                     }
@@ -628,15 +550,10 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 }
             }
             ImGui::EndPopup();
-        } else {
-            m_NewNodeLinkPinId = 0;
-        }
-
+        } else m_NewNodeLinkPinId = 0;
         ed::Resume();
 
-        // =========================================================
         // PLACEMENT INITIAL
-        // =========================================================
         if (m_FirstFrame && m_Nodes.size() >= 2) {
             ed::SetNodePosition(m_Nodes[0].ID, ImVec2(400, 100));
             ed::SetNodePosition(m_Nodes[1].ID, ImVec2(50, 100));
@@ -646,7 +563,6 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
         ed::End();
         ed::SetCurrentEditor(nullptr);
     }
-
     ImGui::End();
     ImGui::PopStyleVar();
 }
