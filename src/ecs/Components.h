@@ -71,18 +71,6 @@ struct TransformComponent {
              * glm::scale(glm::mat4(1.0f), Scale);
     }
 
-    void OnImGuiRender() {
-        ImGui::DragFloat3("Location", glm::value_ptr(Location), 0.1f);
-
-        // On modifie directement le cache Euler (plus de sauts étranges en tapant les chiffres !)
-        if (ImGui::DragFloat3("Rotation", glm::value_ptr(RotationEuler), 0.1f)) {
-            // Si l'utilisateur change l'UI, on force le Quaternion à se mettre à jour
-            Rotation = glm::quat(glm::radians(RotationEuler));
-        }
-
-        ImGui::DragFloat3("Scale", glm::value_ptr(Scale), 0.1f);
-    }
-
     glm::vec3 GetForwardVector() const {
         // Comme tu es en Left-Handed (perspectiveLH), "l'avant" est généralement +Z.
         // On prend un vecteur qui pointe vers l'avant, et on lui applique notre Quaternion !
@@ -102,10 +90,6 @@ struct ColorComponent {
 
     ColorComponent() = default;
     ColorComponent(const glm::vec3& color) : Color(color) {}
-
-    void OnImGuiRender() {
-        ImGui::ColorEdit3("Albedo Color", &Color[0]);
-    }
 };
 
 struct CameraComponent {

@@ -3,6 +3,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "editor/EditorCommands.h"
+#include "editor/UndoManager.h"
 #include "renderer/PrimitiveFactory.h"
 #include "scene/SceneSerializer.h"
 #include "scripts/ScriptRegistry.h"
@@ -26,21 +28,85 @@ const char* GetComponentName() {
     return "Unknown Component";
 }
 
+// =========================================================================================
+// SYSTEME DE PROPRIÉTÉS (Property Drawer)
+// =========================================================================================
+
+// Helper magique pour dessiner un widget ImGui et gérer l'Undo global O(1) automatiquement !
+template<typename Comp, typename FieldType, typename DrawFunc>
+static void DrawUndoableProperty(const std::string& label, Entity entity, const std::shared_ptr<Scene>& sceneContext, Comp& component, FieldType& field, DrawFunc drawFunc) {
+    static Comp s_StartComp;
+    static bool s_IsDragging = false;
+
+    // On capture l'état entier du composant AVANT l'édition
+    if (!s_IsDragging) s_StartComp = component;
+
+    // On dessine le widget ImGui (DragFloat, ColorEdit, etc.)
+    drawFunc(label.c_str(), field);
+
+    // Détection du début du glissement de souris
+    if (ImGui::IsItemActivated()) s_IsDragging = true;
+
+    // Détection du relâchement de la souris APRES modification
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        s_IsDragging = false;
+        UndoManager::BeginTransaction("Edit " + label);
+        UndoManager::PushAction(std::make_unique<EntityComponentCommand<Comp>>(
+            sceneContext,
+            entity.GetUUID(),
+            s_StartComp,
+            component
+        ));
+        UndoManager::EndTransaction();
+    }
+    // Si on annule (Echap) ou qu'on clique sans modifier
+    else if (ImGui::IsItemDeactivated()) {
+        s_IsDragging = false;
+    }
+}
+
+// -----------------------------------------------------------------------------------------
+// Déclaration générique (Rétrocompatibilité pour les composants pas encore migrés)
 template<typename T>
-void DrawComponentUI(Entity entity, entt::registry& registry) {
+void DrawComponentUI(Entity entity, const std::shared_ptr<Scene>& context) {
     if (entity.HasComponent<T>()) {
         const char* name = GetComponentName<T>();
-
-        // Flags pour un look d'éditeur professionnel (ouvert par défaut, prend toute la largeur)
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
 
-        // On utilise le hash du type comme ID unique pour ImGui
         if (ImGui::TreeNodeEx((void*)typeid(T).hash_code(), flags, "%s", name)) {
             auto& component = entity.GetComponent<T>();
+            component.OnImGuiRender(); // Ancien système temporaire
+            ImGui::TreePop();
+        }
+    }
+}
 
-            // Appel magique : exécute l'UI spécifique définie dans Components.h
-            component.OnImGuiRender();
+// --- SPÉCIALISATIONS AAA (Nouveau Système Propre) ---
 
+template<>
+void DrawComponentUI<TransformComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<TransformComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(TransformComponent).hash_code(), flags, "Transform")) {
+            auto& tc = entity.GetComponent<TransformComponent>();
+
+            DrawUndoableProperty("Location", entity, context, tc, tc.Location, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
+            DrawUndoableProperty("Rotation", entity, context, tc, tc.RotationEuler, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
+            tc.Rotation = glm::quat(glm::radians(tc.RotationEuler)); // Synchro mathématique
+            DrawUndoableProperty("Scale", entity, context, tc, tc.Scale, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
+
+            ImGui::TreePop();
+        }
+    }
+}
+
+template<>
+void DrawComponentUI<ColorComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<ColorComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(ColorComponent).hash_code(), flags, "Color")) {
+            auto& cc = entity.GetComponent<ColorComponent>();
+            DrawUndoableProperty("Albedo", entity, context, cc, cc.Color, [](const char* l, glm::vec3& v) { ImGui::ColorEdit3(l, glm::value_ptr(v)); });
             ImGui::TreePop();
         }
     }
@@ -420,7 +486,7 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 
     // 1. Dessin des composants existants
     std::apply([&](auto... args) {
-        (DrawComponentUI<decltype(args)>(entity, m_Context->m_Registry), ...);
+        (DrawComponentUI<decltype(args)>(entity, m_Context), ...);
     }, AllComponents{});
 
     // 2. Bouton "Add Component"
