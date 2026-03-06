@@ -767,17 +767,22 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
             if (!node.TexturePath.empty()) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
         }
 
+        // ==============================================================
+        // LE VRAI FIX EST LÀ : On lit les paramètres au niveau du nœud !
+        // ==============================================================
+        if (nodeJson.contains("IsParameter")) node.IsParameter = nodeJson["IsParameter"].get<bool>();
+        if (nodeJson.contains("ParameterName")) node.ParameterName = nodeJson["ParameterName"].get<std::string>();
+        if (nodeJson.contains("ParameterCategory")) node.ParameterCategory = nodeJson["ParameterCategory"].get<std::string>();
+
         // 3. On restaure les IDs des Pins en les cherchant PAR NOM (Rétro-compatibilité absolue)
         if (nodeJson.contains("Inputs")) {
             for (auto& pinJson : nodeJson["Inputs"]) {
                 std::string pinName = pinJson["Name"].get<std::string>();
                 for (auto& pin : node.Inputs) {
-                    if (pin.Name == pinName) { // On a trouvé le connecteur correspondant !
-                        pin.ID = ed::PinId(pinJson["ID"].get<int>()); // On lui redonne son vieil ID pour que les câbles le trouvent
+                    if (pin.Name == pinName) {
+                        pin.ID = ed::PinId(pinJson["ID"].get<int>());
 
-                        if (nodeJson.contains("IsParameter")) node.IsParameter = nodeJson["IsParameter"].get<bool>();
-                        if (nodeJson.contains("ParameterName")) node.ParameterName = nodeJson["ParameterName"].get<std::string>();
-                        if (nodeJson.contains("ParameterCategory")) node.ParameterCategory = nodeJson["ParameterCategory"].get<std::string>();
+                        // ATTENTION : On a bien supprimé les IsParameter qui trainaient ici !
 
                         if (pinJson.contains("FloatValue")) pin.FloatValue = pinJson["FloatValue"].get<float>();
                         if (pinJson.contains("Vec2Value")) pin.Vec2Value = { pinJson["Vec2Value"][0], pinJson["Vec2Value"][1] };
