@@ -16,6 +16,8 @@
 #include <stb_image.h>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "AssetRegistry.h"
+
 void EditorLayer::OnAttach() {
     int width, height, channels;
     stbi_set_flip_vertically_on_load(false); // ImGui préfère le haut en haut !
@@ -28,6 +30,9 @@ void EditorLayer::OnAttach() {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
         stbi_image_free(data);
     }
+
+    // --- LE CHT GÈRE TOUT SEUL ! ---
+    AssetRegistry::RegisterAllAssets();
 
     // 1. Initialisation du premier onglet vierge
     m_Tabs.push_back({ "Untitled", "", TabType::Scene, std::make_shared<Scene>(), false, nullptr });

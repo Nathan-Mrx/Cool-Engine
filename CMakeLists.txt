@@ -67,6 +67,8 @@ set(SOURCES
         src/editor/materials/NodeDefinitions.h
         src/editor/materials/MaterialNodeRegistry.generated.cpp
         src/editor/IAssetEditor.h
+        src/editor/AssetRegistry.h
+        src/editor/AssetDefinitions.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
@@ -79,8 +81,19 @@ add_custom_command(
         COMMENT "CoolHeaderTool: Generation du registre des noeuds de materiaux..."
 )
 
+# --- GÉNÉRATION DU REGISTRE D'ASSETS ---
+set(ASSET_REGISTRY_OUT "${CMAKE_SOURCE_DIR}/src/editor/AssetRegistry.generated.cpp")
+
+add_custom_command(
+        OUTPUT ${ASSET_REGISTRY_OUT}
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/CoolHeaderTool.py --assets ${CMAKE_SOURCE_DIR}/src/editor ${ASSET_REGISTRY_OUT}
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/AssetDefinitions.h
+        COMMENT "CoolHeaderTool: Generation du registre des assets..."
+)
+
+
 # Créer l'exécutable avec les sources
-add_executable(GameEngine ${SOURCES})
+add_executable(GameEngine ${SOURCES} ${ASSET_REGISTRY_OUT})
 
 # Permettre d'inclure les headers depuis le dossier src/ facilement
 target_include_directories(GameEngine PRIVATE src)
