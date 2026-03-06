@@ -253,7 +253,80 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
         UpdateWildcardPins();
 
+        UpdateWildcardPins();
+
+        // =========================================================
+        // --- LOGIQUE DE CREATION DE BLOC DE COMMENTAIRE (Touche 'C') ---
+        // =========================================================
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_C) && !ImGui::GetIO().WantTextInput) {
+            int selectedCount = ed::GetSelectedObjectCount();
+            if (selectedCount > 0) {
+                std::vector<ed::NodeId> selectedNodes(selectedCount);
+                ed::GetSelectedNodes(selectedNodes.data(), selectedCount);
+
+                glm::vec2 min(999999.0f, 999999.0f);
+                glm::vec2 max(-999999.0f, -999999.0f);
+
+                for (auto& id : selectedNodes) {
+                    MaterialNode* n = FindNode(id);
+                    // On exclut les autres commentaires du calcul de la taille
+                    if (n && n->Name != "Comment") {
+                        ImVec2 pos = ed::GetNodePosition(id);
+                        ImVec2 size = ed::GetNodeSize(id);
+                        if (pos.x < min.x) min.x = pos.x;
+                        if (pos.y < min.y) min.y = pos.y;
+                        if (pos.x + size.x > max.x) max.x = pos.x + size.x;
+                        if (pos.y + size.y > max.y) max.y = pos.y + size.y;
+                    }
+                }
+
+                if (min.x < max.x) {
+                    // On ajoute une marge généreuse autour des noeuds
+                    min.x -= 30; min.y -= 50;
+                    max.x += 30; max.y += 30;
+
+                    MaterialNode commentNode;
+                    commentNode.ID = ed::NodeId(m_NextId++);
+                    commentNode.Name = "Comment";
+                    commentNode.CommentText = "New Comment";
+                    // Couleur par défaut : Blanc translucide (Alpha = 0.1)
+                    commentNode.ColorValue = { 1.0f, 1.0f, 1.0f, 0.1f };
+                    commentNode.Size = { max.x - min.x, max.y - min.y };
+
+                    m_Nodes.push_back(commentNode);
+                    ed::SetNodePosition(commentNode.ID, ImVec2(min.x, min.y));
+                }
+            }
+        }
+
         for (auto& node : m_Nodes) {
+            // --- NOUVEAU : COMMENT NODE ---
+            if (node.Name == "Comment") {
+                // On applique la couleur avec son Alpha pour la transparence !
+                ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(node.ColorValue.r, node.ColorValue.g, node.ColorValue.b, node.ColorValue.a));
+                ed::PushStyleColor(ed::StyleColor_NodeBorder, ImVec4(node.ColorValue.r, node.ColorValue.g, node.ColorValue.b, 0.8f));
+
+                ed::BeginNode(node.ID);
+
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                ImGui::TextUnformatted(node.CommentText.c_str());
+                ImGui::PopStyleColor();
+
+                // C'est cette fonction magique qui dit à l'éditeur "Ceci est un background resizable" !
+                ed::Group(ImVec2(node.Size.x, node.Size.y));
+                ed::EndNode();
+
+                ed::PopStyleColor(2);
+
+                // Si l'utilisateur étire le bloc avec la souris, on sauvegarde sa nouvelle taille
+                if (!m_FirstFrame) {
+                    ImVec2 newSize = ed::GetNodeSize(node.ID);
+                    if (newSize.x > 0 && newSize.y > 0) {
+                        node.Size = { newSize.x, newSize.y };
+                    }
+                }
+                continue; // On passe au noeud suivant (il n'a pas de connecteurs)
+            }
             // REROUTE NODE
             if (node.Name == "Reroute") {
                 ed::PushStyleColor(ed::StyleColor_NodeBg, ImVec4(0, 0, 0, 0));
@@ -585,10 +658,21 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
             MaterialNode* node = FindNode(m_ContextNodeId);
             if (node && (node->Name == "Float" || node->Name == "Color" || node->Name == "Texture2D" || node->Name == "StaticSwitchParameter")) {
 
-                if (node->Name != "StaticSwitchParameter") {
-                    if (ImGui::Checkbox("Is Parameter", &node->IsParameter)) {
-                        if (node->IsParameter && node->ParameterName.empty()) node->ParameterName = "Param_" + std::to_string((int)node->ID.Get());
-                        CompilePreviewShader();
+                if (node->Name == "Comment") {
+                    char buf[256];
+                    strncpy(buf, node->CommentText.c_str(), sizeof(buf));
+                    if (ImGui::InputText("Text", buf, sizeof(buf))) {
+                        node->CommentText = buf;
+                    }
+                    ImGui::ColorEdit4("Color", &node->ColorValue[0]); // Permet de changer la couleur et l'opacité !
+                }
+                else {
+                    if (node->Name != "StaticSwitchParameter")
+                    {
+                        if (ImGui::Checkbox("Is Parameter", &node->IsParameter)) {
+                            if (node->IsParameter && node->ParameterName.empty()) node->ParameterName = "Param_" + std::to_string((int)node->ID.Get());
+                            CompilePreviewShader();
+                        }
                     }
                 }
 
@@ -672,6 +756,9 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
         nodeJson["IsParameter"] = node.IsParameter;
         nodeJson["ParameterName"] = node.ParameterName;
         nodeJson["ParameterCategory"] = node.ParameterCategory;
+
+        nodeJson["Size"] = { node.Size.x, node.Size.y };
+        nodeJson["CommentText"] = node.CommentText;
 
         for (auto& pin : node.Inputs) {
             nodeJson["Inputs"].push_back({
@@ -766,6 +853,8 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
             node.TexturePath = nodeJson["TexturePath"].get<std::string>();
             if (!node.TexturePath.empty()) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
         }
+        if (nodeJson.contains("Size")) node.Size = { nodeJson["Size"][0].get<float>(), nodeJson["Size"][1].get<float>() };
+        if (nodeJson.contains("CommentText")) node.CommentText = nodeJson["CommentText"].get<std::string>();
 
         // ==============================================================
         // LE VRAI FIX EST LÀ : On lit les paramètres au niveau du nœud !

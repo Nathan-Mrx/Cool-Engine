@@ -50,6 +50,10 @@ struct MaterialNode {
     bool IsParameter = false;
     std::string ParameterName = "";
     std::string ParameterCategory = "General";
+
+    // --- NOUVEAU : COMMENTAIRES ---
+    glm::vec2 Size = { 0.0f, 0.0f };
+    std::string CommentText = "Comment";
 };
 
 struct MaterialLink {
