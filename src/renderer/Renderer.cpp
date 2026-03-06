@@ -120,8 +120,30 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
                     glm::vec3 camPos = glm::vec3(invView[3]);
                     activeShader->SetVec3("uViewPos", camPos);
 
-                    // --- NOUVEAU : ON BRANCHE LES TEXTURES AVANT DE DESSINER ---
+                    // ========================================================
+                    // --- APPLICATION DES OVERRIDES D'INSTANCE ---
+                    // ========================================================
+
+                    // 1. On envoie les valeurs modifiées (Float et Color)
+                    for (auto const& [name, val] : mat.FloatOverrides) {
+                        activeShader->SetFloat(name, val);
+                    }
+                    for (auto const& [name, val] : mat.ColorOverrides) {
+                        activeShader->SetVec3(name, val);
+                    }
+
+                    // 2. On branche les Textures (Mix Parent / Instance)
                     int slot = 0;
+
+                    // A. Textures de l'Instance (Overrides dynamiques)
+                    for (auto const& [name, texID] : mat.TextureOverrides) {
+                        glActiveTexture(GL_TEXTURE0 + slot);
+                        glBindTexture(GL_TEXTURE_2D, texID);
+                        activeShader->SetInt(name, slot);
+                        slot++;
+                    }
+
+                    // B. Textures du Parent (Statiques - non modifiées)
                     for (auto const& [nodeID, texID] : mat.Textures) {
                         glActiveTexture(GL_TEXTURE0 + slot);
                         glBindTexture(GL_TEXTURE_2D, texID);
@@ -130,6 +152,8 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
                     }
                 }
             }
+
+            // B. --- LE FIX EST LÀ : ON ENVOIE LA LUMIÈRE AU SHADER ACTIF ! ---
 
             // B. --- LE FIX EST LÀ : ON ENVOIE LA LUMIÈRE AU SHADER ACTIF ! ---
             activeShader->SetVec3("uLightColor", currentLightColor);

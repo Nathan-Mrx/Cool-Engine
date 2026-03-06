@@ -297,8 +297,15 @@ struct MaterialComponent {
     std::string AssetPath;
     std::shared_ptr<Shader> ShaderInstance = nullptr;
 
-    // --- NOUVEAU : On retient les textures chargées (NodeID -> OpenGL_ID) ---
+    // --- TEXTURES CLASSIQUES (Du Parent) ---
     std::map<int, unsigned int> Textures;
+
+    // --- NOUVEAU : OVERRIDES (De l'Instance) ---
+    // Clé = Nom de l'uniform ("u_BaseColor").
+    // Valeur = La data (on utilise des variables brutes pour simplifier)
+    std::map<std::string, float> FloatOverrides;
+    std::map<std::string, glm::vec4> ColorOverrides;
+    std::map<std::string, unsigned int> TextureOverrides;
 
     MaterialComponent() = default;
     MaterialComponent(const MaterialComponent&) = default;
@@ -306,49 +313,96 @@ struct MaterialComponent {
 
     void SetAndCompile(const std::string& path) {
         AssetPath = path;
+
+        // On nettoie l'état précédent
+        Textures.clear();
+        FloatOverrides.clear();
+        ColorOverrides.clear();
+        TextureOverrides.clear();
+
         std::ifstream file(path);
         if (!file.is_open()) return;
 
         nlohmann::json data;
         try { file >> data; } catch(...) { return; }
 
-        if (data.contains("GeneratedGLSL")) {
-            std::string glsl = data["GeneratedGLSL"].get<std::string>();
+        std::filesystem::path filePath(path);
 
-            // --- LE FIX : On crée le fichier dans le dossier .ce_cache ! ---
-            std::filesystem::path cacheDir = Project::GetCacheDirectory();
-            if (!std::filesystem::exists(cacheDir)) {
-                std::filesystem::create_directories(cacheDir); // Crée le dossier s'il manque
-            }
-
-            // On récupère juste le nom du fichier sans l'extension (ex: "MonMat" depuis "MonMat.cemat")
-            std::filesystem::path cematPath = path;
-            std::string fragName = cematPath.filename().stem().string() + ".frag";
-            std::filesystem::path fragPath = cacheDir / fragName;
-
-            std::ofstream outFrag(fragPath);
-            outFrag << glsl;
-            outFrag.close();
-
-            // On compile le shader depuis son nouvel emplacement
-            ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
+        // ==========================================
+        // CAS 1 : C'EST UN MATERIAL (.cemat)
+        // ==========================================
+        if (filePath.extension() == ".cemat") {
+            LoadMaterial(data, filePath);
         }
+        // ==========================================
+        // CAS 2 : C'EST UNE INSTANCE (.cematinst)
+        // ==========================================
+        else if (filePath.extension() == ".cematinst") {
+            if (data.contains("Parent") && !data["Parent"].get<std::string>().empty()) {
+                std::string parentPath = Project::GetProjectDirectory().string() + "/" + data["Parent"].get<std::string>();
 
-        // --- NOUVEAU : ON LIT LE JSON POUR CHARGER LES IMAGES ---
-        Textures.clear();
-        if (data.contains("Nodes")) {
-            for (auto& node : data["Nodes"]) {
-                if (node["Name"] == "Texture2D" && node.contains("TexturePath")) {
-                    std::string texPath = node["TexturePath"].get<std::string>();
-                    if (!texPath.empty()) {
-                        int nodeID = node["ID"].get<int>();
-                        Textures[nodeID] = TextureLoader::LoadTexture(texPath.c_str());
+                // 1. On charge la logique du Parent
+                std::ifstream parentFile(parentPath);
+                if (parentFile.is_open()) {
+                    nlohmann::json parentData;
+                    parentFile >> parentData;
+                    LoadMaterial(parentData, parentPath);
+                    parentFile.close();
+                }
+
+                // 2. On applique les Overrides par-dessus !
+                if (data.contains("Overrides")) {
+                    for (auto& [key, value] : data["Overrides"].items()) {
+                        if (value.is_number()) {
+                            FloatOverrides["u_" + key] = value.get<float>();
+                        } else if (value.is_array() && value.size() == 4) {
+                            ColorOverrides["u_" + key] = glm::vec4(value[0], value[1], value[2], value[3]);
+                        } else if (value.is_string()) {
+                            std::string texPath = value.get<std::string>();
+                            if (!texPath.empty()) {
+                                std::string fullPath = Project::GetProjectDirectory().string() + "/" + texPath;
+                                TextureOverrides["u_" + key] = TextureLoader::LoadTexture(fullPath.c_str());
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
+private:
+    // Fonction utilitaire pour éviter de dupliquer le code de chargement du GLSL
+    void LoadMaterial(const nlohmann::json& data, const std::filesystem::path& cematPath) {
+        if (data.contains("GeneratedGLSL")) {
+            std::string glsl = data["GeneratedGLSL"].get<std::string>();
+            std::filesystem::path cacheDir = Project::GetCacheDirectory();
+            if (!std::filesystem::exists(cacheDir)) std::filesystem::create_directories(cacheDir);
+
+            std::string fragName = cematPath.stem().string() + ".frag";
+            std::filesystem::path fragPath = cacheDir / fragName;
+
+            std::ofstream outFrag(fragPath);
+            outFrag << glsl;
+            outFrag.close();
+
+            ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
+        }
+
+        if (data.contains("Nodes")) {
+            for (auto& node : data["Nodes"]) {
+                if (node["Name"] == "Texture2D" && node.contains("TexturePath")) {
+                    std::string texPath = node["TexturePath"].get<std::string>();
+                    if (!texPath.empty()) {
+                        int nodeID = node["ID"].get<int>();
+                        std::string fullPath = Project::GetProjectDirectory().string() + "/" + texPath;
+                        Textures[nodeID] = TextureLoader::LoadTexture(fullPath.c_str());
+                    }
+                }
+            }
+        }
+    }
+
+public:
     void OnImGuiRender() {
         if (!AssetPath.empty()) {
             ImGui::TextWrapped("Mat: %s", std::filesystem::path(AssetPath).filename().string().c_str());
@@ -356,13 +410,13 @@ struct MaterialComponent {
             ImGui::TextColored(ImVec4(1, 0, 0, 1), "No Material Assigned");
         }
 
-        ImGui::Button("Drop .cemat Here", ImVec2(-1, 30));
+        ImGui::Button("Drop .cemat/.cematinst", ImVec2(-1, 30));
 
-        // --- DRAG & DROP TARGET ---
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
                 std::filesystem::path filepath = (const char*)payload->Data;
-                if (filepath.extension() == ".cemat") {
+                // --- ON ACCEPTE LES DEUX EXTENSIONS ! ---
+                if (filepath.extension() == ".cemat" || filepath.extension() == ".cematinst") {
                     SetAndCompile(filepath.string());
                 }
             }
