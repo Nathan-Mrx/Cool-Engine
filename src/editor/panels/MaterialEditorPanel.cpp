@@ -367,12 +367,17 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                 }
 
                 // --- AUTO-COMPILE AU DRAG & DROP ---
+                // ...
                 if (ImGui::BeginDragDropTarget()) {
-                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                        std::filesystem::path path = (const char*)p->Data;
-                        if (path.extension() == ".png" || path.extension() == ".jpg") {
-                            node.TexturePath = path.string();
-                            node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                        std::filesystem::path fp = (const char*)payload->Data;
+                        if (fp.extension() == ".png" || fp.extension() == ".jpg") {
+
+                            // --- LE FIX EST LÀ : On force le chemin relatif ! ---
+                            node.TexturePath = std::filesystem::relative(fp, Project::GetProjectDirectory()).string();
+
+                            // Mais on charge la preview avec le vrai chemin
+                            node.TextureID = TextureLoader::LoadTexture(fp.string().c_str());
                             CompilePreviewShader();
                         }
                     }

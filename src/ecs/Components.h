@@ -360,7 +360,8 @@ struct MaterialComponent {
                         } else if (value.is_string()) {
                             std::string texPath = value.get<std::string>();
                             if (!texPath.empty()) {
-                                std::string fullPath = Project::GetProjectDirectory().string() + "/" + texPath;
+                                std::filesystem::path tp(texPath);
+                                std::string fullPath = tp.is_absolute() ? tp.string() : (Project::GetProjectDirectory() / tp).string();
                                 TextureOverrides["u_" + key] = TextureLoader::LoadTexture(fullPath.c_str());
                             }
                         }
@@ -394,7 +395,9 @@ private:
                     std::string texPath = node["TexturePath"].get<std::string>();
                     if (!texPath.empty()) {
                         int nodeID = node["ID"].get<int>();
-                        std::string fullPath = Project::GetProjectDirectory().string() + "/" + texPath;
+                        std::filesystem::path tp(texPath);
+                        // Si le chemin est déjà absolu, on l'utilise tel quel. Sinon, on ajoute le ProjectDir.
+                        std::string fullPath = tp.is_absolute() ? tp.string() : (Project::GetProjectDirectory() / tp).string();
                         Textures[nodeID] = TextureLoader::LoadTexture(fullPath.c_str());
                     }
                 }
