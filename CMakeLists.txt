@@ -128,6 +128,14 @@ add_custom_command(TARGET GameEngine POST_BUILD
         COMMENT "Copie de l'icône vers le dossier de build..."
 )
 
+# Copier automatiquement le dossier d'icônes à côté de l'exécutable après la compilation
+add_custom_command(TARGET GameEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/icons
+        $<TARGET_FILE_DIR:GameEngine>/icons
+        COMMENT "Copie des icones vers le dossier de build..."
+)
+
 # Jolt nécessite quelques définitions de préprocesseur pour fonctionner correctement
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         #JPH_DEBUG_RENDERER         # Pour pouvoir afficher les boîtes de collision plus tard

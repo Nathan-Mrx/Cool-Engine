@@ -9,6 +9,8 @@
 #include "renderer/TextureLoader.h"
 #include "scene/Entity.h"
 #include "scene/SceneSerializer.h"
+#include <vector>
+#include <algorithm>
 
 ContentBrowserPanel::ContentBrowserPanel() {}
 
@@ -66,7 +68,7 @@ void ContentBrowserPanel::OnImGuiRender() {
     ImGui::Text("%s", relativePath.string().c_str());
     ImGui::Separator();
 
-    // --- 2. GRID LAYOUT (Style Unreal) ---
+    // --- 2. GRID LAYOUT & SORTING ---
     float padding = 16.0f;
     float thumbnailSize = 90.0f;
     float cellSize = thumbnailSize + padding;
@@ -78,7 +80,38 @@ void ContentBrowserPanel::OnImGuiRender() {
     ImGui::Columns(columnCount, 0, false);
 
     if (std::filesystem::exists(m_CurrentDirectory)) {
+
+        // ========================================================
+        // ÉTAPE A : RÉCUPÉRATION ET TRI DES FICHIERS
+        // ========================================================
+        std::vector<std::filesystem::directory_entry> entries;
         for (auto& directoryEntry : std::filesystem::directory_iterator(m_CurrentDirectory)) {
+            entries.push_back(directoryEntry);
+        }
+
+        std::sort(entries.begin(), entries.end(), [](const std::filesystem::directory_entry& a, const std::filesystem::directory_entry& b) {
+            bool aIsDir = a.is_directory();
+            bool bIsDir = b.is_directory();
+
+            // 1. Les dossiers en premier
+            if (aIsDir && !bIsDir) return true;
+            if (!aIsDir && bIsDir) return false;
+
+            // 2. Trier par type (extension)
+            if (!aIsDir && !bIsDir) {
+                std::string extA = a.path().extension().string();
+                std::string extB = b.path().extension().string();
+                if (extA != extB) return extA < extB;
+            }
+
+            // 3. Trier par nom alphabétique
+            return a.path().filename().string() < b.path().filename().string();
+        });
+
+        // ========================================================
+        // ÉTAPE B : RENDU DES CARTES
+        // ========================================================
+        for (auto& directoryEntry : entries) {
             const auto& path = directoryEntry.path();
             std::string filename = path.filename().string();
 
@@ -87,10 +120,11 @@ void ContentBrowserPanel::OnImGuiRender() {
             if (directoryEntry.is_directory()) {
                 // --- RENDU DOSSIER ---
                 if (m_DirectoryIcon != 0) {
-                    // Bouton avec image (fond transparent)
-                    ImGui::ImageButton(filename.c_str(), (ImTextureID)(uintptr_t)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
+                    // On utilise "##Dir" pour que ImGui ne dessine pas de texte dans le bouton
+                    ImGui::ImageButton("##Dir", (ImTextureID)(uintptr_t)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
                 } else {
-                    ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
+                    // Fallback si pas d'icône : un dossier vide avec écrit "DIR" au milieu
+                    ImGui::Button("DIR", { thumbnailSize, thumbnailSize });
                 }
 
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -101,18 +135,26 @@ void ContentBrowserPanel::OnImGuiRender() {
                 AssetTypeInfo info;
                 bool isKnownAsset = AssetRegistry::GetInfo(path.extension().string(), info);
 
-                // Couleur de fond (plus sombre si inconnu)
+                // Couleur de fond de la carte
                 ImVec4 bgCol = isKnownAsset ? ImVec4(info.Color.x * 0.4f, info.Color.y * 0.4f, info.Color.z * 0.4f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
 
+                ImGui::PushStyleColor(ImGuiCol_Button, bgCol);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(bgCol.x * 1.5f, bgCol.y * 1.5f, bgCol.z * 1.5f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(bgCol.x * 0.8f, bgCol.y * 0.8f, bgCol.z * 0.8f, 1.0f));
+
                 if (isKnownAsset && info.IconID != 0) {
-                    ImGui::ImageButton(filename.c_str(), (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
+                    // Bouton avec l'icône bien centrée et fond coloré
+                    ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, bgCol);
-                    ImGui::Button(filename.c_str(), { thumbnailSize, thumbnailSize });
-                    ImGui::PopStyleColor();
+                    // Fallback si pas d'icône : on écrit l'extension (ex: ".cewav") au milieu du bouton !
+                    std::string ext = path.extension().string();
+                    if (ext.empty()) ext = "FILE";
+                    ImGui::Button(ext.c_str(), { thumbnailSize, thumbnailSize });
                 }
 
-                // Logique d'ouverture (On garde ça simple pour l'instant)
+                ImGui::PopStyleColor(3);
+
+                // Logique d'ouverture
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     if (path.extension() == ".cescene" && OnSceneOpenCallback) OnSceneOpenCallback(path);
                     else if (path.extension() == ".ceprefab" && OnPrefabOpenCallback) OnPrefabOpenCallback(path);
@@ -128,6 +170,7 @@ void ContentBrowserPanel::OnImGuiRender() {
                 }
             }
 
+            // LE TEXTE EN DESSOUS DE L'ICÔNE
             ImGui::TextWrapped("%s", filename.c_str());
             ImGui::NextColumn();
             ImGui::PopID();
