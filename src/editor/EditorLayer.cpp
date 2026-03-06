@@ -1098,15 +1098,33 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
         if (m_Tabs[i].Filepath == path) {
             m_ActiveTabIndex = i;
             m_ForceTabSelection = true;
-            return; // On s'arrête là, et SURTOUT on ne recharge pas le fichier !
+            return;
         }
     }
 
     // 2. Si ce n'est pas ouvert, on crée un NOUVEAU panel indépendant
     auto newMatPanel = std::make_shared<MaterialEditorPanel>();
-    newMatPanel->Load(path); // Il charge son propre fichier
+    newMatPanel->Load(path);
 
-    // 3. On ajoute le nouvel onglet avec son panel dédié (le 6ème paramètre)
+    // --- LE HOT RELOAD MAGIQUE ---
+    newMatPanel->OnMaterialSavedCallback = [this](const std::filesystem::path& savedPath) {
+        if (!m_ActiveScene) return;
+
+        // On parcourt TOUTES les entités de la scène qui ont un composant Matériau
+        auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
+        for (auto entityID : view) {
+            auto& mat = view.get<MaterialComponent>(entityID);
+
+            // Si l'entité utilise le matériau qu'on vient de sauvegarder...
+            if (mat.AssetPath == savedPath.string()) {
+                // On force le rechargement depuis le disque !
+                mat.SetAndCompile(savedPath.string());
+                std::cout << "[Editor] Hot-Reloaded Material for Entity ID: " << (uint32_t)entityID << std::endl;
+            }
+        }
+    };
+
+    // 3. On ajoute le nouvel onglet
     m_Tabs.push_back({ path.filename().string(), path, TabType::Material, nullptr, false, newMatPanel });
 
     m_ActiveTabIndex = m_Tabs.size() - 1;

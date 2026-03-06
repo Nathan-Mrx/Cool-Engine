@@ -723,6 +723,11 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
 
     ed::SetCurrentEditor(nullptr);
     CompilePreviewShader(); // Mise à jour du viewport après sauvegarde
+
+    // --- NOUVEAU : On avertit le reste du moteur ! ---
+    if (OnMaterialSavedCallback) {
+        OnMaterialSavedCallback(path);
+    }
 }
 
 void MaterialEditorPanel::Load(const std::filesystem::path& path) {

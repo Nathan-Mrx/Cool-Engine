@@ -13,9 +13,12 @@
 #include "../../renderer/Mesh.h"
 #include "../../renderer/Shader.h"
 #include "../materials/MaterialGraph.h"
+#include <functional>
+
 
 
 namespace ed = ax::NodeEditor;
+
 
 
 class MaterialEditorPanel {
@@ -27,6 +30,10 @@ public:
 
     void Save(const std::filesystem::path& path);
     void Load(const std::filesystem::path& path);
+
+    // --- NOUVEAU : Le Callback de Hot-Reload ---
+    std::function<void(const std::filesystem::path&)> OnMaterialSavedCallback;
+    //...
 
 private:
     void BuildDefaultNodes();
