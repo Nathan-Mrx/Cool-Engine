@@ -13,6 +13,13 @@ enum class PinType {
     Vec4
 };
 
+inline std::string GetGLSLTypeStr(PinType type) {
+    if (type == PinType::Vec2) return "vec2";
+    if (type == PinType::Vec3) return "vec3";
+    if (type == PinType::Vec4) return "vec4";
+    return "float";
+}
+
 struct MaterialPin {
     ed::PinId ID;
     ed::NodeId NodeID;

@@ -63,7 +63,6 @@ set(SOURCES
         src/editor/panels/MaterialEditorPanel.cpp
         src/editor/panels/MaterialEditorPanel.h
         src/editor/materials/MaterialGraph.h
-        src/editor/materials/MaterialNodeRegistry.generated.cpp
         src/editor/materials/MaterialNodeRegistry.h
         src/editor/materials/NodeDefinitions.h
 )

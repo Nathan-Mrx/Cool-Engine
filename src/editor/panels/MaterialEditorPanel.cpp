@@ -995,17 +995,17 @@ vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
 // --- L'ALGORITHME MAGIQUE (Récursif) ---
 std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder) {
     MaterialPin* myInputPin = FindPin(inputPinId);
-    if (!myInputPin) return "0.0"; // Ne devrait jamais arriver
+    if (!myInputPin) return "0.0";
 
     PinType expectedType = myInputPin->Type;
 
-    // 1. Est-ce que le connecteur est branché ?
+    // 1. Est-ce branché ?
     MaterialLink* connectedLink = nullptr;
     for (auto& link : m_Links) {
         if (link.EndPinID == inputPinId) { connectedLink = &link; break; }
     }
 
-    // 2. Comportement par défaut si RIEN n'est branché
+    // 2. Si rien n'est branché, on renvoie la valeur statique (Interface)
     if (!connectedLink) {
         std::stringstream ss;
         if (expectedType == PinType::Float) { ss << myInputPin->FloatValue; return ss.str(); }
@@ -1015,120 +1015,58 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
         return "0.0";
     }
 
-    // 3. Le connecteur EST branché ! On récupère la source
     MaterialPin* outputPin = FindPin(connectedLink->StartPinID);
-    if (!outputPin) return "0.0"; // Airbag
+    if (!outputPin) return "0.0";
     MaterialNode* sourceNode = FindNode(outputPin->NodeID);
     if (!sourceNode) return "0.0";
 
-    PinType providedType = outputPin->Type;
+    // --- BYPASS REROUTE ---
+    if (sourceNode->Name == "Reroute") {
+        std::string result = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+        return CastGLSL(result, outputPin->Type, expectedType);
+    }
+
     int sourceId = (int)sourceNode->ID.Get();
     std::string baseVar = "val_" + std::to_string(sourceId);
 
-    // 4. On génère le code GLSL du noeud Source (Une seule fois !)
+    // 3. Génération du GLSL du noeud Source (Si pas encore fait)
     if (visited.find(sourceId) == visited.end()) {
         visited.insert(sourceId);
+        bodyBuilder << "    // Noeud: " << sourceNode->Name << " (ID: " << sourceId << ")\n";
 
-        if (sourceNode->Name == "Color") {
-            bodyBuilder << "    vec4 " << baseVar << " = vec4(" << sourceNode->ColorValue.r << ", " << sourceNode->ColorValue.g << ", " << sourceNode->ColorValue.b << ", " << sourceNode->ColorValue.a << ");\n";
-        }
-        else if (sourceNode->Name == "Float") {
-            bodyBuilder << "    float " << baseVar << " = " << sourceNode->FloatValue << ";\n";
-        }
-        else if (sourceNode->Name == "Texture2D") {
-            // Lecture intelligente des UVs
-            std::string uv = "vTexCoords";
-            bool hasUVLink = false;
-            for (auto& link : m_Links) if (link.EndPinID == sourceNode->Inputs[0].ID) { hasUVLink = true; break; }
-            if (hasUVLink) uv = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+        // Le Lambda d'évaluation fourni au nœud !
+        auto evalInput = [&](int index, const std::string& fallback) -> std::string {
+            if (index < 0 || index >= sourceNode->Inputs.size()) return fallback;
+            ed::PinId inPinId = sourceNode->Inputs[index].ID;
 
-            bodyBuilder << "    vec4 " << baseVar << " = texture(u_Tex_" << sourceId << ", " << uv << ");\n";
-        }
-        else if (sourceNode->Name == "TexCoords") {
-            bodyBuilder << "    vec2 " << baseVar << " = vTexCoords;\n";
-        }
-        else if (sourceNode->Name == "Time") {
-            bodyBuilder << "    float " << baseVar << " = uTime;\n";
-        }
-        else if (sourceNode->Name == "Panner") {
-            std::string uv = "vTexCoords";
-            bool hasUVLink = false;
-            for (auto& link : m_Links) if (link.EndPinID == sourceNode->Inputs[0].ID) { hasUVLink = true; break; }
-            if (hasUVLink) uv = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
+            bool hasLink = false;
+            for (auto& l : m_Links) if (l.EndPinID == inPinId) { hasLink = true; break; }
 
-            std::string speed = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
-
-            std::string t = "uTime";
-            bool hasTimeLink = false;
-            for (auto& link : m_Links) if (link.EndPinID == sourceNode->Inputs[2].ID) { hasTimeLink = true; break; }
-            if (hasTimeLink) t = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
-
-            bodyBuilder << "    vec2 " << baseVar << " = " << uv << " + (" << speed << " * " << t << ");\n";
-        }
-        else if (sourceNode->Name == "TilingAndOffset") {
-            std::string uv = "vTexCoords";
-            bool hasUVLink = false;
-            for (auto& link : m_Links) if (link.EndPinID == sourceNode->Inputs[0].ID) { hasUVLink = true; break; }
-            if (hasUVLink) uv = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
-
-            std::string t = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
-            std::string o = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
-            bodyBuilder << "    vec2 " << baseVar << " = (" << uv << " * " << t << ") + " << o << ";\n";
-        }
-        else if (sourceNode->Name == "Multiply" || sourceNode->Name == "Add" || sourceNode->Name == "Subtract" || sourceNode->Name == "Pow") {
-            std::string a = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
-            std::string b = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
-            std::string op = (sourceNode->Name == "Multiply") ? "*" : (sourceNode->Name == "Add") ? "+" : (sourceNode->Name == "Subtract") ? "-" : "";
-
-            std::string typeStr = "float";
-            if (sourceNode->Outputs[0].Type == PinType::Vec2) typeStr = "vec2";
-            if (sourceNode->Outputs[0].Type == PinType::Vec3) typeStr = "vec3";
-            if (sourceNode->Outputs[0].Type == PinType::Vec4) typeStr = "vec4";
-
-            if (sourceNode->Name == "Pow") {
-                bodyBuilder << "    " << typeStr << " " << baseVar << " = pow(" << a << ", " << b << ");\n";
+            if (hasLink) {
+                return EvaluatePinGLSL(inPinId, visited, bodyBuilder); // Récursivité
+            } else if (!fallback.empty()) {
+                return fallback; // Utilisation du fallback magique (ex: vTexCoords)
             } else {
-                bodyBuilder << "    " << typeStr << " " << baseVar << " = " << a << " " << op << " " << b << ";\n";
+                // Lecture de la constante locale du Pin (Si pas de fallback)
+                MaterialPin* p = FindPin(inPinId);
+                if (p) {
+                    std::stringstream ss;
+                    if (p->Type == PinType::Float) { ss << p->FloatValue; return ss.str(); }
+                    if (p->Type == PinType::Vec2)  { ss << "vec2(" << p->Vec2Value.x << ", " << p->Vec2Value.y << ")"; return ss.str(); }
+                    if (p->Type == PinType::Vec3)  { ss << "vec3(" << p->Vec3Value.r << ", " << p->Vec3Value.g << ", " << p->Vec3Value.b << ")"; return ss.str(); }
+                    if (p->Type == PinType::Vec4)  return "vec4(0.0)";
+                }
+                return "0.0";
             }
-        }
-        else if (sourceNode->Name == "Mix") {
-            std::string a = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
-            std::string b = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
-            std::string alpha = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
+        };
 
-            std::string typeStr = "float";
-            if (sourceNode->Outputs[0].Type == PinType::Vec2) typeStr = "vec2";
-            if (sourceNode->Outputs[0].Type == PinType::Vec3) typeStr = "vec3";
-            if (sourceNode->Outputs[0].Type == PinType::Vec4) typeStr = "vec4";
-
-            bodyBuilder << "    " << typeStr << " " << baseVar << " = mix(" << a << ", " << b << ", " << alpha << ");\n";
-        }
-        else if (sourceNode->Name == "Clamp") {
-            std::string v = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
-            std::string minV = EvaluatePinGLSL(sourceNode->Inputs[1].ID, visited, bodyBuilder);
-            std::string maxV = EvaluatePinGLSL(sourceNode->Inputs[2].ID, visited, bodyBuilder);
-
-            std::string typeStr = "float";
-            if (sourceNode->Outputs[0].Type == PinType::Vec2) typeStr = "vec2";
-            if (sourceNode->Outputs[0].Type == PinType::Vec3) typeStr = "vec3";
-            if (sourceNode->Outputs[0].Type == PinType::Vec4) typeStr = "vec4";
-
-            bodyBuilder << "    " << typeStr << " " << baseVar << " = clamp(" << v << ", " << minV << ", " << maxV << ");\n";
-        }
-        else if (sourceNode->Name == "Reroute") {
-            std::string inVal = EvaluatePinGLSL(sourceNode->Inputs[0].ID, visited, bodyBuilder);
-            std::string typeStr = "float";
-            if (sourceNode->Outputs[0].Type == PinType::Vec2) typeStr = "vec2";
-            if (sourceNode->Outputs[0].Type == PinType::Vec3) typeStr = "vec3";
-            if (sourceNode->Outputs[0].Type == PinType::Vec4) typeStr = "vec4";
-
-            bodyBuilder << "    " << typeStr << " " << baseVar << " = " << inVal << ";\n";
-        }
+        // On délègue l'écriture au Registre !
+        MaterialNodeRegistry::GenerateNodeGLSL(*sourceNode, bodyBuilder, evalInput);
     }
 
-    // 5. EXTRACTION DE COMPOSANTS (Si l'utilisateur tire le pin R, G, B, ou RGB d'une texture)
+    // 4. Extraction des composants (.r, .g, .rgb)
     std::string providedExpr = baseVar;
-    if (sourceNode->Name == "Texture2D") {
+    if (sourceNode->Name == "Color" || sourceNode->Name == "Texture2D") {
         if (outputPin->Name == "RGB") providedExpr += ".rgb";
         else if (outputPin->Name == "R") providedExpr += ".r";
         else if (outputPin->Name == "G") providedExpr += ".g";
@@ -1136,31 +1074,8 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
         else if (outputPin->Name == "A") providedExpr += ".a";
     }
 
-    // 6. LA MAGIE DE L'AUTO-CASTING (Evite les erreurs "implicit cast" !)
-    if (expectedType == providedType) return providedExpr;
-
-    if (expectedType == PinType::Float) {
-        if (providedType == PinType::Vec2) return providedExpr + ".x";
-        if (providedType == PinType::Vec3) return providedExpr + ".r";
-        if (providedType == PinType::Vec4) return providedExpr + ".r";
-    }
-    else if (expectedType == PinType::Vec2) {
-        if (providedType == PinType::Float) return "vec2(" + providedExpr + ")";
-        if (providedType == PinType::Vec3) return providedExpr + ".xy";
-        if (providedType == PinType::Vec4) return providedExpr + ".xy";
-    }
-    else if (expectedType == PinType::Vec3) {
-        if (providedType == PinType::Float) return "vec3(" + providedExpr + ")";
-        if (providedType == PinType::Vec2) return "vec3(" + providedExpr + ", 0.0)";
-        if (providedType == PinType::Vec4) return providedExpr + ".xyz";
-    }
-    else if (expectedType == PinType::Vec4) {
-        if (providedType == PinType::Float) return "vec4(" + providedExpr + ")";
-        if (providedType == PinType::Vec2) return "vec4(" + providedExpr + ", 0.0, 1.0)";
-        if (providedType == PinType::Vec3) return "vec4(" + providedExpr + ", 1.0)";
-    }
-
-    return providedExpr;
+    // 5. Auto-Casting final
+    return CastGLSL(providedExpr, outputPin->Type, expectedType);
 }
 
 void MaterialEditorPanel::CompilePreviewShader() {

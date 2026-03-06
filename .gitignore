@@ -41,6 +41,7 @@ Makefile
 *.ninja
 compile_commands.json
 vcpkg-manifest-install.log
+*.generated.cpp
 
 # vcpkg
 vcpkg_installed/
