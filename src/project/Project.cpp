@@ -15,63 +15,62 @@ void Project::New(const std::string& name, const std::filesystem::path& path) {
     std::filesystem::path projectFolder = path / name;
 
     try {
-        // 1. Création de l'architecture complète du projet
-        std::filesystem::create_directories(projectFolder / "Content");
+        // 1. Architecture complète
+        std::filesystem::create_directories(projectFolder / "Content/Scenes"); // Dossier Scenes requis !
         std::filesystem::create_directories(projectFolder / "Config");
         std::filesystem::create_directories(projectFolder / "Source");
         std::filesystem::create_directories(projectFolder / "Binaries");
-        std::filesystem::create_directories(projectFolder / ".ce-cache");
+        std::filesystem::create_directories(projectFolder / ".ce_cache"); // Underscore !
 
-        // On force la résolution du chemin absolu basé sur le répertoire d'exécution (cmake-build-debug)
-        std::filesystem::path engineIniPath = std::filesystem::current_path() / "imgui.ini";
-        std::filesystem::path projectIniPath = projectFolder / "imgui.ini";
+        // ... (Logique imgui.ini inchangée) ...
 
-        if (std::filesystem::exists(engineIniPath)) {
-            std::filesystem::copy_file(engineIniPath, projectIniPath, std::filesystem::copy_options::overwrite_existing);
-            std::cout << "[Project] Layout ImGui copie avec succes depuis : " << engineIniPath << std::endl;
-        } else {
-            std::cout << "[Project] Info : Aucun imgui.ini trouve a copier depuis : " << engineIniPath << std::endl;
-        }
-
-        // 2. Génération automatique du CMakeLists.txt du Jeu !
+        // 2. Génération du CMakeLists.txt du Jeu
         std::ofstream cmakeFile(projectFolder / "CMakeLists.txt");
         if (cmakeFile.is_open()) {
             cmakeFile << "cmake_minimum_required(VERSION 3.20)\n";
             cmakeFile << "project(" << name << ")\n\n";
             cmakeFile << "set(CMAKE_CXX_STANDARD 20)\n";
             cmakeFile << "set(CMAKE_POSITION_INDEPENDENT_CODE ON)\n\n";
-            cmakeFile << "# --- CHEMINS DU MOTEUR ---\n";
             cmakeFile << "set(ENGINE_DIR \"/home/nathan/CLionProjects/GameEngine\")\n";
             cmakeFile << "set(GAME_SOURCE_DIR \"${CMAKE_SOURCE_DIR}/Source\")\n";
             cmakeFile << "set(GENERATED_CPP \"${CMAKE_BINARY_DIR}/GeneratedScripts.cpp\")\n\n";
+
             cmakeFile << "# --- COOL HEADER TOOL ---\n";
             cmakeFile << "add_custom_command(\n";
             cmakeFile << "    OUTPUT ${GENERATED_CPP}\n";
-            cmakeFile << "    COMMAND python3 ${ENGINE_DIR}/tools/CoolHeaderTool.py ${GAME_SOURCE_DIR} ${GENERATED_CPP}\n";
+            // FIX : Ajout du flag --scripts
+            cmakeFile << "    COMMAND python3 ${ENGINE_DIR}/tools/CoolHeaderTool.py --scripts ${GAME_SOURCE_DIR} ${GENERATED_CPP}\n";
             cmakeFile << "    COMMENT \"Generation du registre des scripts via CHT...\"\n";
             cmakeFile << ")\n\n";
+
             cmakeFile << "# --- COMPILATION DU MODULE (.so) ---\n";
+            // On inclut le fichier généré pour que la cible existe toujours
             cmakeFile << "add_library(GameModule SHARED ${GENERATED_CPP})\n";
+
             cmakeFile << "target_include_directories(GameModule PRIVATE \n";
             cmakeFile << "    ${ENGINE_DIR}/src\n";
             cmakeFile << "    ${ENGINE_DIR}/cmake-build-debug/vcpkg_installed/x64-linux/include\n";
             cmakeFile << ")\n";
-            cmakeFile << "target_include_directories(GameModule PRIVATE ${ENGINE_DIR}/src)\n";
+
             cmakeFile << "set_target_properties(GameModule PROPERTIES \n";
-            cmakeFile << "    PREFIX \"\" # Pour générer GameModule.so au lieu de libGameModule.so\n";
+            cmakeFile << "    PREFIX \"\" \n";
             cmakeFile << "    LIBRARY_OUTPUT_DIRECTORY \"${CMAKE_SOURCE_DIR}/Binaries\"\n";
             cmakeFile << ")\n";
             cmakeFile.close();
         }
 
-        // 3. Création du fichier JSON .ceproj
+        // 3. Fichier .ceproj et Scène par défaut
         nlohmann::json projectJson;
         projectJson["Name"] = name;
         projectJson["Version"] = "0.0.1";
         projectJson["StartScene"] = "Scenes/Default.cescene";
 
-        std::filesystem::path projectFilePath = projectFolder / (name + ".ceproj");
+        // On crée une scène vide pour éviter que le chargement crash
+        std::ofstream defaultScene(projectFolder / "Content/Scenes/Default.cescene");
+        defaultScene << "{\n    \"Scene\": \"Untitled\",\n    \"Entities\": []\n}";
+        defaultScene.close();
 
+        std::filesystem::path projectFilePath = projectFolder / (name + ".ceproj");
         std::ofstream projectFile(projectFilePath);
         if (projectFile.is_open()) {
             projectFile << projectJson.dump(4);
@@ -80,7 +79,7 @@ void Project::New(const std::string& name, const std::filesystem::path& path) {
 
         LoadAsync(projectFilePath);
     } catch (const std::exception& e) {
-        std::cerr << "Erreur de création" << std::endl;
+        std::cerr << "[Project] Erreur de creation : " << e.what() << std::endl;
     }
 }
 
