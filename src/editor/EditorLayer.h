@@ -61,14 +61,14 @@ private:
     // 1. UPDATE LOGIC (La Boucle Principale)
     // ==========================================
     void UpdateEditor(float deltaTime);
-    void UpdateRuntime(float deltaTime);
+    void UpdateRuntime(float deltaTime) const;
     void HandleShortcuts();
 
     // ==========================================
     // 2. RENDU IMGUI (L'Interface)
     // ==========================================
-    void BeginDockspace();
-    void EndDockspace();
+    static void BeginDockspace();
+    static void EndDockspace();
     void DrawMenuBar();
     void DrawToolbar();
 
@@ -78,7 +78,7 @@ private:
     void DrawViewportWindow();
     void HandleViewportDragAndDrop();
     void DrawGizmos();
-    void ResizeViewportIfNeeded();
+    void ResizeViewportIfNeeded() const;
 
     // ==========================================
     // 4. GESTION DE SCÈNE ET D'ÉTAT

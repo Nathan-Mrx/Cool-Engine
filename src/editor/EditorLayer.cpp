@@ -23,8 +23,7 @@
 void EditorLayer::OnAttach() {
     int width, height, channels;
     stbi_set_flip_vertically_on_load(false);
-    unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4);
-    if (data) {
+    if (unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4)) {
         glGenTextures(1, &m_SplashTextureID);
         glBindTexture(GL_TEXTURE_2D, m_SplashTextureID);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -46,7 +45,7 @@ void EditorLayer::OnAttach() {
     m_ContentBrowserPanel->OnMaterialOpenCallback = [this](const std::filesystem::path& path) { OpenMaterial(path); };
     m_ContentBrowserPanel->OnMaterialInstanceOpenCallback = [this](const std::filesystem::path& path) { OpenMaterialInstance(path); };
 
-    FramebufferSpecification fbSpec;
+    FramebufferSpecification fbSpec{};
     fbSpec.Width = 1280;
     fbSpec.Height = 720;
     m_ViewportFramebuffer = std::make_unique<Framebuffer>(fbSpec);
@@ -80,9 +79,8 @@ void EditorLayer::DrawMenuBar() {
             ImGui::Separator();
 
             // La sauvegarde dépend de l'onglet actif
-            bool hasCustomEditor = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr;
 
-            if (hasCustomEditor) {
+            if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr) {
                 m_Tabs[m_ActiveTabIndex].CustomEditor->OnImGuiMenuFile();
             } else {
                 if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
@@ -98,8 +96,7 @@ void EditorLayer::DrawMenuBar() {
         if (ImGui::BeginMenu("Edit")) {
             if (ImGui::MenuItem("Project Settings")) m_ShowProjectSettings = true;
 
-            bool hasCustomEditor = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr;
-            if (hasCustomEditor) {
+            if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr) {
                 ImGui::Separator();
                 m_Tabs[m_ActiveTabIndex].CustomEditor->OnImGuiMenuEdit();
             }
@@ -226,19 +223,21 @@ void EditorLayer::UpdateEditor(float deltaTime) {
     }
 }
 
-void EditorLayer::UpdateRuntime(float deltaTime) {
+void EditorLayer::UpdateRuntime(float deltaTime) const
+{
     // --- TES VRAIES FONCTIONS DE SCENE.H ---
     m_ActiveScene->OnUpdateScripts(deltaTime);
     m_ActiveScene->OnUpdatePhysics(deltaTime);
 }
 
-void EditorLayer::ResizeViewportIfNeeded() {
+void EditorLayer::ResizeViewportIfNeeded() const
+{
     FramebufferSpecification spec = m_ViewportFramebuffer->GetSpecification();
     if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f &&
         (spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
     {
         // On ne resize QUE le Framebuffer, la scène n'a pas de OnResize()
-        m_ViewportFramebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+        m_ViewportFramebuffer->Resize(static_cast<uint32_t>(m_ViewportSize.x), static_cast<uint32_t>(m_ViewportSize.y));
     }
 }
 
@@ -253,10 +252,9 @@ void EditorLayer::OnImGuiRender() {
         m_ProjectLoadedState = true;
 
         // --- NOUVEAU : Chargement de la scène par défaut ---
-        std::filesystem::path startScene = Project::GetActive()->GetConfig().StartScene;
-        std::filesystem::path fullPath = Project::GetProjectDirectory() / startScene;
+        const std::filesystem::path startScene = Project::GetActive()->GetConfig().StartScene;
 
-        if (!startScene.empty() && std::filesystem::exists(fullPath)) {
+        if (const std::filesystem::path fullPath = Project::GetProjectDirectory() / startScene; !startScene.empty() && std::filesystem::exists(fullPath)) {
             OpenScene(fullPath);
         } else {
             NewScene(); // Fallback : Scène vide si aucune n'est configurée
@@ -276,9 +274,7 @@ void EditorLayer::OnImGuiRender() {
 
     // 2. Affichage conditionnel des Layouts !
     if (!m_Tabs.empty() && m_ActiveTabIndex >= 0 && m_ActiveTabIndex < m_Tabs.size()) {
-        auto& activeTab = m_Tabs[m_ActiveTabIndex];
-
-        if (activeTab.Type == TabType::Scene) {
+        if (const auto& activeTab = m_Tabs[m_ActiveTabIndex]; activeTab.Type == TabType::Scene) {
             // Mode Scène : On affiche l'Inspector et le Viewport
             m_SceneHierarchyPanel.OnImGuiRender();
             DrawViewportWindow();
@@ -351,7 +347,7 @@ void EditorLayer::DrawTabs() {
             if (isKnownAsset && info.IconID != 0) {
                 // On ajoute les UVs inversés : ImVec2(0, 1) et ImVec2(1, 0) pour remettre l'image à l'endroit !
                 ImGui::GetWindowDrawList()->AddImage(
-                    (ImTextureID)(uintptr_t)info.IconID,
+                    (ImTextureID)static_cast<uintptr_t>(info.IconID),
                     iconPos,
                     ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
                     ImVec2(0, 1), // uv_min
@@ -462,8 +458,7 @@ void EditorLayer::DrawProjectSettings() {
             ImGui::Separator();
             ImGui::Spacing();
 
-            auto project = Project::GetActive();
-            if (project) {
+            if (const auto project = Project::GetActive()) {
                 auto& config = project->GetConfig();
 
                 ImGui::Text("Editor Startup Map");
@@ -476,17 +471,16 @@ void EditorLayer::DrawProjectSettings() {
                 ImGui::SameLine();
 
                 if (ImGui::Button("...##BrowseMap")) {
-                    nfdchar_t* outPath = nullptr;
-                    nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+                    const nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
 
-                    if (NFD::OpenDialog(outPath, filterItem, 1, project->GetProjectDirectory().string().c_str()) == NFD_OKAY) {
-                        std::filesystem::path fullPath = outPath;
-                        std::filesystem::path relPath = std::filesystem::relative(fullPath, project->GetProjectDirectory());
+                    if (nfdchar_t* outPath = nullptr; NFD::OpenDialog(outPath, filterItem, 1, Project::GetProjectDirectory().string().c_str()) == NFD_OKAY) {
+                        const std::filesystem::path fullPath = outPath;
+                        const std::filesystem::path relPath = std::filesystem::relative(fullPath, Project::GetProjectDirectory());
 
                         config.StartScene = relPath.string();
 
-                        std::string projFileName = project->GetProjectDirectory().filename().string() + ".ceproj";
-                        std::filesystem::path projFilePath = project->GetProjectDirectory() / projFileName;
+                        const std::string projFileName = Project::GetProjectDirectory().filename().string() + ".ceproj";
+                        const std::filesystem::path projFilePath = Project::GetProjectDirectory() / projFileName;
 
                         Project::SaveActive(projFilePath);
 
@@ -500,8 +494,7 @@ void EditorLayer::DrawProjectSettings() {
             ImGui::Spacing();
 
             // --- NOUVEAU : Formulaire de détails du projet ---
-            auto project = Project::GetActive();
-            if (project) {
+            if (const auto project = Project::GetActive()) {
                 auto& config = project->GetConfig();
 
                 char nameBuffer[256];
@@ -518,8 +511,8 @@ void EditorLayer::DrawProjectSettings() {
 
                 ImGui::Spacing();
                 if (ImGui::Button("Save Changes")) {
-                    std::string projFileName = project->GetProjectDirectory().filename().string() + ".ceproj";
-                    std::filesystem::path projFilePath = project->GetProjectDirectory() / projFileName;
+                    const std::string projFileName = Project::GetProjectDirectory().filename().string() + ".ceproj";
+                    const std::filesystem::path projFilePath = Project::GetProjectDirectory() / projFileName;
                     Project::SaveActive(projFilePath);
                 }
             }
@@ -532,9 +525,8 @@ void EditorLayer::DrawProjectSettings() {
 
 void EditorLayer::SaveScene() {
     if (m_Tabs.empty()) return;
-    auto& activeTab = m_Tabs[m_ActiveTabIndex];
 
-    if (activeTab.CustomEditor) {
+    if (const auto& activeTab = m_Tabs[m_ActiveTabIndex]; activeTab.CustomEditor) {
         activeTab.CustomEditor->Save();
     } else if (activeTab.Type == TabType::Scene) {
         if (!activeTab.Filepath.empty()) {
@@ -550,10 +542,9 @@ void EditorLayer::SaveScene() {
 void EditorLayer::SaveSceneAs() {
     if (m_Tabs.empty() || m_Tabs[m_ActiveTabIndex].Type != TabType::Scene) return;
 
-    nfdchar_t* outPath = nullptr;
-    nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+    constexpr nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
 
-    if (NFD::SaveDialog(outPath, filterItem, 1, nullptr, nullptr) == NFD_OKAY) {
+    if (nfdchar_t* outPath = nullptr; NFD::SaveDialog(outPath, filterItem, 1, nullptr, nullptr) == NFD_OKAY) {
         std::filesystem::path filepath = outPath;
         if (filepath.extension() != ".cescene") filepath += ".cescene";
 
@@ -577,7 +568,7 @@ void EditorLayer::OpenScene(const std::filesystem::path& path) {
         }
     }
 
-    auto newScene = std::make_shared<Scene>();
+    const auto newScene = std::make_shared<Scene>();
     SceneSerializer serializer(newScene);
     serializer.Deserialize(path.string());
 
@@ -596,14 +587,12 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
         }
     }
 
-    auto newMatPanel = std::make_shared<MaterialEditorPanel>();
+    const auto newMatPanel = std::make_shared<MaterialEditorPanel>();
     newMatPanel->Load(path);
     newMatPanel->OnMaterialSavedCallback = [this](const std::filesystem::path& savedPath) {
         if (!m_ActiveScene) return;
-        auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
-        for (auto entityID : view) {
-            auto& mat = view.get<MaterialComponent>(entityID);
-            if (mat.AssetPath == savedPath.string()) mat.SetAndCompile(savedPath.string());
+        for (const auto view = m_ActiveScene->m_Registry.view<MaterialComponent>(); const auto entityID : view) {
+            if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) mat.SetAndCompile(savedPath.string());
         }
     };
 
@@ -622,7 +611,7 @@ void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
         }
     }
 
-    auto newScene = std::make_shared<Scene>();
+    const auto newScene = std::make_shared<Scene>();
     SceneSerializer serializer(newScene);
     serializer.Deserialize(path.string()); // On charge le prefab comme une scène
 
@@ -646,7 +635,7 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
         }
     }
 
-    auto newMIPanel = std::make_shared<MaterialInstanceEditorPanel>();
+    const auto newMIPanel = std::make_shared<MaterialInstanceEditorPanel>();
     newMIPanel->Load(path);
 
     // --- LE HOT RELOAD POUR LES INSTANCES ---
@@ -656,13 +645,11 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
         // On parcourt TOUTES les entités de la scène qui ont un composant Matériau
         auto view = m_ActiveScene->m_Registry.view<MaterialComponent>();
         for (auto entityID : view) {
-            auto& mat = view.get<MaterialComponent>(entityID);
-
             // Si l'entité utilise l'instance qu'on vient de sauvegarder...
-            if (mat.AssetPath == savedPath.string()) {
+            if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) {
                 // On force le rechargement depuis le disque !
                 mat.SetAndCompile(savedPath.string());
-                std::cout << "[Editor] Hot-Reloaded Material Instance for Entity ID: " << (uint32_t)entityID << std::endl;
+                std::cout << "[Editor] Hot-Reloaded Material Instance for Entity ID: " << static_cast<uint32_t>(entityID) << std::endl;
             }
         }
     };
@@ -711,23 +698,22 @@ void EditorLayer::OnScenePause() {
 }
 
 void EditorLayer::DrawSplashScreen() {
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
-
-    if (ImGui::Begin("SplashScreenOverlay", nullptr, flags)) {
-        ImVec2 windowSize = ImGui::GetWindowSize();
+    if (constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus; ImGui::Begin("SplashScreenOverlay", nullptr, flags)) {
+        const ImVec2 windowSize = ImGui::GetWindowSize();
 
         // 1. Affichage de l'image (Centrée en haut)
         if (m_SplashTextureID) {
-            float imgWidth = 544.0f; float imgHeight = 864.0f; // Tailles originales
-            float ratio = std::min(windowSize.x / imgWidth, (windowSize.y - 250) / imgHeight);
-            ImVec2 size(imgWidth * ratio, imgHeight * ratio);
+            constexpr float imgWidth = 544.0f;
+            constexpr float imgHeight = 864.0f; // Tailles originales
+            const float ratio = std::min(windowSize.x / imgWidth, (windowSize.y - 250) / imgHeight);
+            const ImVec2 size(imgWidth * ratio, imgHeight * ratio);
             ImGui::SetCursorPos(ImVec2((windowSize.x - size.x) * 0.5f, 20.0f));
-            ImGui::Image((ImTextureID)(uintptr_t)m_SplashTextureID, size);
+            ImGui::Image((ImTextureID)static_cast<uintptr_t>(m_SplashTextureID), size);
         }
 
         // 2. La console de compilation (En bas)
@@ -790,8 +776,7 @@ void EditorLayer::BeginDockspace() {
     if (!opt_padding) ImGui::PopStyleVar();
     if (opt_fullscreen) ImGui::PopStyleVar(2);
 
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+    if (const ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
         ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
     }
@@ -816,18 +801,17 @@ void EditorLayer::DrawViewportWindow() {
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
     m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
-    uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
-    ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+    const uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
+    ImGui::Image((ImTextureID)static_cast<uintptr_t>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
     // --- L'INCRUSTATION DE LA BARRE D'OUTILS (OVERLAY) ---
     ImGui::SetCursorPos(ImVec2(m_ViewportSize.x / 2.0f - 50.0f, 15.0f));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.8f)); // Fond semi-transparent
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
 
-    bool isPlaying = m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause;
-    const char* playStopIcon = isPlaying ? "STOP" : "PLAY";
+    const bool isPlaying = m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause;
 
-    if (ImGui::Button(playStopIcon, ImVec2(50, 30))) {
+    if (const char* playStopIcon = isPlaying ? "STOP" : "PLAY"; ImGui::Button(playStopIcon, ImVec2(50, 30))) {
         if (m_SceneState == SceneState::Edit) OnScenePlay();
         else if (isPlaying) OnSceneStop();
     }
@@ -854,9 +838,7 @@ void EditorLayer::DrawViewportWindow() {
 void EditorLayer::HandleViewportDragAndDrop() {
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-            std::filesystem::path path = (const char*)payload->Data;
-
-            if (path.extension() == ".cescene") {
+            if (const std::filesystem::path path = static_cast<const char*>(payload->Data); path.extension() == ".cescene") {
                 OpenScene(path);
             } else if (path.extension() == ".ceprefab") {
                 OpenPrefab(path);
@@ -867,10 +849,8 @@ void EditorLayer::HandleViewportDragAndDrop() {
 }
 
 void EditorLayer::DrawGizmos() {
-    Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-
     // On ne dessine les Gizmos que si on est en mode "Edit" et qu'un objet est sélectionné
-    if (selectedEntity && m_GizmoType != -1 && m_SceneState == SceneState::Edit) {
+    if (Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity(); selectedEntity && m_GizmoType != -1 && m_SceneState == SceneState::Edit) {
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetDrawlist();
 
@@ -895,7 +875,7 @@ void EditorLayer::DrawGizmos() {
 
         // Dessin du Gizmo et récupération des manipulations
         ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-                             (ImGuizmo::OPERATION)m_GizmoType, (ImGuizmo::MODE)m_GizmoMode, glm::value_ptr(transform),
+                             static_cast<ImGuizmo::OPERATION>(m_GizmoType), static_cast<ImGuizmo::MODE>(m_GizmoMode), glm::value_ptr(transform),
                              nullptr, snap ? snapValues : nullptr);
 
         // Si l'utilisateur est en train de tirer sur la flèche du Gizmo
@@ -919,7 +899,7 @@ void EditorLayer::DrawGizmos() {
 // =========================================================================================
 
 void EditorLayer::NewScene() {
-    auto newScene = std::make_shared<Scene>();
+    const auto newScene = std::make_shared<Scene>();
     m_Tabs.push_back({ "New Scene", "", TabType::Scene, newScene, nullptr });
     m_ActiveTabIndex = m_Tabs.size() - 1;
     m_ForceTabSelection = true;
@@ -932,13 +912,11 @@ void EditorLayer::HandleShortcuts() {
     // Si l'utilisateur est en train de taper du texte (ex: renommer une entité), on ignore les raccourcis !
     if (ImGui::GetIO().WantTextInput) return;
 
-    bool ctrl = ImGui::GetIO().KeyCtrl;
-    bool shift = ImGui::GetIO().KeyShift;
+    const bool ctrl = ImGui::GetIO().KeyCtrl;
 
     // --- Sauvegarde (Ctrl + S) ---
-    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        bool hasCustomEditor = !m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr;
-        if (hasCustomEditor) m_Tabs[m_ActiveTabIndex].CustomEditor->Save();
+    if (const bool shift = ImGui::GetIO().KeyShift; ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr) m_Tabs[m_ActiveTabIndex].CustomEditor->Save();
         else SaveScene();
     }
     // --- Sauvegarder sous (Ctrl + Shift + S) ---
@@ -951,9 +929,8 @@ void EditorLayer::HandleShortcuts() {
     }
     // --- Ouvrir Scène (Ctrl + O) ---
     else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
-        nfdchar_t* outPath = nullptr;
-        nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
-        if (NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
+        constexpr nfdfilteritem_t filterItem[1] = { { "Cool Engine Scene", "cescene" } };
+        if (nfdchar_t* outPath = nullptr; NFD::OpenDialog(outPath, filterItem, 1, nullptr) == NFD_OKAY) {
             OpenScene(outPath);
             NFD::FreePath(outPath);
         }
