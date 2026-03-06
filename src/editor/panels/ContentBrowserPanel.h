@@ -1,6 +1,7 @@
 #pragma once
 #include <filesystem>
-#include <functional> // Indispensable pour le callback
+#include <functional>
+#include <string>
 
 class ContentBrowserPanel {
 public:
@@ -14,4 +15,12 @@ public:
 private:
     std::filesystem::path m_CurrentDirectory;
     std::filesystem::path m_BaseDirectory;
+
+    // --- NOUVEAU : La machine à créer des Assets ---
+    void DrawCreateAssetPopup();
+
+    bool m_OpenCreateAssetPopup = false;
+    std::string m_CreateAssetType = "";      // "Material", "Prefab", etc.
+    std::string m_CreateAssetExtension = ""; // ".cemat", ".ceprefab", etc.
+    char m_NewAssetName[128] = "";
 };

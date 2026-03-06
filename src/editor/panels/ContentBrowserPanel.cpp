@@ -127,51 +127,73 @@ void ContentBrowserPanel::OnImGuiRender() {
 
     // --- MENU CONTEXTUEL (Clic Droit dans le vide) ---
     if (ImGui::BeginPopupContextWindow("ContentBrowserContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        if (ImGui::MenuItem("Create Prefab")) {
-            std::filesystem::path newPrefabPath = m_CurrentDirectory / "NewPrefab.ceprefab";
 
-            // --- LE FIX : On crée une vraie scène avec une racine par défaut ---
-            auto tempScene = std::make_shared<Scene>();
-            tempScene->CreateEntity("NewPrefab Root"); // La racine garantie !
+        if (ImGui::BeginMenu("Create...")) {
 
-            SceneSerializer serializer(tempScene);
-            serializer.Serialize(newPrefabPath.string());
+            // On arme le canon pour un Prefab
+            if (ImGui::MenuItem("Prefab")) {
+                m_OpenCreateAssetPopup = true;
+                m_CreateAssetType = "Prefab";
+                m_CreateAssetExtension = ".ceprefab";
+                strcpy(m_NewAssetName, "NewPrefab");
+            }
+
+            // On arme le canon pour un Material
+            if (ImGui::MenuItem("Material")) {
+                m_OpenCreateAssetPopup = true;
+                m_CreateAssetType = "Material";
+                m_CreateAssetExtension = ".cemat";
+                strcpy(m_NewAssetName, "NewMaterial");
+            }
+
+            ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Material")) {
-            s_OpenCreateMaterialPopup = true;
-            strcpy(s_NewMaterialName, "NewMaterial"); // Valeur par défaut
-        }
-        ImGui::EndMenu();
+        ImGui::EndPopup();
     }
 
-    // 1. On ordonne à ImGui d'ouvrir le Popup (au centre de l'écran)
-    if (s_OpenCreateMaterialPopup) {
-        ImGui::OpenPopup("Name New Material");
-        s_OpenCreateMaterialPopup = false; // On reset le déclencheur
+    // --- ON APPELLE NOTRE NOUVELLE MACHINE À LA TOUTE FIN ! ---
+    DrawCreateAssetPopup();
+
+    ImGui::Columns(1);
+    ImGui::End();
+}
+
+// --- LE MOTEUR GÉNÉRIQUE DE POPUP ---
+void ContentBrowserPanel::DrawCreateAssetPopup() {
+    if (m_OpenCreateAssetPopup) {
+        ImGui::OpenPopup("Name New Asset");
+        m_OpenCreateAssetPopup = false; // On reset le déclencheur pour ne pas ouvrir en boucle
     }
 
-    // 2. Le vrai contenu du Popup
-    if (ImGui::BeginPopupModal("Name New Material", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Enter material name:");
-        ImGui::InputText("##MatName", s_NewMaterialName, sizeof(s_NewMaterialName));
+    if (ImGui::BeginPopupModal("Name New Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Enter %s name:", m_CreateAssetType.c_str());
+        ImGui::InputText("##AssetName", m_NewAssetName, sizeof(m_NewAssetName));
         ImGui::Spacing();
 
         if (ImGui::Button("Create", ImVec2(120, 0))) {
-            std::string nameStr = s_NewMaterialName;
+            std::string nameStr = m_NewAssetName;
             if (!nameStr.empty()) {
-                // On fabrique le chemin complet (Dossier Actuel / NomDuMateriau.cemat)
-                std::filesystem::path newMatPath = m_CurrentDirectory / (nameStr + ".cemat");
+                std::filesystem::path newAssetPath = m_CurrentDirectory / (nameStr + m_CreateAssetExtension);
 
-                // IMPORTANT : On injecte un JSON vide valide, sinon l'éditeur plantera en essayant de le lire !
-                std::ofstream file(newMatPath);
-                file << "{\n    \"Type\": \"MaterialGraph\",\n    \"NextID\": 1,\n    \"Nodes\": [],\n    \"Links\": []\n}";
-                file.close();
+                // === LOGIQUE DE CRÉATION SELON LE TYPE ===
+                if (m_CreateAssetType == "Material") {
+                    std::ofstream file(newAssetPath);
+                    file << "{\n    \"Type\": \"MaterialGraph\",\n    \"NextID\": 1,\n    \"Nodes\": [],\n    \"Links\": []\n}";
+                    file.close();
+                }
+                else if (m_CreateAssetType == "Prefab") {
+                    auto tempScene = std::make_shared<Scene>();
+                    tempScene->CreateEntity(nameStr + " Root"); // On utilise le nom choisi !
+                    SceneSerializer serializer(tempScene);
+                    serializer.Serialize(newAssetPath.string());
+                }
+                // (Plus tard, tu rajouteras "Scene", "Animation", etc. ici !)
 
                 ImGui::CloseCurrentPopup();
             }
         }
 
-        ImGui::SetItemDefaultFocus(); // Permet d'appuyer sur "Entrée"
+        ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
 
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
@@ -180,7 +202,4 @@ void ContentBrowserPanel::OnImGuiRender() {
 
         ImGui::EndPopup();
     }
-
-    ImGui::Columns(1);
-    ImGui::End();
 }
