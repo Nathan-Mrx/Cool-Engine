@@ -704,13 +704,6 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
         ed::Resume();
 
-        // PLACEMENT INITIAL
-        if (m_FirstFrame && m_Nodes.size() >= 2) {
-            ed::SetNodePosition(m_Nodes[0].ID, ImVec2(400, 100));
-            ed::SetNodePosition(m_Nodes[1].ID, ImVec2(50, 100));
-            m_FirstFrame = false;
-        }
-
         ed::End();
         ed::SetCurrentEditor(nullptr);
     }
@@ -836,7 +829,13 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
 
         // 1. On demande au registre de créer le noeud PARFAIT avec la structure C++ actuelle !
         MaterialNode node;
-        if (!MaterialNodeRegistry::CreateNode(nodeName, m_NextId, node)) {
+
+        // --- LE FIX EST LÀ : Bypass pour les noeuds purement visuels (Commentaires) ---
+        if (nodeName == "Comment") {
+            node.Name = "Comment";
+        }
+        // 1. On demande au registre pour les VRAIS noeuds de shader
+        else if (!MaterialNodeRegistry::CreateNode(nodeName, m_NextId, node)) {
             std::cout << "[MaterialEditor] Warning: Noeud '" << nodeName << "' obsolete ignore." << std::endl;
             continue;
         }
@@ -920,6 +919,7 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
     }
 
     ed::SetCurrentEditor(nullptr);
+    m_FirstFrame = false;
 
     UpdateWildcardPins();
 
