@@ -32,4 +32,8 @@ private:
     Entity m_EntityToDestroy = {};
 
     bool m_IsPrefabScene = false;
+
+    bool m_IsRenaming = false;
+    Entity m_RenamingEntity = {};
+    char m_RenameBuffer[256] = "";
 };
