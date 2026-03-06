@@ -751,6 +751,9 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
         // 2. On écrase ses propriétés avec celles de la sauvegarde
         node.ID = ed::NodeId(nodeJson["ID"].get<int>());
 
+        for (auto& pin : node.Inputs) pin.NodeID = node.ID;
+        for (auto& pin : node.Outputs) pin.NodeID = node.ID;
+
         if (nodeJson.contains("FloatValue")) node.FloatValue = nodeJson["FloatValue"].get<float>();
         if (nodeJson.contains("ColorValue")) {
             node.ColorValue = { nodeJson["ColorValue"][0], nodeJson["ColorValue"][1], nodeJson["ColorValue"][2], nodeJson["ColorValue"][3] };
