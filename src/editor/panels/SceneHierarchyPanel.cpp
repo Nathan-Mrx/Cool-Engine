@@ -57,6 +57,33 @@ void DrawAddComponentEntry(Entity entity) {
     }
 }
 
+template<typename Component, typename ValueType>
+void DrawUndoableWidget(
+    Entity entity,
+    ValueType& componentValue,
+    std::function<bool()> drawImGuiWidget,
+    std::function<void(Component&, const ValueType&)> assignFunc
+) {
+    static ValueType s_StartValue;
+    static bool s_IsDragging = false;
+
+    if (!s_IsDragging) s_StartValue = componentValue;
+
+    drawImGuiWidget(); // Dessine le bouton ImGui
+
+    if (ImGui::IsItemActivated()) s_IsDragging = true;
+
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        s_IsDragging = false;
+        ValueType endValue = componentValue;
+        ValueType startValue = s_StartValue;
+
+
+    } else if (ImGui::IsItemDeactivated()) {
+        s_IsDragging = false;
+    }
+}
+
 // =========================================================================================
 // ENTRY POINT DU RENDU UI
 // =========================================================================================

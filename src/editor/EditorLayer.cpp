@@ -18,7 +18,8 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include "AssetRegistry.h"
-#include "CommandHistory.h"
+#include "EditorCommands.h"
+#include "UndoManager.h"
 
 
 void EditorLayer::OnAttach() {
@@ -562,7 +563,7 @@ void EditorLayer::SaveSceneAs() {
 }
 
 void EditorLayer::OpenScene(const std::filesystem::path& path) {
-    CommandHistory::Clear();
+    UndoManager::Clear();
 
     // Vérifie si la scène est déjà ouverte
     for (int i = 0; i < m_Tabs.size(); ++i) {
@@ -605,7 +606,7 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
 }
 
 void EditorLayer::OpenPrefab(const std::filesystem::path& path) {
-    CommandHistory::Clear();
+    UndoManager::Clear();
 
     // Vérifie si le prefab est déjà ouvert dans un onglet
     for (int i = 0; i < m_Tabs.size(); ++i) {
@@ -878,21 +879,19 @@ void EditorLayer::DrawGizmos() {
         if (m_GizmoType == ImGuizmo::OPERATION::ROTATE) snapValue = 45.0f;
         float snapValues[3] = { snapValue, snapValue, snapValue };
 
-        // --- VARIABLES STATIQUES POUR RETENIR L'ÉTAT AVANT LE MOUVEMENT ---
+        // --- 1. VARIABLES STATIQUES POUR RETENIR L'ÉTAT ---
         static bool s_WasUsingGizmo = false;
-        static glm::vec3 s_StartPos, s_StartScale;
-        static glm::quat s_StartRot;
+        static TransformComponent s_StartTransform;
 
         ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
                              (ImGuizmo::OPERATION)m_GizmoType, (ImGuizmo::MODE)m_GizmoMode, glm::value_ptr(transform),
                              nullptr, snap ? snapValues : nullptr);
 
+        // --- 2. PENDANT LE DÉPLACEMENT ---
         if (ImGuizmo::IsUsing()) {
-            // Le moment exact où on vient de cliquer sur le Gizmo
+            // Premier clic : On sauvegarde le composant complet en O(1)
             if (!s_WasUsingGizmo) {
-                s_StartPos = tc.Location;
-                s_StartRot = tc.Rotation;
-                s_StartScale = tc.Scale;
+                s_StartTransform = tc;
                 s_WasUsingGizmo = true;
             }
 
@@ -904,26 +903,20 @@ void EditorLayer::DrawGizmos() {
             tc.Rotation = rotation;
             tc.Scale = scale;
         }
+        // --- 3. QUAND ON RELÂCHE LE CLIC ---
         else {
-            // Le moment exact où on vient de lâcher le clic de la souris !
             if (s_WasUsingGizmo) {
                 s_WasUsingGizmo = false;
 
-                glm::vec3 endPos = tc.Location;
-                glm::quat endRot = tc.Rotation;
-                glm::vec3 endScale = tc.Scale;
-
-                // On pousse l'action dans l'historique avec nos deux Lambdas
-                CommandHistory::AddCommand(std::make_unique<ActionCommand>(
-                    [ent = selectedEntity, p = s_StartPos, r = s_StartRot, s = s_StartScale]() mutable {
-                        auto& t = ent.GetComponent<TransformComponent>();
-                        t.Location = p; t.Rotation = r; t.Scale = s;
-                    },
-                    [ent = selectedEntity, p = endPos, r = endRot, s = endScale]() mutable {
-                        auto& t = ent.GetComponent<TransformComponent>();
-                        t.Location = p; t.Rotation = r; t.Scale = s;
-                    }
+                // On enregistre la transaction proprement !
+                UndoManager::BeginTransaction("Gizmo Move");
+                UndoManager::PushAction(std::make_unique<EntityComponentCommand<TransformComponent>>(
+                    m_ActiveScene,
+                    selectedEntity.GetUUID(),
+                    s_StartTransform, // L'état au moment du clic
+                    tc                // L'état final au moment du relâchement
                 ));
+                UndoManager::EndTransaction();
             }
         }
     }
@@ -934,7 +927,7 @@ void EditorLayer::DrawGizmos() {
 // =========================================================================================
 
 void EditorLayer::NewScene() {
-    CommandHistory::Clear();
+    UndoManager::Clear();
 
     const auto newScene = std::make_shared<Scene>();
     m_Tabs.push_back({ "New Scene", "", TabType::Scene, newScene, nullptr });
@@ -951,14 +944,12 @@ void EditorLayer::HandleShortcuts() {
     bool ctrl = ImGui::GetIO().KeyCtrl;
     bool shift = ImGui::GetIO().KeyShift;
 
-    // --- ANNULER (Ctrl + Z) ---
     if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
-        CommandHistory::Undo();
+        UndoManager::Undo();
     }
-    // --- REFAIRE (Ctrl + Y ou Ctrl + Shift + Z) ---
     else if ((ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) ||
              (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Y, false))) {
-        CommandHistory::Redo();
+        UndoManager::Redo();
              }
 
     // --- Sauvegarde (Ctrl + S) ---
@@ -982,4 +973,15 @@ void EditorLayer::HandleShortcuts() {
             NFD::FreePath(outPath);
         }
     }
+}
+
+Entity Scene::GetEntityByUUID(UUID uuid) {
+    auto view = m_Registry.view<IDComponent>();
+    for (auto entity : view) {
+        auto& idComp = view.get<IDComponent>(entity);
+        if (idComp.ID == uuid) {
+            return { entity, this };
+        }
+    }
+    return {}; // Retourne une entité nulle si non trouvée
 }

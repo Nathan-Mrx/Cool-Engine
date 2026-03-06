@@ -16,6 +16,7 @@ public:
     Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
 
     void DestroyEntity(Entity entity);
+    Entity GetEntityByUUID(UUID uuid);
 
     entt::registry m_Registry; // Accès direct pour le Renderer
 

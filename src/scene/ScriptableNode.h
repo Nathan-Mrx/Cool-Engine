@@ -1,8 +1,7 @@
 #pragma once
-#include "Entity.h"
 #include <string>
+#include "Entity.h"
 
-// Anciennement ScriptableEntity
 class ScriptableNode {
 public:
     virtual ~ScriptableNode() = default;
@@ -20,6 +19,6 @@ public:
     Node GetNode(const std::string& path);
 
 protected:
-    Node m_Node; // Anciennement m_Entity
+    Node m_Node; // Anciennement m_Node
     friend class Scene; 
 };

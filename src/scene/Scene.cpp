@@ -207,3 +207,7 @@ glm::mat4 Scene::GetWorldTransform(Entity entity) {
 
     return transform;
 }
+
+UUID Entity::GetUUID() {
+    return GetComponent<IDComponent>().ID;
+}

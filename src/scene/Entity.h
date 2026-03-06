@@ -6,6 +6,8 @@ public:
     Entity() = default;
     Entity(const entt::entity handle, Scene* scene) : m_EntityHandle(handle), m_Scene(scene) {}
 
+    [[nodiscard]] UUID GetUUID();
+
     // Méthodes templates INDISPENSABLES dans le header
     template<typename T, typename... Args>
     T& AddComponent(Args&&... args) {

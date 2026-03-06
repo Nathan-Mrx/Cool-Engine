@@ -72,7 +72,10 @@ set(SOURCES
         src/editor/AssetRegistry.h
         src/editor/AssetDefinitions.h
         src/editor/AssetRegistry.generated.cpp
-        src/editor/CommandHistory.cpp
+        src/editor/UndoManager.cpp
+        src/editor/UndoManager.h
+        src/editor/EditorCommands.cpp
+        src/editor/EditorCommands.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---

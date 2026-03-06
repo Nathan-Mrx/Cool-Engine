@@ -3,7 +3,7 @@
 #include <sstream>
 #include <vector>
 
-Node ScriptableNode::GetNode(const std::string& path) {
+Entity ScriptableNode::GetNode(const std::string& path) {
     if (path.empty() || !m_Node) return {}; // On utilise m_Node
 
     std::stringstream ss(path);
@@ -31,7 +31,7 @@ Node ScriptableNode::GetNode(const std::string& path) {
         if (currentNode.HasComponent<RelationshipComponent>()) {
             entt::entity childID = currentNode.GetComponent<RelationshipComponent>().FirstChild;
             while (childID != entt::null) {
-                Node child{ childID, currentNode.GetScene() };
+                Entity child{ childID, currentNode.GetScene() };
                 if (child.HasComponent<TagComponent>() && child.GetComponent<TagComponent>().Tag == seg) {
                     currentNode = child;
                     found = true;
