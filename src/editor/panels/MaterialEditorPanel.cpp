@@ -656,7 +656,9 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
         if (ImGui::BeginPopup("NodePropertiesPopup")) {
             MaterialNode* node = FindNode(m_ContextNodeId);
-            if (node && (node->Name == "Float" || node->Name == "Color" || node->Name == "Texture2D" || node->Name == "StaticSwitchParameter")) {
+
+            // --- LE FIX EST ICI : On ajoute || node->Name == "Comment" ---
+            if (node && (node->Name == "Float" || node->Name == "Color" || node->Name == "Texture2D" || node->Name == "StaticSwitchParameter" || node->Name == "Comment")) {
 
                 if (node->Name == "Comment") {
                     char buf[256];
@@ -674,28 +676,29 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
                             CompilePreviewShader();
                         }
                     }
-                }
 
-                if (node->IsParameter) {
-                    char buf[128];
-                    strncpy(buf, node->ParameterName.c_str(), sizeof(buf));
-                    if (ImGui::InputText("Name", buf, sizeof(buf))) {
-                        node->ParameterName = buf; CompilePreviewShader();
+                    // On ne propose le renommage / categorie que si c'est un paramètre (et pas un commentaire !)
+                    if (node->IsParameter) {
+                        char buf[128];
+                        strncpy(buf, node->ParameterName.c_str(), sizeof(buf));
+                        if (ImGui::InputText("Name", buf, sizeof(buf))) {
+                            node->ParameterName = buf; CompilePreviewShader();
+                        }
+
+                        char catBuf[128];
+                        strncpy(catBuf, node->ParameterCategory.c_str(), sizeof(catBuf));
+                        if (ImGui::InputText("Category", catBuf, sizeof(catBuf))) {
+                            node->ParameterCategory = catBuf;
+                        }
                     }
 
-                    // --- NOUVEAU : INPUT POUR LA CATEGORIE ---
-                    char catBuf[128];
-                    strncpy(catBuf, node->ParameterCategory.c_str(), sizeof(catBuf));
-                    if (ImGui::InputText("Category", catBuf, sizeof(catBuf))) {
-                        node->ParameterCategory = catBuf;
+                    if (node->Name == "StaticSwitchParameter") {
+                        if (ImGui::Checkbox("Default Value", &node->BoolValue)) CompilePreviewShader();
                     }
                 }
-
-                // --- NOUVEAU : LA VALEUR PAR DÉFAUT DU SWITCH ---
-                if (node->Name == "StaticSwitchParameter") {
-                    if (ImGui::Checkbox("Default Value", &node->BoolValue)) CompilePreviewShader();
-                }
-            } else { ImGui::TextDisabled("No properties available"); }
+            } else {
+                ImGui::TextDisabled("No properties available");
+            }
             ImGui::EndPopup();
         }
 
