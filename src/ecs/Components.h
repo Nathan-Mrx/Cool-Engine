@@ -305,6 +305,7 @@ struct MaterialComponent {
     // Valeur = La data (on utilise des variables brutes pour simplifier)
     std::map<std::string, float> FloatOverrides;
     std::map<std::string, glm::vec4> ColorOverrides;
+    std::map<std::string, bool> SwitchOverrides;
     std::map<std::string, unsigned int> TextureOverrides;
 
     MaterialComponent() = default;
@@ -365,6 +366,9 @@ struct MaterialComponent {
                                 TextureOverrides["u_" + key] = TextureLoader::LoadTexture(fullPath.c_str());
                             }
                         }
+                        else if (value.is_boolean()) {
+                            SwitchOverrides[key] = value.get<bool>(); // <-- NOUVEAU
+                        }
                     }
                 }
             }
@@ -376,10 +380,37 @@ private:
     void LoadMaterial(const nlohmann::json& data, const std::filesystem::path& cematPath) {
         if (data.contains("GeneratedGLSL")) {
             std::string glsl = data["GeneratedGLSL"].get<std::string>();
+
+            // --- INJECTION DES PERMUTATIONS ---
+            std::string defines = "\n";
+            if (data.contains("Nodes")) {
+                for (auto& node : data["Nodes"]) {
+                    if (node["Name"] == "StaticSwitchParameter") {
+                        std::string paramName = node.value("ParameterName", "");
+                        bool val = node.value("BoolValue", false);
+
+                        // Override de l'instance si existant
+                        if (SwitchOverrides.contains(paramName)) {
+                            val = SwitchOverrides[paramName];
+                        }
+                        if (val && !paramName.empty()) {
+                            defines += "#define " + paramName + "\n";
+                        }
+                    }
+                }
+            }
+
+            size_t pos = glsl.find("#version");
+            if (pos != std::string::npos) pos = glsl.find('\n', pos) + 1;
+            else pos = 0;
+            glsl.insert(pos, defines);
+
+            // --- NOMMAGE UNIQUE DU SHADER ---
             std::filesystem::path cacheDir = Project::GetCacheDirectory();
             if (!std::filesystem::exists(cacheDir)) std::filesystem::create_directories(cacheDir);
 
-            std::string fragName = cematPath.stem().string() + ".frag";
+            // Magie : L'instance aura son propre fichier avec son propre nom !
+            std::string fragName = std::filesystem::path(AssetPath).stem().string() + ".frag";
             std::filesystem::path fragPath = cacheDir / fragName;
 
             std::ofstream outFrag(fragPath);

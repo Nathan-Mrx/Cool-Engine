@@ -570,3 +570,37 @@ struct MakeVec3NodeDef : public IMaterialNodeDef {
         return varName;
     }
 };
+
+// --- NOUVEAU : STATIC SWITCH ---
+CEMAT_NODE()
+struct StaticSwitchParameterNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "StaticSwitchParameter"; }
+    std::string GetCategory() const override { return "Parameters"; }
+    ImColor GetColor() const override { return ImColor(40, 120, 100, 255); }
+
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.IsParameter = true; // Forcé en paramètre !
+        if (node.ParameterName.empty()) node.ParameterName = "Switch_" + std::to_string((int)node.ID.Get());
+
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "True", ed::PinKind::Input, PinType::Vec4 });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "False", ed::PinKind::Input, PinType::Vec4 });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Vec4 });
+    }
+
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+
+        // On évalue les deux branches (Le compilateur GLSL supprimera automatiquement la branche morte !)
+        std::string trueVal = evaluateInput(0, "vec4(0.0)");
+        std::string falseVal = evaluateInput(1, "vec4(0.0)");
+
+        // Génération de la macro de préprocesseur !
+        bodyBuilder << "#ifdef " << node.ParameterName << "\n";
+        bodyBuilder << "    vec4 " << varName << " = " << trueVal << ";\n";
+        bodyBuilder << "#else\n";
+        bodyBuilder << "    vec4 " << varName << " = " << falseVal << ";\n";
+        bodyBuilder << "#endif\n";
+
+        return varName;
+    }
+};

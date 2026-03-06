@@ -13,6 +13,7 @@ struct MIParameter {
     std::string Name;
 
     float FloatVal = 0.0f;
+    bool BoolVal = false;
     glm::vec4 ColorVal = {1.0f, 1.0f, 1.0f, 1.0f};
     std::string TexturePath = "";
     uint32_t TextureID = 0;

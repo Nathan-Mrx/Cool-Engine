@@ -41,6 +41,8 @@ struct MaterialNode {
     // UI Spécifique
     glm::vec4 ColorValue = { 1.0f, 1.0f, 1.0f, 1.0f };
     float FloatValue = 0.0f;
+    bool BoolValue = false;
+
     std::string TexturePath = "";
     uint32_t TextureID = 0;
 

@@ -49,6 +49,7 @@ void MaterialInstanceEditorPanel::Load(const std::filesystem::path& path) {
                             param.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
                         }
                     }
+                    else if (param.Type == "StaticSwitchParameter") param.BoolVal = overrides[key].get<bool>();
                 }
             }
         }
@@ -89,6 +90,7 @@ void MaterialInstanceEditorPanel::LoadParentParameters() {
                             param.TextureID = TextureLoader::LoadTexture(fullTex.string().c_str());
                         }
                     }
+                    else if (param.Type == "StaticSwitchParameter") param.BoolVal = nodeJson.value("BoolValue", false);
                     m_Parameters[param.Name] = param;
                 }
                 // --- LE FIX DES TEXTURES : On charge les textures "Statiques" du parent ! ---
@@ -110,14 +112,37 @@ void MaterialInstanceEditorPanel::LoadParentParameters() {
 
 void MaterialInstanceEditorPanel::CompilePreviewShader() {
     if (m_ParentMaterialPath.empty()) return;
-    
-    // Le génie de l'instance : on récupère juste le code GLSL généré par le parent depuis le cache !
-    std::filesystem::path parentPath = std::filesystem::path(m_ParentMaterialPath);
-    std::filesystem::path cacheDir = Project::GetCacheDirectory();
-    std::filesystem::path fragPath = cacheDir / (parentPath.stem().string() + ".frag");
-    
-    if (std::filesystem::exists(fragPath)) {
-        m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
+    std::filesystem::path fullParentPath = Project::GetProjectDirectory() / m_ParentMaterialPath;
+    std::ifstream file(fullParentPath);
+    if (!file.is_open()) return;
+
+    nlohmann::json data;
+    try { file >> data; } catch(...) { return; }
+
+    if (data.contains("GeneratedGLSL")) {
+        std::string glsl = data["GeneratedGLSL"].get<std::string>();
+
+        // 1. On injecte les macros pour les Switches activés !
+        std::string defines = "\n";
+        for (auto& [key, param] : m_Parameters) {
+            if (param.Type == "StaticSwitchParameter" && param.BoolVal) {
+                defines += "#define " + key + "\n";
+            }
+        }
+
+        size_t pos = glsl.find("#version");
+        if (pos != std::string::npos) pos = glsl.find('\n', pos) + 1;
+        else pos = 0;
+        glsl.insert(pos, defines);
+
+        // 2. On sauvegarde et compile
+        std::filesystem::path cacheDir = Project::GetCacheDirectory();
+        std::filesystem::path tempPath = cacheDir / "preview_instance.frag";
+        std::ofstream out(tempPath);
+        out << glsl;
+        out.close();
+
+        m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.string().c_str());
     }
 }
 
@@ -241,10 +266,31 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
     }
     
     ImGui::Spacing(); ImGui::Spacing();
-    ImGui::TextDisabled("PARAMETERS");
+    ImGui::TextDisabled("STATIC SWITCHES");
     ImGui::Separator();
-    
+
     for (auto& [key, param] : m_Parameters) {
+        if (param.Type != "StaticSwitchParameter") continue;
+        ImGui::PushID(key.c_str());
+        if (ImGui::Checkbox("##override", &param.IsOverridden)) {
+            if (!param.IsOverridden) LoadParentParameters();
+            CompilePreviewShader(); // Obligatoire car ça change la compilation !
+        }
+        ImGui::SameLine(); ImGui::Text("%s", key.c_str());
+
+        if (!param.IsOverridden) ImGui::BeginDisabled();
+        ImGui::SameLine(150);
+        if (ImGui::Checkbox("Value", &param.BoolVal)) CompilePreviewShader();
+        if (!param.IsOverridden) ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing(); ImGui::Spacing();
+    ImGui::TextDisabled("DYNAMIC PARAMETERS");
+    ImGui::Separator();
+
+    for (auto& [key, param] : m_Parameters) {
+        if (param.Type == "StaticSwitchParameter") continue;
         ImGui::PushID(key.c_str());
         
         // La case à cocher Unreal Engine Style !
@@ -300,6 +346,7 @@ void MaterialInstanceEditorPanel::Save() {
             if (param.Type == "Float") overrides[key] = param.FloatVal;
             else if (param.Type == "Color") overrides[key] = {param.ColorVal.x, param.ColorVal.y, param.ColorVal.z, param.ColorVal.w};
             else if (param.Type == "Texture2D") overrides[key] = param.TexturePath;
+            else if (param.Type == "StaticSwitchParameter") overrides[key] = param.BoolVal;
         }
     }
     data["Overrides"] = overrides;

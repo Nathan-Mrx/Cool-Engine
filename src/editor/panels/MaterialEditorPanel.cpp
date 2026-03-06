@@ -583,25 +583,28 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
 
         if (ImGui::BeginPopup("NodePropertiesPopup")) {
             MaterialNode* node = FindNode(m_ContextNodeId);
-            if (node && (node->Name == "Float" || node->Name == "Color" || node->Name == "Texture2D")) {
-                if (ImGui::Checkbox("Is Parameter", &node->IsParameter)) {
-                    if (node->IsParameter && node->ParameterName.empty()) {
-                        node->ParameterName = "Param_" + std::to_string((int)node->ID.Get());
+            if (node && (node->Name == "Float" || node->Name == "Color" || node->Name == "Texture2D" || node->Name == "StaticSwitchParameter")) {
+
+                if (node->Name != "StaticSwitchParameter") {
+                    if (ImGui::Checkbox("Is Parameter", &node->IsParameter)) {
+                        if (node->IsParameter && node->ParameterName.empty()) node->ParameterName = "Param_" + std::to_string((int)node->ID.Get());
+                        CompilePreviewShader();
                     }
-                    CompilePreviewShader();
                 }
 
                 if (node->IsParameter) {
                     char buf[128];
                     strncpy(buf, node->ParameterName.c_str(), sizeof(buf));
                     if (ImGui::InputText("Name", buf, sizeof(buf))) {
-                        node->ParameterName = buf;
-                        CompilePreviewShader();
+                        node->ParameterName = buf; CompilePreviewShader();
                     }
                 }
-            } else {
-                ImGui::TextDisabled("No properties available");
-            }
+
+                // --- NOUVEAU : LA VALEUR PAR DÉFAUT DU SWITCH ---
+                if (node->Name == "StaticSwitchParameter") {
+                    if (ImGui::Checkbox("Default Value", &node->BoolValue)) CompilePreviewShader();
+                }
+            } else { ImGui::TextDisabled("No properties available"); }
             ImGui::EndPopup();
         }
 
@@ -656,6 +659,7 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
 
         nodeJson["FloatValue"] = node.FloatValue;
         nodeJson["ColorValue"] = { node.ColorValue.r, node.ColorValue.g, node.ColorValue.b, node.ColorValue.a };
+        nodeJson["BoolValue"] = node.BoolValue;
         nodeJson["TexturePath"] = node.TexturePath;
 
         nodeJson["IsParameter"] = node.IsParameter;
@@ -746,6 +750,7 @@ void MaterialEditorPanel::Load(const std::filesystem::path& path) {
         for (auto& pin : node.Outputs) pin.NodeID = node.ID;
 
         if (nodeJson.contains("FloatValue")) node.FloatValue = nodeJson["FloatValue"].get<float>();
+        if (nodeJson.contains("BoolValue")) node.BoolValue = nodeJson["BoolValue"].get<bool>();
         if (nodeJson.contains("ColorValue")) {
             node.ColorValue = { nodeJson["ColorValue"][0], nodeJson["ColorValue"][1], nodeJson["ColorValue"][2], nodeJson["ColorValue"][3] };
         }
@@ -1085,7 +1090,20 @@ void MaterialEditorPanel::CompilePreviewShader() {
     std::string fragCode = CompileMaterial();
     if (fragCode.empty()) return;
 
-    // --- On utilise l'architecture de projet officielle ! ---
+    // --- INJECTION DES SWITCHES POUR LA PREVIEW ---
+    std::string defines = "\n";
+    for (auto& node : m_Nodes) {
+        if (node.Name == "StaticSwitchParameter" && node.BoolValue) {
+            defines += "#define " + node.ParameterName + "\n";
+        }
+    }
+
+    size_t pos = fragCode.find("#version");
+    if (pos != std::string::npos) pos = fragCode.find('\n', pos) + 1;
+    else pos = 0;
+
+    fragCode.insert(pos, defines);
+
     std::filesystem::path cacheDir = Project::GetCacheDirectory();
     if (!std::filesystem::exists(cacheDir)) {
         std::filesystem::create_directories(cacheDir);
