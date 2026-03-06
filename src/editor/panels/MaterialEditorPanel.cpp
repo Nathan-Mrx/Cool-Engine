@@ -1066,12 +1066,14 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
 
     // 4. Extraction des composants (.r, .g, .rgb)
     std::string providedExpr = baseVar;
-    if (sourceNode->Name == "Color" || sourceNode->Name == "Texture2D") {
+
+    // --- LE FIX POUR LE BREAK VEC3 EST ICI ---
+    if (sourceNode->Name == "Color" || sourceNode->Name == "Texture2D" || sourceNode->Name == "Break Vec3") {
         if (outputPin->Name == "RGB") providedExpr += ".rgb";
-        else if (outputPin->Name == "R") providedExpr += ".r";
-        else if (outputPin->Name == "G") providedExpr += ".g";
-        else if (outputPin->Name == "B") providedExpr += ".b";
-        else if (outputPin->Name == "A") providedExpr += ".a";
+        else if (outputPin->Name == "R" || outputPin->Name == "X (R)") providedExpr += ".x";
+        else if (outputPin->Name == "G" || outputPin->Name == "Y (G)") providedExpr += ".y";
+        else if (outputPin->Name == "B" || outputPin->Name == "Z (B)") providedExpr += ".z";
+        else if (outputPin->Name == "A") providedExpr += ".w";
     }
 
     // 5. Auto-Casting final

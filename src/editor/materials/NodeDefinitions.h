@@ -418,3 +418,146 @@ struct NormalizeNodeDef : public IMaterialNodeDef {
         return varName;
     }
 };
+
+// ==========================================
+// 8. NOUVELLES MATHS ET COULEURS
+// ==========================================
+
+// Le fameux Saturate (Clamp 0-1 ultra rapide)
+MATH_NODE_1_IN_EXPR(SaturateNodeDef, "Saturate", "clamp(" + inVal + ", 0.0, 1.0)")
+MATH_NODE_1_IN_EXPR(SignNodeDef, "Sign", "sign(" + inVal + ")")
+MATH_NODE_1_IN_EXPR(RoundNodeDef, "Round", "round(" + inVal + ")")
+
+CEMAT_NODE()
+struct DesaturateNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Desaturate"; }
+    std::string GetCategory() const override { return "Color"; }
+    ImColor GetColor() const override { return ImColor(120, 80, 40, 255); }
+
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "Color", ed::PinKind::Input, PinType::Vec3 });
+        MaterialPin fraction = { ed::PinId(nextId++), node.ID, "Fraction", ed::PinKind::Input, PinType::Float };
+        fraction.FloatValue = 1.0f;
+        node.Inputs.push_back(fraction);
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Vec3 });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string color = evaluateInput(0, "vec3(0.0)");
+        std::string fraction = evaluateInput(1, "1.0");
+        bodyBuilder << "    vec3 " << varName << "_luma = vec3(dot(" << color << ", vec3(0.299, 0.587, 0.114)));\n";
+        bodyBuilder << "    vec3 " << varName << " = mix(" << color << ", " << varName << "_luma, " << fraction << ");\n";
+        return varName;
+    }
+};
+
+// L'Effet Fresnel (L'essence même d'Unreal Engine pour les contours brillants)
+CEMAT_NODE()
+struct FresnelNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Fresnel"; }
+    std::string GetCategory() const override { return "Math"; }
+    ImColor GetColor() const override { return ImColor(30, 70, 100, 255); }
+
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "Normal", ed::PinKind::Input, PinType::Vec3 });
+        MaterialPin power = { ed::PinId(nextId++), node.ID, "Power", ed::PinKind::Input, PinType::Float };
+        power.FloatValue = 5.0f;
+        node.Inputs.push_back(power);
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Result", ed::PinKind::Output, PinType::Float });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string normal = evaluateInput(0, "vec3(0.0, 0.0, 1.0)"); // Assurez-vous d'avoir vNormal par défaut idéalement
+        std::string power = evaluateInput(1, "5.0");
+        // On calcule la direction de vue et le Fresnel de Schlick
+        bodyBuilder << "    vec3 " << varName << "_viewDir = normalize(uViewPos - vFragPos);\n";
+        bodyBuilder << "    float " << varName << " = pow(clamp(1.0 - max(dot(" << normal << ", " << varName << "_viewDir), 0.0), 0.0, 1.0), " << power << ");\n";
+        return varName;
+    }
+};
+
+// ==========================================
+// 9. COORDONNÉES SPATIALES & WORLD ALIGNED
+// ==========================================
+
+CEMAT_NODE()
+struct WorldPositionNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "WorldPosition"; }
+    std::string GetCategory() const override { return "Coordinates"; }
+    ImColor GetColor() const override { return ImColor(120, 50, 50, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "XYZ", ed::PinKind::Output, PinType::Vec3 });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        bodyBuilder << "    vec3 " << varName << " = vFragPos;\n"; // vFragPos = Position 3D du pixel !
+        return varName;
+    }
+};
+
+CEMAT_NODE()
+struct WorldAlignedUVNodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "WorldAlignedUV"; }
+    std::string GetCategory() const override { return "UVs"; }
+    ImColor GetColor() const override { return ImColor(120, 50, 50, 255); }
+
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "WorldPos", ed::PinKind::Input, PinType::Vec3 });
+        MaterialPin size = { ed::PinId(nextId++), node.ID, "TextureSize", ed::PinKind::Input, PinType::Float };
+        size.FloatValue = 100.0f; // Echelle par défaut (ex: 100cm)
+        node.Inputs.push_back(size);
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "UV (Floor)", ed::PinKind::Output, PinType::Vec2 });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string pos = evaluateInput(0, "vFragPos");
+        std::string size = evaluateInput(1, "100.0");
+        // On projette sur l'axe XZ (Parfait pour le sol ou les toits)
+        bodyBuilder << "    vec2 " << varName << " = " << pos << ".xz / " << size << ";\n";
+        return varName;
+    }
+};
+
+// ==========================================
+// 10. MANIPULATION DE VECTEURS (Split / Make)
+// ==========================================
+
+CEMAT_NODE()
+struct BreakVec3NodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Break Vec3"; }
+    std::string GetCategory() const override { return "Utility"; }
+    ImColor GetColor() const override { return ImColor(45, 55, 65, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "V", ed::PinKind::Input, PinType::Vec3 });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "X (R)", ed::PinKind::Output, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Y (G)", ed::PinKind::Output, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Z (B)", ed::PinKind::Output, PinType::Float });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string v = evaluateInput(0, "vec3(0.0)");
+        bodyBuilder << "    vec3 " << varName << " = " << v << ";\n";
+        return varName;
+    }
+};
+
+CEMAT_NODE()
+struct MakeVec3NodeDef : public IMaterialNodeDef {
+    std::string GetName() const override { return "Make Vec3"; }
+    std::string GetCategory() const override { return "Utility"; }
+    ImColor GetColor() const override { return ImColor(45, 55, 65, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "X (R)", ed::PinKind::Input, PinType::Float });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "Y (G)", ed::PinKind::Input, PinType::Float });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "Z (B)", ed::PinKind::Input, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "XYZ", ed::PinKind::Output, PinType::Vec3 });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string x = evaluateInput(0, "0.0");
+        std::string y = evaluateInput(1, "0.0");
+        std::string z = evaluateInput(2, "0.0");
+        bodyBuilder << "    vec3 " << varName << " = vec3(" << x << ", " << y << ", " << z << ");\n";
+        return varName;
+    }
+};
