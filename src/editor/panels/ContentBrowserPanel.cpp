@@ -1,6 +1,8 @@
 #include "../panels/ContentBrowserPanel.h"
 
 #include <fstream>
+#include <vector>
+#include <algorithm>
 
 #include "../../project/Project.h"
 #include <imgui.h>
@@ -9,16 +11,27 @@
 #include "renderer/TextureLoader.h"
 #include "scene/Entity.h"
 #include "scene/SceneSerializer.h"
-#include <vector>
-#include <algorithm>
 
 ContentBrowserPanel::ContentBrowserPanel() {}
 
+// =========================================================================================
+// ENTRY POINT DU RENDU UI
+// =========================================================================================
 void ContentBrowserPanel::OnImGuiRender() {
-    static bool s_OpenCreateMaterialPopup = false;
-    static char s_NewMaterialName[128] = "NewMaterial";
-
     ImGui::Begin("Content Browser");
+
+    if (!Project::GetActive()) {
+        ImGui::Text("No Project Active");
+        ImGui::End();
+        return;
+    }
+
+    if (m_CurrentDirectory.empty()) m_CurrentDirectory = Project::GetContentDirectory();
+
+    // Chargement paresseux de l'icône de dossier
+    if (m_DirectoryIcon == 0 && std::filesystem::exists("icons/folder.png")) {
+        m_DirectoryIcon = TextureLoader::LoadTexture("icons/folder.png");
+    }
 
     // --- RACCOURCI F2 POUR RENOMMER ---
     if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2) && !m_SelectedPath.empty()) {
@@ -28,36 +41,34 @@ void ContentBrowserPanel::OnImGuiRender() {
         snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", name.c_str());
     }
 
-    if (!Project::GetActive()) {
-        ImGui::Text("No Project Active");
-        ImGui::End();
-        return;
+    DrawTopBar();
+    DrawContentGrid();
+    HandleBackgroundContextMenu();
+    DrawCreateAssetPopup();
+
+    // Déselection si on clique dans le vide
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) {
+        m_SelectedPath = "";
+        m_IsRenaming = false;
     }
 
-    if (m_CurrentDirectory.empty()) {
-        m_CurrentDirectory = Project::GetContentDirectory();
-    }
+    ImGui::End();
+}
 
-    // Chargement paresseux de l'icône de dossier
-    if (m_DirectoryIcon == 0 && std::filesystem::exists("icons/folder.png")) {
-        m_DirectoryIcon = TextureLoader::LoadTexture("icons/folder.png");
-    }
-
-    // --- 1. TOP BAR ---
+// =========================================================================================
+// 1. TOP BAR (Navigation & Actions)
+// =========================================================================================
+void ContentBrowserPanel::DrawTopBar() {
     std::filesystem::path contentDir = Project::GetContentDirectory();
 
     // Bouton Retour
     if (m_CurrentDirectory != contentDir) {
-        if (ImGui::Button("<-")) {
-            m_CurrentDirectory = m_CurrentDirectory.parent_path();
-        }
+        if (ImGui::Button("<-")) m_CurrentDirectory = m_CurrentDirectory.parent_path();
         ImGui::SameLine();
     }
 
     // Bouton Nouveau Dossier
-    if (ImGui::Button("New Folder")) {
-        ImGui::OpenPopup("NewFolderPopup");
-    }
+    if (ImGui::Button("New Folder")) ImGui::OpenPopup("NewFolderPopup");
 
     if (ImGui::BeginPopup("NewFolderPopup")) {
         static char folderName[128] = "NewFolder";
@@ -71,180 +82,193 @@ void ContentBrowserPanel::OnImGuiRender() {
 
     ImGui::SameLine();
 
-    // Chemin relatif
+    // Chemin relatif actuel
     std::filesystem::path relativePath = std::filesystem::relative(m_CurrentDirectory, Project::GetProjectDirectory());
     ImGui::Text("%s", relativePath.string().c_str());
     ImGui::Separator();
+}
 
-    // --- 2. GRID LAYOUT & SORTING ---
-    float padding = 16.0f;
-    float thumbnailSize = 90.0f;
-    float cellSize = thumbnailSize + padding;
+// =========================================================================================
+// 2. GRID LAYOUT & RENDU DU CONTENU
+// =========================================================================================
+void ContentBrowserPanel::DrawContentGrid() {
+    if (!std::filesystem::exists(m_CurrentDirectory)) return;
 
+    float cellSize = m_ThumbnailSize + m_Padding;
     float panelWidth = ImGui::GetContentRegionAvail().x;
     int columnCount = (int)(panelWidth / cellSize);
     if (columnCount < 1) columnCount = 1;
 
     ImGui::Columns(columnCount, 0, false);
 
-    if (std::filesystem::exists(m_CurrentDirectory)) {
-
-        // ========================================================
-        // ÉTAPE A : RÉCUPÉRATION ET TRI DES FICHIERS
-        // ========================================================
-        std::vector<std::filesystem::directory_entry> entries;
-        for (auto& directoryEntry : std::filesystem::directory_iterator(m_CurrentDirectory)) {
-            entries.push_back(directoryEntry);
-        }
-
-        std::sort(entries.begin(), entries.end(), [](const std::filesystem::directory_entry& a, const std::filesystem::directory_entry& b) {
-            bool aIsDir = a.is_directory();
-            bool bIsDir = b.is_directory();
-
-            // 1. Les dossiers en premier
-            if (aIsDir && !bIsDir) return true;
-            if (!aIsDir && bIsDir) return false;
-
-            // 2. Trier par type (extension)
-            if (!aIsDir && !bIsDir) {
-                std::string extA = a.path().extension().string();
-                std::string extB = b.path().extension().string();
-                if (extA != extB) return extA < extB;
-            }
-
-            // 3. Trier par nom alphabétique
-            return a.path().filename().string() < b.path().filename().string();
-        });
-
-        // ========================================================
-        // ÉTAPE B : RENDU DES CARTES
-        // ========================================================
-        for (auto& directoryEntry : entries) {
-            const auto& path = directoryEntry.path();
-            std::string filename = path.filename().string();
-
-            // On cache l'extension pour l'affichage visuel !
-            std::string displayName = directoryEntry.is_directory() ? filename : path.stem().string();
-
-            ImGui::PushID(filename.c_str());
-
-            bool isSelected = (m_SelectedPath == path);
-
-            if (directoryEntry.is_directory()) {
-                // --- RENDU DOSSIER ---
-                if (isSelected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.4f, 0.4f, 1.0f)); // Surbrillance grise
-
-                if (m_DirectoryIcon != 0) ImGui::ImageButton("##Dir", (ImTextureID)(uintptr_t)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
-                else ImGui::Button("DIR", { thumbnailSize, thumbnailSize });
-
-                if (isSelected) ImGui::PopStyleColor();
-
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                    m_SelectedPath = path;
-                    m_IsRenaming = false; // On annule un renommage en cours si on clique sur l'icône
-                }
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    m_CurrentDirectory /= path.filename();
-                    m_SelectedPath = "";
-                }
-            } else {
-                // --- RENDU ASSET ---
-                AssetTypeInfo info;
-                bool isKnownAsset = AssetRegistry::GetInfo(path.extension().string(), info);
-                ImVec4 bgCol = isKnownAsset ? ImVec4(info.Color.x * 0.4f, info.Color.y * 0.4f, info.Color.z * 0.4f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
-
-                // Surbrillance si sélectionné
-                if (isSelected) {
-                    bgCol.x = std::min(1.0f, bgCol.x + 0.3f);
-                    bgCol.y = std::min(1.0f, bgCol.y + 0.3f);
-                    bgCol.z = std::min(1.0f, bgCol.z + 0.3f);
-                }
-
-                ImGui::PushStyleColor(ImGuiCol_Button, bgCol);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(bgCol.x * 1.5f, bgCol.y * 1.5f, bgCol.z * 1.5f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(bgCol.x * 0.8f, bgCol.y * 0.8f, bgCol.z * 0.8f, 1.0f));
-
-                if (isKnownAsset && info.IconID != 0) ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
-                else {
-                    std::string ext = path.extension().string();
-                    if (ext.empty()) ext = "FILE";
-                    ImGui::Button(ext.c_str(), { thumbnailSize, thumbnailSize });
-                }
-                ImGui::PopStyleColor(3);
-
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                    m_SelectedPath = path;
-                    m_IsRenaming = false;
-                }
-
-                // Logique d'ouverture
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    if (path.extension() == ".cescene" && OnSceneOpenCallback) OnSceneOpenCallback(path);
-                    else if (path.extension() == ".ceprefab" && OnPrefabOpenCallback) OnPrefabOpenCallback(path);
-                    else if (path.extension() == ".cemat" && OnMaterialOpenCallback) OnMaterialOpenCallback(path);
-                    else if (path.extension() == ".cematinst" && OnMaterialInstanceOpenCallback) OnMaterialInstanceOpenCallback(path);
-                }
-
-                if (ImGui::BeginDragDropSource()) {
-                    std::string itemPath = path.string();
-                    ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath.c_str(), itemPath.size() + 1);
-                    ImGui::Text("Drop %s", filename.c_str());
-                    ImGui::EndDragDropSource();
-                }
-            }
-
-            // ========================================================
-            // LE TEXTE EN DESSOUS (OU LE CHAMP DE RENOMMAGE)
-            // ========================================================
-            if (m_IsRenaming && m_RenamingPath == path) {
-                ImGui::PushItemWidth(thumbnailSize);
-                if (ImGui::InputText("##Rename", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
-                    std::string ext = directoryEntry.is_directory() ? "" : path.extension().string();
-                    std::filesystem::path newPath = path.parent_path() / (std::string(m_RenameBuffer) + ext);
-
-                    if (!std::filesystem::exists(newPath) && strlen(m_RenameBuffer) > 0) {
-                        try {
-                            std::filesystem::rename(path, newPath);
-                            m_SelectedPath = newPath;
-                        } catch (...) {} // Sécurité si le fichier est bloqué par l'OS
-                    }
-                    m_IsRenaming = false;
-                }
-
-                // Focus automatique sur le champ texte
-                if (!ImGui::IsItemActive() && ImGui::IsWindowFocused()) ImGui::SetKeyboardFocusHere(-1);
-
-                // Annuler si on clique ailleurs
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsItemHovered()) m_IsRenaming = false;
-
-                ImGui::PopItemWidth();
-            } else {
-                // Affichage classique du texte
-                ImGui::TextWrapped("%s", displayName.c_str());
-
-                // --- CLIC SUR LE TEXTE POUR RENOMMER ---
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                    if (isSelected) {
-                        m_IsRenaming = true;
-                        m_RenamingPath = path;
-                        snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", displayName.c_str());
-                    } else {
-                        m_SelectedPath = path;
-                        m_IsRenaming = false;
-                    }
-                }
-            }
-
-            ImGui::NextColumn();
-            ImGui::PopID();
-        }
+    // --- LECTURE ET TRI ---
+    std::vector<std::filesystem::directory_entry> entries;
+    for (auto& directoryEntry : std::filesystem::directory_iterator(m_CurrentDirectory)) {
+        entries.push_back(directoryEntry);
     }
 
-    // --- MENU CONTEXTUEL (Clic Droit dans le vide) ---
-    // --- MENU CONTEXTUEL GÉNÉRIQUE ---
+    std::sort(entries.begin(), entries.end(), [](const std::filesystem::directory_entry& a, const std::filesystem::directory_entry& b) {
+        bool aIsDir = a.is_directory();
+        bool bIsDir = b.is_directory();
+        if (aIsDir && !bIsDir) return true;
+        if (!aIsDir && bIsDir) return false;
+        if (!aIsDir && !bIsDir) {
+            std::string extA = a.path().extension().string();
+            std::string extB = b.path().extension().string();
+            if (extA != extB) return extA < extB;
+        }
+        return a.path().filename().string() < b.path().filename().string();
+    });
+
+    // --- RENDU DES CARTES ---
+    for (auto& directoryEntry : entries) {
+        const auto& path = directoryEntry.path();
+        std::string filename = path.filename().string();
+        std::string displayName = directoryEntry.is_directory() ? filename : path.stem().string();
+
+        ImGui::PushID(filename.c_str());
+
+        if (directoryEntry.is_directory()) {
+            DrawDirectoryEntry(directoryEntry, m_ThumbnailSize);
+        } else {
+            DrawFileEntry(directoryEntry, m_ThumbnailSize);
+        }
+
+        bool isSelected = (m_SelectedPath == path);
+        DrawItemLabelOrRename(directoryEntry, displayName, m_ThumbnailSize, isSelected);
+
+        ImGui::NextColumn();
+        ImGui::PopID();
+    }
+
+    ImGui::Columns(1);
+}
+
+// =========================================================================================
+// LOGIQUE SPÉCIFIQUE D'UN ITEM (Dossier / Fichier)
+// =========================================================================================
+void ContentBrowserPanel::DrawDirectoryEntry(const std::filesystem::directory_entry& entry, float thumbnailSize) {
+    const auto& path = entry.path();
+    bool isSelected = (m_SelectedPath == path);
+
+    if (isSelected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+
+    if (m_DirectoryIcon != 0) {
+        ImGui::ImageButton("##Dir", (ImTextureID)(uintptr_t)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
+    } else {
+        ImGui::Button("DIR", { thumbnailSize, thumbnailSize });
+    }
+
+    if (isSelected) ImGui::PopStyleColor();
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        m_SelectedPath = path;
+        m_IsRenaming = false;
+    }
+
+    // Navigation (Double clic)
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        m_CurrentDirectory /= path.filename();
+        m_SelectedPath = "";
+    }
+}
+
+void ContentBrowserPanel::DrawFileEntry(const std::filesystem::directory_entry& entry, float thumbnailSize) {
+    const auto& path = entry.path();
+    bool isSelected = (m_SelectedPath == path);
+    std::string filename = path.filename().string();
+
+    AssetTypeInfo info;
+    bool isKnownAsset = AssetRegistry::GetInfo(path.extension().string(), info);
+    ImVec4 bgCol = isKnownAsset ? ImVec4(info.Color.x * 0.4f, info.Color.y * 0.4f, info.Color.z * 0.4f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
+
+    if (isSelected) {
+        bgCol.x = std::min(1.0f, bgCol.x + 0.3f);
+        bgCol.y = std::min(1.0f, bgCol.y + 0.3f);
+        bgCol.z = std::min(1.0f, bgCol.z + 0.3f);
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Button, bgCol);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(bgCol.x * 1.5f, bgCol.y * 1.5f, bgCol.z * 1.5f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(bgCol.x * 0.8f, bgCol.y * 0.8f, bgCol.z * 0.8f, 1.0f));
+
+    if (isKnownAsset && info.IconID != 0) {
+        ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
+    } else {
+        std::string ext = path.extension().string();
+        if (ext.empty()) ext = "FILE";
+        ImGui::Button(ext.c_str(), { thumbnailSize, thumbnailSize });
+    }
+
+    ImGui::PopStyleColor(3);
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        m_SelectedPath = path;
+        m_IsRenaming = false;
+    }
+
+    // Ouverture (Double clic)
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (path.extension() == ".cescene" && OnSceneOpenCallback) OnSceneOpenCallback(path);
+        else if (path.extension() == ".ceprefab" && OnPrefabOpenCallback) OnPrefabOpenCallback(path);
+        else if (path.extension() == ".cemat" && OnMaterialOpenCallback) OnMaterialOpenCallback(path);
+        else if (path.extension() == ".cematinst" && OnMaterialInstanceOpenCallback) OnMaterialInstanceOpenCallback(path);
+    }
+
+    // Source de Drag & Drop !
+    if (ImGui::BeginDragDropSource()) {
+        std::string itemPath = path.string();
+        ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath.c_str(), itemPath.size() + 1);
+        ImGui::Text("Drop %s", filename.c_str());
+        ImGui::EndDragDropSource();
+    }
+}
+
+void ContentBrowserPanel::DrawItemLabelOrRename(const std::filesystem::directory_entry& entry, const std::string& displayName, float thumbnailSize, bool isSelected) {
+    const auto& path = entry.path();
+
+    if (m_IsRenaming && m_RenamingPath == path) {
+        ImGui::PushItemWidth(thumbnailSize);
+        if (ImGui::InputText("##Rename", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
+            std::string ext = entry.is_directory() ? "" : path.extension().string();
+            std::filesystem::path newPath = path.parent_path() / (std::string(m_RenameBuffer) + ext);
+
+            if (!std::filesystem::exists(newPath) && strlen(m_RenameBuffer) > 0) {
+                try {
+                    std::filesystem::rename(path, newPath);
+                    m_SelectedPath = newPath;
+                } catch (...) {}
+            }
+            m_IsRenaming = false;
+        }
+
+        if (!ImGui::IsItemActive() && ImGui::IsWindowFocused()) ImGui::SetKeyboardFocusHere(-1);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsItemHovered()) m_IsRenaming = false;
+
+        ImGui::PopItemWidth();
+    } else {
+        ImGui::TextWrapped("%s", displayName.c_str());
+
+        // Clic sur le texte pour renommer
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            if (isSelected) {
+                m_IsRenaming = true;
+                m_RenamingPath = path;
+                snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", displayName.c_str());
+            } else {
+                m_SelectedPath = path;
+                m_IsRenaming = false;
+            }
+        }
+    }
+}
+
+// =========================================================================================
+// MENUS CONTEXTUELS ET POPUPS
+// =========================================================================================
+void ContentBrowserPanel::HandleBackgroundContextMenu() {
     if (ImGui::BeginPopupContextWindow("ContentBrowserContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if (ImGui::BeginMenu("Create...")) {
-            // MAGIE : On lit tous les types d'assets du registre !
             for (const auto& [ext, info] : AssetRegistry::GetRegistry()) {
                 if (ImGui::MenuItem(info.Name.c_str())) {
                     m_OpenCreateAssetPopup = true;
@@ -257,25 +281,12 @@ void ContentBrowserPanel::OnImGuiRender() {
         }
         ImGui::EndPopup();
     }
-
-    // --- ON APPELLE NOTRE NOUVELLE MACHINE À LA TOUTE FIN ! ---
-    DrawCreateAssetPopup();
-
-    ImGui::Columns(1);
-
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) {
-        m_SelectedPath = "";
-        m_IsRenaming = false;
-    }
-
-    ImGui::End();
 }
 
-// --- LE MOTEUR GÉNÉRIQUE DE POPUP ---
 void ContentBrowserPanel::DrawCreateAssetPopup() {
     if (m_OpenCreateAssetPopup) {
         ImGui::OpenPopup("Name New Asset");
-        m_OpenCreateAssetPopup = false; // On reset le déclencheur pour ne pas ouvrir en boucle
+        m_OpenCreateAssetPopup = false;
     }
 
     if (ImGui::BeginPopupModal("Name New Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -288,12 +299,10 @@ void ContentBrowserPanel::DrawCreateAssetPopup() {
             if (!nameStr.empty()) {
                 std::filesystem::path newAssetPath = m_CurrentDirectory / (nameStr + m_CreateAssetExtension);
 
-                // === L'ASSET SE CRÉE LUI-MÊME ! ===
                 AssetTypeInfo info;
                 if (AssetRegistry::GetInfo(m_CreateAssetExtension, info) && info.Instance) {
                     info.Instance->CreateDefaultAsset(newAssetPath);
                 } else {
-                    // Fallback de sécurité : fichier vide
                     std::ofstream file(newAssetPath);
                     file.close();
                 }
@@ -305,9 +314,7 @@ void ContentBrowserPanel::DrawCreateAssetPopup() {
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
 
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
     }

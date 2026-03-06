@@ -3,7 +3,8 @@
 #include <functional>
 #include <string>
 
-class ContentBrowserPanel {
+class ContentBrowserPanel
+{
 public:
     ContentBrowserPanel();
     void OnImGuiRender();
@@ -17,9 +18,17 @@ private:
     std::filesystem::path m_CurrentDirectory;
     std::filesystem::path m_BaseDirectory;
 
-    // --- NOUVEAU : La machine à créer des Assets ---
+    // --- SOUS-FONCTIONS DE RENDU (Refactoring) ---
+    void DrawTopBar();
+    void DrawContentGrid();
+    void DrawDirectoryEntry(const std::filesystem::directory_entry& entry, float thumbnailSize);
+    void DrawFileEntry(const std::filesystem::directory_entry& entry, float thumbnailSize);
+    void DrawItemLabelOrRename(const std::filesystem::directory_entry& entry, const std::string& displayName, float thumbnailSize, bool isSelected);
+    void HandleBackgroundContextMenu();
+
     void DrawCreateAssetPopup();
 
+private:
     bool m_OpenCreateAssetPopup = false;
     std::string m_CreateAssetType = "";      // "Material", "Prefab", etc.
     std::string m_CreateAssetExtension = ""; // ".cemat", ".ceprefab", etc.
@@ -32,4 +41,8 @@ private:
     std::filesystem::path m_RenamingPath;
     bool m_IsRenaming = false;
     char m_RenameBuffer[256] = "";
+
+    // --- PRÉFÉRENCES UI ---
+    float m_ThumbnailSize = 90.0f;
+    float m_Padding = 16.0f;
 };
