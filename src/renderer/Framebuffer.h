@@ -6,6 +6,7 @@
 struct FramebufferSpecification {
     uint32_t Width, Height;
     bool DepthOnly = false;
+    uint32_t Layers = 1;
     // On pourrait ajouter d'autres options ici plus tard (MSAA, formats spécifiques...)
 };
 
@@ -17,6 +18,8 @@ public:
     void Invalidate();
     void Bind();
     void Unbind();
+
+    void BindDepthLayer(uint32_t layer);
 
     void Resize(uint32_t width, uint32_t height);
 

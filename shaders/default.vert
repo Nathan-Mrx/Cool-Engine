@@ -7,21 +7,23 @@ uniform mat4 uModel;
 uniform mat4 uView;
 uniform mat4 uProjection;
 
-// --- NOUVEAU : La matrice du "Soleil" ---
-uniform mat4 uLightSpaceMatrix;
-
 out vec3 vFragPos;
 out vec3 vNormal;
 out vec2 vTexCoords;
-out vec4 vFragPosLightSpace; // <-- NOUVEAU : Position pour l'ombre
+
+// --- NOUVEAU : On a besoin de la profondeur pour choisir la bonne cascade ---
+out float vViewDepth;
 
 void main() {
     vFragPos = vec3(uModel * vec4(aPos, 1.0));
     vNormal = mat3(transpose(inverse(uModel))) * aNormal;
     vTexCoords = aTexCoords;
 
-    // On projette ce sommet dans la "caméra" de la lumière
-    vFragPosLightSpace = uLightSpaceMatrix * vec4(vFragPos, 1.0);
+    // On calcule la position dans l'espace de la caméra (View Space)
+    vec4 viewPos = uView * vec4(vFragPos, 1.0);
 
-    gl_Position = uProjection * uView * vec4(vFragPos, 1.0);
+    // En OpenGL, la caméra regarde vers les Z négatifs, donc on inverse le signe
+    vViewDepth = abs(viewPos.z);
+
+    gl_Position = uProjection * viewPos;
 }

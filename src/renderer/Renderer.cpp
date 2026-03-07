@@ -17,6 +17,7 @@ void Renderer::Init() {
     shadowSpec.Width = 2048;  // Haute résolution (2K) pour des ombres nettes
     shadowSpec.Height = 2048;
     shadowSpec.DepthOnly = true; // Mode spécial qu'on a codé juste avant !
+    shadowSpec.Layers = 3;   // <-- LE NIVEAU AAA EST ICI
     s_Data->ShadowFramebuffer = std::make_unique<Framebuffer>(shadowSpec);
 
     // --- INITIALISATION DE LA GRILLE ---
@@ -68,79 +69,89 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
     auto lightView = scene->m_Registry.view<TransformComponent, DirectionalLightComponent>();
 
     glm::vec3 currentLightColor = glm::vec3(1.0f);
-    glm::vec3 currentLightDir = glm::vec3(0.0f, 0.0f, -1.0f); // <-- FIX : Vers le bas en Z-up
+    glm::vec3 currentLightDir = glm::vec3(0.0f, 0.0f, -1.0f);
     float currentAmbient = 1.0f;
     float currentDiffuse = 0.0f;
 
     for (auto entity : lightView) {
         auto [lightTransform, light] = lightView.get<TransformComponent, DirectionalLightComponent>(entity);
-
-        // --- FIX : La direction de base est -Z ---
         glm::vec3 baseDirection = glm::vec3(0.0f, 0.0f, -1.0f);
         currentLightDir = glm::normalize(lightTransform.Rotation * baseDirection);
-
         currentLightColor = light.Color;
         currentAmbient = light.AmbientIntensity;
         currentDiffuse = light.DiffuseIntensity;
         break;
     }
 
-    // On récupère la position ET la direction de la caméra depuis la matrice
     glm::mat4 invView = glm::inverse(s_Data->CurrentView);
     glm::vec3 camPos = glm::vec3(invView[3]);
-
-    // Dans une matrice de vue OpenGL, la 3ème colonne correspond au vecteur "Backward" (Arrière).
-    // Donc l'inverse de ça, c'est notre vecteur "Forward" (Avant) !
     glm::vec3 camFront = -glm::normalize(glm::vec3(invView[2]));
-
-    // 1. On crée un "Point Cible" à 15 mètres (1500 cm) DEVANT la caméra
-    glm::vec3 targetPos = camPos + camFront * 1500.0f;
-
-    // 2. On réduit la boîte d'ombre à 30 mètres de large (1500 cm de chaque côté du centre)
-    // On réduit aussi le near/far pour optimiser la précision du Z-Buffer (le float en 32 bits)
-    glm::mat4 lightProjection = glm::ortho(-1500.0f, 1500.0f, -1500.0f, 1500.0f, 10.0f, 10000.0f);
-
-    // 3. On recule le soleil virtuel de 50 mètres (5000 cm) par rapport à la CIBLE (et non la caméra)
-    glm::vec3 lightPos = targetPos - (currentLightDir * 5000.0f);
 
     // --- FIX Z-UP ---
     glm::vec3 lightUp = glm::vec3(0.0f, 0.0f, 1.0f);
-    if (abs(currentLightDir.z) > 0.99f) {
-        lightUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    if (abs(currentLightDir.z) > 0.99f) lightUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+    // =====================================================
+    // 2. PRÉPARATION DES 3 CASCADES (CSM)
+    // =====================================================
+    struct CascadeDef { float targetDist; float orthoSize; float farPlane; };
+    CascadeDef cascades[3] = {
+        { 750.0f,  1500.0f,  5000.0f },   // C0: Cible à 7.5m, Boîte de 15m de large
+        { 2500.0f, 5000.0f,  10000.0f },  // C1: Cible à 25m, Boîte de 50m de large
+        { 7500.0f, 15000.0f, 25000.0f }   // C2: Cible à 75m, Boîte de 150m de large
+    };
+
+    // Les distances de coupure pour le shader (où on passe d'une cascade à l'autre)
+    float cascadeDistances[3] = { 1500.0f, 5000.0f, 15000.0f };
+    std::vector<glm::mat4> lightSpaceMatrices;
+
+    for (int i = 0; i < 3; i++) {
+        glm::vec3 targetPos = camPos + camFront * cascades[i].targetDist;
+
+        // --- FIX MATHÉMATIQUE : On utilise -farPlane en zNear pour TOUT englober ---
+        glm::mat4 lightProjection = glm::ortho(
+            -cascades[i].orthoSize, cascades[i].orthoSize,
+            -cascades[i].orthoSize, cascades[i].orthoSize,
+            -cascades[i].farPlane, cascades[i].farPlane // De très loin derrière à très loin devant !
+        );
+
+        // On place la caméra virtuelle directement sur le point cible
+        glm::vec3 lightPos = targetPos;
+
+        // Et elle regarde simplement dans la direction de la lumière
+        glm::mat4 lightViewMatrix = glm::lookAt(lightPos, lightPos + currentLightDir, lightUp);
+
+        lightSpaceMatrices.push_back(lightProjection * lightViewMatrix);
     }
 
-    // Le soleil regarde maintenant le point cible devant toi !
-    glm::mat4 lightViewMatrix = glm::lookAt(lightPos, targetPos, lightUp);
-    glm::mat4 lightSpaceMatrix = lightProjection * lightViewMatrix;
-
     // =====================================================
-    // 2. PASSE 1 : SHADOW MAP (Depth Pass)
+    // 3. PASSE 1 : SHADOW MAPS (Depth Pass x3)
     // =====================================================
-    // A. Sauvegarde de l'état du Viewport de l'Éditeur
     GLint previousFBO;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFBO);
     GLint previousViewport[4];
     glGetIntegerv(GL_VIEWPORT, previousViewport);
 
-    // B. Activation du Framebuffer d'Ombre
     s_Data->ShadowFramebuffer->Bind();
-    glClear(GL_DEPTH_BUFFER_BIT);
-
-    // C. Activation du Culling des faces avant (Astuce anti "Shadow Acne")
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
-
     s_Data->ShadowShader->Use();
-    s_Data->ShadowShader->SetMat4("uLightSpaceMatrix", lightSpaceMatrix);
 
-    auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
-    for (auto entityID : view) {
-        auto [transform, mesh] = view.get<TransformComponent, MeshComponent>(entityID);
-        if (mesh.MeshData) {
-            Entity entityObj{ entityID, scene };
-            glm::mat4 globalTransform = scene->GetWorldTransform(entityObj);
-            s_Data->ShadowShader->SetMat4("uModel", globalTransform);
-            mesh.MeshData->Draw();
+    auto viewMeshes = scene->m_Registry.view<TransformComponent, MeshComponent>();
+
+    // On boucle sur nos 3 couches !
+    for (int i = 0; i < 3; i++) {
+        // Magie : on connecte la tranche 'i' au Framebuffer
+        s_Data->ShadowFramebuffer->BindDepthLayer(i);
+        glClear(GL_DEPTH_BUFFER_BIT); // On nettoie uniquement cette tranche
+
+        s_Data->ShadowShader->SetMat4("uLightSpaceMatrix", lightSpaceMatrices[i]);
+
+        for (auto entityID : viewMeshes) {
+            auto [transform, mesh] = viewMeshes.get<TransformComponent, MeshComponent>(entityID);
+            if (mesh.MeshData) {
+                Entity entityObj{ entityID, scene };
+                s_Data->ShadowShader->SetMat4("uModel", scene->GetWorldTransform(entityObj));
+                mesh.MeshData->Draw();
+            }
         }
     }
 
@@ -164,8 +175,8 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
     else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     // B. Rendu de la scène classique
-    for (auto entityID : view) {
-        auto [transform, mesh] = view.get<TransformComponent, MeshComponent>(entityID);
+    for (auto entityID : viewMeshes) {
+        auto [transform, mesh] = viewMeshes.get<TransformComponent, MeshComponent>(entityID);
         if (mesh.MeshData) {
             Entity entityObj{ entityID, scene };
             glm::mat4 globalTransform = scene->GetWorldTransform(entityObj);
@@ -208,11 +219,17 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
                 }
             }
 
-            // --- INJECTION DE LA SHADOW MAP (On utilise le slot 15 pour ne pas écraser les textures du mat) ---
+            // --- INJECTION DU CSM (CASCADED SHADOW MAPS) ---
             glActiveTexture(GL_TEXTURE15);
-            glBindTexture(GL_TEXTURE_2D, s_Data->ShadowFramebuffer->GetDepthAttachmentRendererID());
+            // ATTENTION : C'est un GL_TEXTURE_2D_ARRAY maintenant !
+            glBindTexture(GL_TEXTURE_2D_ARRAY, s_Data->ShadowFramebuffer->GetDepthAttachmentRendererID());
             activeShader->SetInt("uShadowMap", 15);
-            activeShader->SetMat4("uLightSpaceMatrix", lightSpaceMatrix);
+
+            // On envoie les tableaux de matrices et de distances au Shader
+            for (int i = 0; i < 3; i++) {
+                activeShader->SetMat4("uLightSpaceMatrices[" + std::to_string(i) + "]", lightSpaceMatrices[i]);
+                activeShader->SetFloat("uCascadeDistances[" + std::to_string(i) + "]", cascadeDistances[i]);
+            }
 
             activeShader->SetVec3("uLightColor", currentLightColor);
             activeShader->SetVec3("uLightDir", currentLightDir);

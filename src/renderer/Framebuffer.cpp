@@ -48,20 +48,48 @@ void Framebuffer::Invalidate() {
 
 void Framebuffer::CreateShadowMap() {
     glGenTextures(1, &m_DepthAttachment);
-    glBindTexture(GL_TEXTURE_2D, m_DepthAttachment);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, m_Specification.Width, m_Specification.Height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
 
-    // Paramètres pour éviter les artefacts sur les bords des ombres
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+    if (m_Specification.Layers > 1) {
+        // =========================================================
+        // MODE CSM (Texture 2D Array)
+        // =========================================================
+        glBindTexture(GL_TEXTURE_2D_ARRAY, m_DepthAttachment);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_DepthAttachment, 0);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT,
+                     m_Specification.Width, m_Specification.Height, m_Specification.Layers,
+                     0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
 
-    // On dit explicitement à OpenGL qu'on ne dessinera aucune couleur !
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+        float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_DepthAttachment, 0, 0);
+
+        // On attache l'ensemble du tableau au Framebuffer
+        glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_DepthAttachment, 0);
+    }
+    else {
+        // =========================================================
+        // MODE NORMAL (Texture 2D simple - au cas où)
+        // =========================================================
+        glBindTexture(GL_TEXTURE_2D, m_DepthAttachment);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, m_Specification.Width, m_Specification.Height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+        float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_DepthAttachment, 0);
+    }
+
     glDrawBuffer(GL_NONE);
     glReadBuffer(GL_NONE);
 }
@@ -120,4 +148,12 @@ int Framebuffer::ReadPixel(uint32_t attachmentIndex, int x, int y) {
 
 void Framebuffer::ClearAttachment(uint32_t attachmentIndex, int value) {
     glClearBufferiv(GL_COLOR, attachmentIndex, &value);
+}
+
+void Framebuffer::BindDepthLayer(uint32_t layer) {
+    if (m_Specification.Layers > 1) {
+        // --- FIX MESA : Sécurité pour forcer le pilote à mettre à jour l'attachement ---
+        glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, 0, 0);
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_DepthAttachment, 0, layer);
+    }
 }
