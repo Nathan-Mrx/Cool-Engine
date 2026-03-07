@@ -230,15 +230,25 @@ void MaterialInstanceEditorPanel::CompilePreviewShader() {
 
     if (data.contains("GeneratedGLSL")) {
         std::string glsl = data["GeneratedGLSL"].get<std::string>();
-        std::string defines = "\n";
-        for (auto& [key, param] : m_Parameters) if (param.Type == "StaticSwitchParameter" && param.BoolVal) defines += "#define " + key + "\n";
+
+        // --- LE FIX EST ICI : On injecte IS_PREVIEW_VIEWPORT ---
+        std::string defines = "\n#define IS_PREVIEW_VIEWPORT\n";
+
+        for (auto& [key, param] : m_Parameters) {
+            if (param.Type == "StaticSwitchParameter" && param.BoolVal) {
+                defines += "#define " + key + "\n";
+            }
+        }
 
         size_t pos = glsl.find("#version");
         if (pos != std::string::npos) pos = glsl.find('\n', pos) + 1; else pos = 0;
         glsl.insert(pos, defines);
 
         std::filesystem::path tempPath = Project::GetCacheDirectory() / "preview_instance.frag";
-        std::ofstream out(tempPath); out << glsl; out.close();
+        std::ofstream out(tempPath);
+        out << glsl;
+        out.close();
+
         m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.string().c_str());
     }
 }
@@ -295,7 +305,9 @@ void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
         glm::mat4 model = glm::scale(glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f)), glm::vec3(0.8f));
 
         m_PreviewShader->SetMat4("uModel", model);
-        m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
+
+        // --- LE FIX DE LA LUMIÈRE EST ICI (Code propre sans doublon) ---
+        m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
         m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
         m_PreviewShader->SetVec3("uViewPos", camPos);
         m_PreviewShader->SetFloat("uTime", (float)glfwGetTime());

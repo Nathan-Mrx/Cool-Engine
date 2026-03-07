@@ -200,16 +200,22 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
                     glm::vec3 camPos = glm::vec3(invView[3]);
                     activeShader->SetVec3("uViewPos", camPos);
 
-                    for (auto const& [name, val] : mat.FloatOverrides) activeShader->SetFloat(name, val);
-                    for (auto const& [name, val] : mat.ColorOverrides) activeShader->SetVec3(name, val);
+                    // --- AJOUT DU PRÉFIXE "u_" POUR LES INSTANCES ---
+                    for (auto const& [name, val] : mat.FloatOverrides)
+                        activeShader->SetFloat("u_" + name, val);
+
+                    for (auto const& [name, val] : mat.ColorOverrides)
+                        activeShader->SetVec3("u_" + name, val);
 
                     int slot = 0;
                     for (auto const& [name, texID] : mat.TextureOverrides) {
                         glActiveTexture(GL_TEXTURE0 + slot);
                         glBindTexture(GL_TEXTURE_2D, texID);
-                        activeShader->SetInt(name, slot);
+                        activeShader->SetInt("u_" + name, slot); // <-- LE FIX EST ICI
                         slot++;
                     }
+
+                    // (Les textures de base utilisent déjà "u_Tex_" donc ne change pas cette boucle :)
                     for (auto const& [nodeID, texID] : mat.Textures) {
                         glActiveTexture(GL_TEXTURE0 + slot);
                         glBindTexture(GL_TEXTURE_2D, texID);

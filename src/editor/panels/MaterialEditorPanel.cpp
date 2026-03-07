@@ -180,7 +180,8 @@ void MaterialEditorPanel::RenderPreview3D() {
         model = glm::scale(model, glm::vec3(0.8f));
         m_PreviewShader->SetMat4("uModel", model);
 
-        m_PreviewShader->SetVec3("uLightPos", glm::vec3(1.0f, 1.0f, 1.0f));
+        // --- FIX : On utilise uLightDir pour matcher le monde réel ! ---
+        m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
         m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
         m_PreviewShader->SetVec3("uViewPos", camPos);
         m_PreviewShader->SetFloat("uTime", m_TotalTime);
@@ -1008,18 +1009,34 @@ std::string MaterialEditorPanel::CompileMaterial() {
     // --- VARIABLES D'ENTRÉE ---
     shaderCode << "in vec3 vFragPos;\n";
     shaderCode << "in vec3 vNormal;\n";
-    shaderCode << "in vec2 vTexCoords;\n\n";
+    shaderCode << "in vec2 vTexCoords;\n";
+    shaderCode << "in float vViewDepth;\n\n"; // <-- NOUVEAU
 
     // --- UNIFORMS STANDARDS ---
     shaderCode << "uniform int uEntityID;\n";
     shaderCode << "uniform int uRenderMode;\n\n";
 
+    // --- UNIFORMS CSM (NOUVEAU) ---
+    shaderCode << "uniform sampler2DArray uShadowMap;\n";
+    shaderCode << "uniform mat4 uLightSpaceMatrices[3];\n";
+    shaderCode << "uniform float uCascadeDistances[3];\n\n";
+
     // --- PARAMÈTRES (INSTANCES) ET TEXTURES ---
     for (auto& node : m_Nodes) {
         if (node.IsParameter) {
-            if (node.Name == "Float") shaderCode << "uniform float u_" << node.ParameterName << ";\n";
-            else if (node.Name == "Color") shaderCode << "uniform vec4 u_" << node.ParameterName << ";\n";
-            else if (node.Name == "Texture2D") shaderCode << "uniform sampler2D u_" << node.ParameterName << ";\n";
+            if (node.Name == "Float") {
+                // On injecte la valeur par défaut ! (ex: uniform float u_Tiling = 1.0;)
+                shaderCode << "uniform float u_" << node.ParameterName << " = " << node.FloatValue << ";\n";
+            }
+            else if (node.Name == "Color") {
+                // Pareil pour les couleurs
+                shaderCode << "uniform vec4 u_" << node.ParameterName << " = vec4("
+                           << node.ColorValue.r << ", " << node.ColorValue.g << ", "
+                           << node.ColorValue.b << ", " << node.ColorValue.a << ");\n";
+            }
+            else if (node.Name == "Texture2D") {
+                shaderCode << "uniform sampler2D u_" << node.ParameterName << ";\n";
+            }
         } else if (node.Name == "Texture2D" && !node.TexturePath.empty()) {
             shaderCode << "uniform sampler2D u_Tex_" << node.ID.Get() << ";\n";
         }
@@ -1027,10 +1044,11 @@ std::string MaterialEditorPanel::CompileMaterial() {
 
     // --- UNIFORMS PBR ---
     shaderCode << "uniform vec3 uViewPos;\n";
-    shaderCode << "uniform vec3 uLightPos;\n";
+    shaderCode << "uniform vec3 uLightDir;\n"; // <-- Remplacé uLightPos par uLightDir !
     shaderCode << "uniform vec3 uLightColor;\n\n";
 
-    // --- FONCTIONS MATHÉMATIQUES PBR ---
+    // --- FONCTIONS MATHÉMATIQUES PBR & OMBRES ---
+    // (J'utilise un raw string R"()" pour ne pas avoir à échapper chaque ligne, c'est bien plus propre)
     shaderCode << R"(
 const float PI = 3.14159265359;
 
@@ -1068,6 +1086,66 @@ vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
     mat3 TBN = mat3(T, B, N);
     return normalize(TBN * tangentNormal);
 }
+
+// ========================================================
+// --- SYSTEME D'OMBRE CSM (Nouveau) ---
+// ========================================================
+const vec2 poissonDisk[16] = vec2[](
+    vec2( -0.94201624, -0.39906216 ), vec2( 0.94558609, -0.76890725 ),
+    vec2( -0.094184101, -0.92938870 ), vec2( 0.34495938, 0.29387760 ),
+    vec2( -0.91588581, 0.45771432 ), vec2( -0.81544232, -0.87912464 ),
+    vec2( -0.38277543, 0.27676845 ), vec2( 0.97484398, 0.75648379 ),
+    vec2( 0.44323325, -0.97511554 ), vec2( 0.53742981, -0.47373420 ),
+    vec2( -0.26496911, -0.41893023 ), vec2( 0.79197514, 0.19090188 ),
+    vec2( -0.24188840, 0.99706507 ), vec2( -0.81409955, 0.91437590 ),
+    vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100467 )
+);
+
+float InterleavedGradientNoise(vec2 position_screen) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(position_screen, magic.xy)));
+}
+
+vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
+    int layer = -1;
+    for (int i = 0; i < 3; ++i) {
+        if (vViewDepth < uCascadeDistances[i]) { layer = i; break; }
+    }
+    if (layer == -1) layer = 2;
+
+    float normalBiasOffset = 2.0;
+    if (layer == 1) normalBiasOffset = 6.0;
+    if (layer == 2) normalBiasOffset = 20.0;
+
+    vec3 biasedFragPos = fragPosWorld + normal * normalBiasOffset;
+    vec4 fragPosLightSpace = uLightSpaceMatrices[layer] * vec4(biasedFragPos, 1.0);
+
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    if(projCoords.z > 1.0) return vec2(0.0, layer);
+
+    float currentDepth = projCoords.z;
+    float bias = max(0.0005 * (1.0 - dot(normal, lightDir)), 0.00005);
+
+    float noise = InterleavedGradientNoise(gl_FragCoord.xy);
+    float angle = noise * 6.28318530718;
+    float s = sin(angle);
+    float c = cos(angle);
+    mat2 rotationMat = mat2(c, -s, s, c);
+
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float spread = 1.5;
+
+    for(int i = 0; i < 16; i++) {
+        vec2 rotatedOffset = rotationMat * poissonDisk[i];
+        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + rotatedOffset * texelSize * spread, float(layer))).r;
+        shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
+    }
+    shadow /= 16.0;
+    return vec2(shadow, layer);
+}
 )";
 
     // ========================================================
@@ -1076,18 +1154,13 @@ vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
     std::unordered_set<int> visitedNodes;
     std::stringstream bodyBuilder;
 
-    // L'Airbag Rétro-compatibilité avec le bon vecteur Normal !
     std::string v_baseColor = (rootNode->Inputs.size() > 0) ? EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder) : "vec3(1.0)";
-
-    // --- LE FIX DE L'ÉCLAIRAGE EST ICI ---
     std::string v_normal    = (rootNode->Inputs.size() > 1) ? EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder) : "vec3(0.0, 0.0, 1.0)";
-
     std::string v_metallic  = (rootNode->Inputs.size() > 2) ? EvaluatePinGLSL(rootNode->Inputs[2].ID, visitedNodes, bodyBuilder) : "0.0";
     std::string v_roughness = (rootNode->Inputs.size() > 3) ? EvaluatePinGLSL(rootNode->Inputs[3].ID, visitedNodes, bodyBuilder) : "0.5";
     std::string v_specular  = (rootNode->Inputs.size() > 4) ? EvaluatePinGLSL(rootNode->Inputs[4].ID, visitedNodes, bodyBuilder) : "0.5";
     std::string v_ao        = (rootNode->Inputs.size() > 5) ? EvaluatePinGLSL(rootNode->Inputs[5].ID, visitedNodes, bodyBuilder) : "1.0";
 
-    // Sécurité : On s'assure qu'aucune variable n'est vide
     if (v_baseColor.empty() || v_baseColor.find("vec3(0") != std::string::npos) v_baseColor = "vec3(1.0)";
     if (v_metallic.empty())  v_metallic = "0.0";
     if (v_roughness.empty()) v_roughness = "0.5";
@@ -1098,10 +1171,8 @@ vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
     // ========================================================
     shaderCode << "void main() {\n";
 
-    // 1. Injection du code des nœuds
     shaderCode << bodyBuilder.str();
 
-    // 2. Assignation des propriétés PBR
     shaderCode << "    vec3 albedo = pow(vec3(" << v_baseColor << "), vec3(2.2)); // Gamma to Linear\n";
     shaderCode << "    float metallic = float(" << v_metallic << ");\n";
     shaderCode << "    float roughness = clamp(float(" << v_roughness << "), 0.05, 1.0);\n";
@@ -1113,20 +1184,19 @@ vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
         shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
     }
 
-    // 3. Mode Wireframe Bypass
     shaderCode << "    if (uRenderMode == 1 || uRenderMode == 2) {\n";
     shaderCode << "        FragColor = vec4(albedo, 1.0);\n";
     shaderCode << "        EntityID = uEntityID;\n";
     shaderCode << "        return;\n";
     shaderCode << "    }\n\n";
 
-    // 4. Équation de Cook-Torrance
+    // --- LE CÂBLAGE FINAL OMBRE + PBR ---
     shaderCode << R"(
     vec3 V = normalize(uViewPos - vFragPos);
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
 
-    vec3 L = normalize(uLightPos);
+    vec3 L = normalize(-uLightDir); // La direction de la lumière !
     vec3 H = normalize(V + L);
     vec3 radiance = uLightColor;
 
@@ -1145,8 +1215,16 @@ vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
     float NdotL = max(dot(N, L), 0.0);
     vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
 
+    // --- APPLICATION DE L'OMBRE ICI ---
+    #ifndef IS_PREVIEW_VIEWPORT
+        vec2 shadowData = ShadowCalculation(vFragPos, N, L);
+        float shadow = shadowData.x;
+    #else
+        float shadow = 0.0; // Pas d'ombre dans la bulle de preview !
+    #endif
+
     vec3 ambient = vec3(0.15) * albedo * ao;
-    vec3 color = ambient + Lo;
+    vec3 color = ambient + (1.0 - shadow) * Lo;
 
     color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0/2.2));
@@ -1252,8 +1330,9 @@ void MaterialEditorPanel::CompilePreviewShader() {
     std::string fragCode = CompileMaterial();
     if (fragCode.empty()) return;
 
-    // --- INJECTION DES SWITCHES POUR LA PREVIEW ---
-    std::string defines = "\n";
+    // --- INJECTION DES SWITCHES ET DE LA MACRO PREVIEW ---
+    std::string defines = "\n#define IS_PREVIEW_VIEWPORT\n"; // <-- NOUVEAU
+
     for (auto& node : m_Nodes) {
         if (node.Name == "StaticSwitchParameter" && node.BoolValue) {
             defines += "#define " + node.ParameterName + "\n";
@@ -1277,7 +1356,6 @@ void MaterialEditorPanel::CompilePreviewShader() {
     out << fragCode;
     out.close();
 
-    // On génère le shader live !
     m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.string().c_str());
 }
 
