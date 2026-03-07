@@ -77,6 +77,8 @@ set(SOURCES
         src/editor/EditorCommands.cpp
         src/editor/EditorCommands.h
         src/ecs/Components.generated.h
+        src/scene/NodeDefinitions.h
+        src/scene/NodeRegistry.generated.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
@@ -107,6 +109,16 @@ add_custom_command(
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/CoolHeaderTool.py --components ${CMAKE_SOURCE_DIR}/src/ecs ${COMPONENT_REGISTRY_OUT}
         DEPENDS ${CMAKE_SOURCE_DIR}/src/ecs/Components.h
         COMMENT "CoolHeaderTool: Generation du registre des composants..."
+)
+
+# --- GÉNÉRATION DU REGISTRE DES NOEUDS ---
+set (NODE_REGISTRY_OUT "${CMAKE_SOURCE_DIR}/src/scene/NodeRegistry.generated.h")
+
+add_custom_command(
+        OUTPUT ${NODE_REGISTRY_OUT}
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/CoolHeaderTool.py --nodes ${CMAKE_SOURCE_DIR}/src/scene ${NODE_REGISTRY_OUT}
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/scene/NodeDefinitions.h
+        COMMENT "CoolHeaderTool: Generation du registre des Noeuds..."
 )
 
 # Créer l'exécutable avec les sources

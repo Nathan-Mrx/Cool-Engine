@@ -184,6 +184,69 @@ def generate_component_registry(engine_source_dir, output_file):
             f.write(f"template <> constexpr const char* GetComponentName<{comp}>() {{ return \"{display_name}\"; }}\n")
         f.write("\n")
 
+def generate_node_registry(engine_source_dir, output_file):
+    nodes = []
+
+    if os.path.exists(engine_source_dir):
+        for root, _, files in os.walk(engine_source_dir):
+            for file in files:
+                if file.endswith("NodeDefinitions.h"):
+                    filepath = os.path.join(root, file)
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+
+                    for i, line in enumerate(lines):
+                        m_macro = re.search(r'CE_NODE\(\s*"([^"]+)"\s*,\s*"([^"]*)"\s*\)', line)
+                        if m_macro:
+                            name = m_macro.group(1)
+                            category = m_macro.group(2)
+                            for j in range(1, 4):
+                                if i+j < len(lines):
+                                    m_struct = re.search(r'(?:struct|class)\s+([A-Za-z0-9_]+)', lines[i+j])
+                                    if m_struct:
+                                        nodes.append({
+                                            'struct': m_struct.group(1),
+                                            'name': name,
+                                            'category': category
+                                        })
+                                        break
+
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("// ==================================================================\n")
+        f.write("// Fichier genere automatiquement par le Cool Header Tool (CHT)\n")
+        f.write("// ==================================================================\n\n")
+        f.write("#pragma once\n")
+        f.write("#include <string>\n")
+        f.write("#include <vector>\n")
+        f.write("#include <map>\n")
+        f.write("#include \"scene/Entity.h\"\n")
+        f.write("#include \"scene/NodeDefinitions.h\"\n\n")
+
+        f.write("struct NodeRegistryEntry {\n")
+        f.write("    std::string Name;\n")
+        f.write("    void (*SetupFunc)(Entity);\n")
+        f.write("};\n\n")
+
+        f.write("class NodeRegistry {\n")
+        f.write("public:\n")
+        f.write("    static inline std::map<std::string, std::vector<NodeRegistryEntry>> Categories = {\n")
+
+        categories = {}
+        for n in nodes:
+            cat = n['category']
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(n)
+
+        for cat, items in categories.items():
+            f.write(f"        {{\"{cat}\", {{\n")
+            for item in items:
+                f.write(f"            {{\"{item['name']}\", {item['struct']}::Setup}},\n")
+            f.write("        }},\n")
+
+        f.write("    };\n")
+        f.write("};\n")
+
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         print("Usage: python CoolHeaderTool.py <mode> <source_dir> <output_file>")
@@ -201,6 +264,8 @@ if __name__ == "__main__":
         generate_asset_registry(source_dir, output_file)
     elif mode == "--components":
         generate_component_registry(source_dir, output_file)
+    elif mode == "--nodes":
+        generate_node_registry(source_dir, output_file)
     else:
-        print("Mode inconnu. Utilisez --scripts, --materials, --assets ou --components")
+        print("Mode inconnu. Utilisez --scripts, --materials, --assets, --components ou --nodes")
         sys.exit(1)

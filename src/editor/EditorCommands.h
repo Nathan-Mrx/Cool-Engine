@@ -4,6 +4,8 @@
 #include "scene/Scene.h"
 #include "scene/Entity.h"
 #include "core/UUID.h"
+#include "scene/SceneSerializer.h"
+#include <nlohmann/json.hpp>
 
 // Commande générique ultra-rapide pour modifier n'importe quel composant (Transform, Material, etc.)
 template<typename T>
@@ -36,4 +38,49 @@ private:
     UUID m_EntityID;
     T m_Before;
     T m_After;
+};
+
+// Commande pour Annuler/Refaire la création ou la suppression d'une entité
+class EntityLifecycleCommand : public IUndoableAction {
+public:
+    enum class ActionType { Create, Destroy };
+
+    EntityLifecycleCommand(std::shared_ptr<Scene> scene, ActionType type, nlohmann::json entityData)
+        : m_Scene(std::move(scene)), m_Type(type), m_EntityData(std::move(entityData)) {
+        m_EntityID = m_EntityData["Entity"].get<uint64_t>();
+    }
+
+    void Undo() override {
+        if (auto scene = m_Scene.lock()) {
+            if (m_Type == ActionType::Create) {
+                // Annuler Création = Détruire
+                Entity e = scene->GetEntityByUUID(m_EntityID);
+                if (e) scene->DestroyEntity(e);
+            } else {
+                // Annuler Destruction = Recréer
+                SceneSerializer serializer(scene);
+                serializer.DeserializeEntity(m_EntityData);
+            }
+        }
+    }
+
+    void Redo() override {
+        if (auto scene = m_Scene.lock()) {
+            if (m_Type == ActionType::Create) {
+                // Refaire Création = Recréer
+                SceneSerializer serializer(scene);
+                serializer.DeserializeEntity(m_EntityData);
+            } else {
+                // Refaire Destruction = Détruire
+                Entity e = scene->GetEntityByUUID(m_EntityID);
+                if (e) scene->DestroyEntity(e);
+            }
+        }
+    }
+
+private:
+    std::weak_ptr<Scene> m_Scene;
+    ActionType m_Type;
+    UUID m_EntityID;
+    nlohmann::json m_EntityData;
 };

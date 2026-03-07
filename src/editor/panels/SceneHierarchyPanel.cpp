@@ -9,6 +9,7 @@
 #include "renderer/PrimitiveFactory.h"
 #include "scene/SceneSerializer.h"
 #include "scripts/ScriptRegistry.h"
+#include "scene/NodeRegistry.generated.h"
 
 // =========================================================================================
 // SYSTEME DE PROPRIÉTÉS (Property Drawer)
@@ -245,16 +246,6 @@ void DrawComponentUI<NativeScriptComponent>(Entity entity, const std::shared_ptr
     }
 }
 
-template<typename T>
-void DrawAddComponentEntry(Entity entity) {
-    if (!entity.HasComponent<T>()) {
-        if (ImGui::MenuItem(GetComponentName<T>())) {
-            entity.AddComponent<T>();
-            ImGui::CloseCurrentPopup();
-        }
-    }
-}
-
 // =========================================================================================
 // ENTRY POINT DU RENDU UI
 // =========================================================================================
@@ -339,60 +330,39 @@ void SceneHierarchyPanel::DrawHierarchyContextMenu() {
             }
         };
 
-        if (ImGui::MenuItem("Create Empty Node")) {
-            Entity newEntity = m_Context->CreateEntity("Empty Node");
+        // Fonction locale pour créer le noeud et gérer l'Undo
+        auto createNode = [&](const NodeRegistryEntry& node) {
+            Entity newEntity = m_Context->CreateEntity(node.Name);
+            node.SetupFunc(newEntity);
             autoParentToPrefabRoot(newEntity);
+
+            // Enregistrement de la création pour le Undo
+            SceneSerializer serializer(m_Context);
+            UndoManager::BeginTransaction("Create " + node.Name);
+            UndoManager::PushAction(std::make_unique<EntityLifecycleCommand>(
+                m_Context, EntityLifecycleCommand::ActionType::Create, serializer.SerializeEntity(newEntity)
+            ));
+            UndoManager::EndTransaction();
+        };
+
+        // 1. On affiche d'abord les noeuds sans catégorie (Catégorie "")
+        if (NodeRegistry::Categories.find("") != NodeRegistry::Categories.end()) {
+            for (const auto& node : NodeRegistry::Categories[""]) {
+                if (ImGui::MenuItem(node.Name.c_str())) createNode(node);
+            }
+            ImGui::Separator();
         }
 
-        ImGui::Separator();
+        // 2. Ensuite on affiche toutes les catégories sous forme de sous-menus
+        for (const auto& [category, nodes] : NodeRegistry::Categories) {
+            if (category.empty()) continue; // Déjà géré
 
-        if (ImGui::BeginMenu("3D Object")) {
-            if (ImGui::MenuItem("Cube")) {
-                auto newEntity = m_Context->CreateEntity("Cube");
-                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
-                newEntity.AddComponent<ColorComponent>(glm::vec3(0.8f));
-                auto& mesh = newEntity.AddComponent<MeshComponent>();
-                mesh.MeshData = PrimitiveFactory::CreateCube();
-                mesh.AssetPath = "Primitive::Cube";
-                autoParentToPrefabRoot(newEntity);
+            if (ImGui::BeginMenu(category.c_str())) {
+                for (const auto& node : nodes) {
+                    if (ImGui::MenuItem(node.Name.c_str())) createNode(node);
+                }
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Sphere")) {
-                auto newEntity = m_Context->CreateEntity("Sphere");
-                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
-                newEntity.AddComponent<ColorComponent>(glm::vec3(0.8f));
-                auto& mesh = newEntity.AddComponent<MeshComponent>();
-                mesh.MeshData = PrimitiveFactory::CreateSphere();
-                mesh.AssetPath = "Primitive::Sphere";
-                autoParentToPrefabRoot(newEntity);
-            }
-            if (ImGui::MenuItem("Plane")) {
-                auto newEntity = m_Context->CreateEntity("Plane");
-                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
-                newEntity.AddComponent<ColorComponent>(glm::vec3(0.8f));
-                auto& mesh = newEntity.AddComponent<MeshComponent>();
-                mesh.MeshData = PrimitiveFactory::CreatePlane();
-                mesh.AssetPath = "Primitive::Plane";
-                autoParentToPrefabRoot(newEntity);
-            }
-            ImGui::EndMenu();
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Camera")) {
-            auto newEntity = m_Context->CreateEntity("Camera");
-            newEntity.AddComponent<CameraComponent>();
-            autoParentToPrefabRoot(newEntity);
-        }
-
-        if (ImGui::BeginMenu("Light")) {
-            if (ImGui::MenuItem("Directional Light")) {
-                auto newEntity = m_Context->CreateEntity("Directional Light");
-                if (!newEntity.HasComponent<TransformComponent>()) newEntity.AddComponent<TransformComponent>();
-                newEntity.AddComponent<DirectionalLightComponent>();
-                autoParentToPrefabRoot(newEntity);
-            }
-            ImGui::EndMenu();
         }
 
         ImGui::EndPopup();
@@ -592,29 +562,6 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
         (DrawComponentUI<decltype(args)>(entity, m_Context), ...);
     }, AllComponents{});
 
-    // 2. Bouton "Add Component"
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImVec2 buttonSize(150.0f, 30.0f);
-    float cursorX = (ImGui::GetContentRegionAvail().x - buttonSize.x) * 0.5f;
-    if (cursorX > 0.0f) {
-        ImGui::SetCursorPosX(cursorX);
-    }
-
-    if (ImGui::Button("Add Component", buttonSize)) {
-        ImGui::OpenPopup("AddComponentPopup");
-    }
-
-    // 3. Le Popup (Menu déroulant)
-    if (ImGui::BeginPopup("AddComponentPopup")) {
-        std::apply([&](auto... args) {
-            (DrawAddComponentEntry<decltype(args)>(entity), ...);
-        }, AllComponents{});
-
-        ImGui::EndPopup();
-    }
 }
 
 void SceneHierarchyPanel::SetContext(const std::shared_ptr<Scene>& context) {
