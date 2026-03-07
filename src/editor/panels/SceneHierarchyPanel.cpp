@@ -582,6 +582,7 @@ void SceneHierarchyPanel::DrawEntityNodeContextMenu(Entity entity, bool hasScrip
                 }
 
                 ImGui::EndMenu();
+                ImGui::EndMenu();
             }
         }
 

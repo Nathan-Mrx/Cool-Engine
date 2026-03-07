@@ -401,13 +401,13 @@ void MaterialInstanceEditorPanel::DrawParameters() {
                 if (!param.IsOverridden) ImGui::BeginDisabled();
 
                 if (param.Type == "StaticSwitchParameter") {
-                    ImGui::SameLine(150);
+                    ImGui::SameLine(150.0f * ImGui::GetIO().FontGlobalScale);
                     if (ImGui::Checkbox("Value", &param.BoolVal)) {
                         needsRecompileAndEval = true;
                         immediateChange = true; changeName = "Toggle Switch";
                     }
                 } else {
-                    ImGui::PushItemWidth(-1);
+                    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (10.0f * ImGui::GetIO().FontGlobalScale));
                     if (param.Type == "Float") {
                         ImGui::DragFloat("##f", &param.FloatVal, 0.01f);
                         if (ImGui::IsItemActivated()) s_IsDragging = true;

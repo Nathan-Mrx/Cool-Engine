@@ -106,6 +106,11 @@ private:
     void CloseProjectInternal();
     void DrawProjectSettings();
 
+    // --- AJOUTS POUR LES EDITOR PREFERENCES ---
+    void DrawEditorPreferences();
+    void LoadEditorPreferences();
+    void SaveEditorPreferences();
+
 private:
     std::shared_ptr<Scene> m_ActiveScene;
 
@@ -156,4 +161,7 @@ private:
     bool m_ShowProjectSettings = false;
 
     bool m_ProjectLoadedState = false;
+
+    bool m_ShowEditorPreferences = false;
+    float m_UIScale = 1.0f;
 };

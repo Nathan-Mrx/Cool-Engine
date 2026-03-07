@@ -20,9 +20,14 @@
 #include "AssetRegistry.h"
 #include "EditorCommands.h"
 #include "UndoManager.h"
+#include "UITheme.h"
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 
 void EditorLayer::OnAttach() {
+    LoadEditorPreferences();
+
     int width, height, channels;
     stbi_set_flip_vertically_on_load(false);
     if (unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4)) {
@@ -96,12 +101,11 @@ void EditorLayer::DrawMenuBar() {
         }
 
         if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Undo", "Ctrl+Z")) UndoManager::Undo();
+            if (ImGui::MenuItem("Redo", "Ctrl+Y")) UndoManager::Redo();
+            ImGui::Separator();
             if (ImGui::MenuItem("Project Settings")) m_ShowProjectSettings = true;
-
-            if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].CustomEditor != nullptr) {
-                ImGui::Separator();
-                m_Tabs[m_ActiveTabIndex].CustomEditor->OnImGuiMenuEdit();
-            }
+            if (ImGui::MenuItem("Editor Preferences")) m_ShowEditorPreferences = true; // <-- AJOUT ICI
             ImGui::EndMenu();
         }
 
@@ -294,6 +298,7 @@ void EditorLayer::OnImGuiRender() {
     }
 
     if (m_ShowProjectSettings) DrawProjectSettings();
+    if (m_ShowEditorPreferences) DrawEditorPreferences();
 
     EndDockspace();
 }
@@ -984,4 +989,82 @@ Entity Scene::GetEntityByUUID(UUID uuid) {
         }
     }
     return {}; // Retourne une entité nulle si non trouvée
+}
+
+// =========================================================================================
+// EDITOR PREFERENCES
+// =========================================================================================
+
+void EditorLayer::LoadEditorPreferences() {
+    std::ifstream file("editor_preferences.json");
+    if (file.is_open()) {
+        nlohmann::json data;
+        try {
+            file >> data;
+            if (data.contains("UIScale")) {
+                m_UIScale = data["UIScale"].get<float>();
+
+                // Application immédiate de l'échelle au démarrage
+                ImGui::GetIO().FontGlobalScale = m_UIScale;
+                ImGuiStyle& style = ImGui::GetStyle();
+                style = ImGuiStyle(); // Reset
+                UITheme::Apply();     // Réapplique notre thème plat
+                style.ScaleAllSizes(m_UIScale); // Étire tous les paddings/boutons
+            }
+        } catch(...) {}
+        file.close();
+    }
+}
+
+void EditorLayer::SaveEditorPreferences() {
+    nlohmann::json data;
+    data["UIScale"] = m_UIScale;
+
+    std::ofstream file("editor_preferences.json");
+    if (file.is_open()) {
+        file << data.dump(4);
+        file.close();
+    }
+}
+
+void EditorLayer::DrawEditorPreferences() {
+    if (ImGui::Begin("Editor Preferences", &m_ShowEditorPreferences)) {
+        ImGui::TextDisabled("APPEARANCE");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::Text("UI Scale");
+        ImGui::SameLine(150);
+        ImGui::PushItemWidth(-1);
+
+        // On intercepte la modification du slider pour voir le rendu en direct !
+        if (ImGui::SliderFloat("##UIScale", &m_UIScale, 0.5f, 3.0f, "%.2fx")) {
+            ImGui::GetIO().FontGlobalScale = m_UIScale;
+
+            ImGuiStyle& style = ImGui::GetStyle();
+            style = ImGuiStyle(); // On réinitialise à l'état pur
+            UITheme::Apply();     // On réapplique nos couleurs et nos coins arrondis
+            style.ScaleAllSizes(m_UIScale); // On multiplie les dimensions (padding, etc.)
+        }
+        ImGui::PopItemWidth();
+
+        // Sauvegarde automatique quand on lâche le clic de la souris
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            SaveEditorPreferences();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Reset to Default", ImVec2(150, 0))) {
+            m_UIScale = 1.0f;
+            ImGui::GetIO().FontGlobalScale = m_UIScale;
+
+            ImGuiStyle& style = ImGui::GetStyle();
+            style = ImGuiStyle();
+            UITheme::Apply();
+            style.ScaleAllSizes(m_UIScale);
+
+            SaveEditorPreferences();
+        }
+    }
+    ImGui::End();
 }

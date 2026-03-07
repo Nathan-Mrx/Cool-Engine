@@ -234,7 +234,12 @@ void ContentBrowserPanel::DrawTopBar() {
 void ContentBrowserPanel::DrawContentGrid() {
     if (!std::filesystem::exists(m_CurrentDirectory)) return;
 
-    float cellSize = m_ThumbnailSize + m_Padding;
+    // --- CORRECTION : Appliquer l'échelle aux valeurs en dur ---
+    float scale = ImGui::GetIO().FontGlobalScale;
+    float scaledThumbnail = m_ThumbnailSize * scale;
+    float scaledPadding = m_Padding * scale;
+
+    float cellSize = scaledThumbnail + scaledPadding;
     float panelWidth = ImGui::GetContentRegionAvail().x;
     int columnCount = (int)(panelWidth / cellSize);
     if (columnCount < 1) columnCount = 1;
@@ -264,11 +269,12 @@ void ContentBrowserPanel::DrawContentGrid() {
 
         ImGui::PushID(filename.c_str());
 
-        if (directoryEntry.is_directory()) DrawDirectoryEntry(directoryEntry, m_ThumbnailSize);
-        else DrawFileEntry(directoryEntry, m_ThumbnailSize);
+        // --- CORRECTION : Utiliser scaledThumbnail au lieu de m_ThumbnailSize ---
+        if (directoryEntry.is_directory()) DrawDirectoryEntry(directoryEntry, scaledThumbnail);
+        else DrawFileEntry(directoryEntry, scaledThumbnail);
 
         bool isSelected = (m_SelectedPath == path);
-        DrawItemLabelOrRename(directoryEntry, displayName, m_ThumbnailSize, isSelected);
+        DrawItemLabelOrRename(directoryEntry, displayName, scaledThumbnail, isSelected);
 
         ImGui::NextColumn();
         ImGui::PopID();
