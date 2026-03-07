@@ -76,6 +76,7 @@ set(SOURCES
         src/editor/UndoManager.h
         src/editor/EditorCommands.cpp
         src/editor/EditorCommands.h
+        src/ecs/Components.generated.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
@@ -98,6 +99,15 @@ add_custom_command(
         COMMENT "CoolHeaderTool: Generation du registre des assets..."
 )
 
+# --- GÉNÉRATION DU REGISTRE DES COMPOSANTS ---
+set (COMPONENT_REGISTRY_OUT "${CMAKE_SOURCE_DIR}/src/ecs/Components.generated.h")
+
+add_custom_command(
+        OUTPUT ${COMPONENT_REGISTRY_OUT}
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/CoolHeaderTool.py --components ${CMAKE_SOURCE_DIR}/src/ecs ${COMPONENT_REGISTRY_OUT}
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/ecs/Components.h
+        COMMENT "CoolHeaderTool: Generation du registre des composants..."
+)
 
 # Créer l'exécutable avec les sources
 add_executable(GameEngine ${SOURCES} ${ASSET_REGISTRY_OUT})

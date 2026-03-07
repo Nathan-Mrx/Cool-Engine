@@ -11,6 +11,28 @@
 
 using json = nlohmann::json;
 
+#include <tuple>
+
+// On suppose que tu as accès à GetComponentName<T>() comme dans ton Inspector
+template<typename T>
+void SerializeSingleComponent(nlohmann::json& entityJson, Entity entity) {
+    if (entity.HasComponent<T>()) {
+        const char* name = GetComponentName<T>();
+        // nlohmann::json va automatiquement appeler la fonction to_json() de T
+        entityJson[name] = entity.GetComponent<T>();
+    }
+}
+
+template<typename T>
+void DeserializeSingleComponent(const nlohmann::json& entityJson, Entity entity) {
+    const char* name = GetComponentName<T>();
+    if (entityJson.contains(name)) {
+        // nlohmann::json va automatiquement appeler la fonction from_json() pour recréer T
+        auto& comp = entity.AddComponent<T>();
+        comp = entityJson[name].get<T>();
+    }
+}
+
 SceneSerializer::SceneSerializer(const std::shared_ptr<Scene>& scene)
     : m_Scene(scene) {}
 
@@ -423,4 +445,52 @@ Entity SceneSerializer::DeserializePrefab(const std::string& filepath) {
     }
 
     return rootEntity;
+}
+
+nlohmann::json SceneSerializer::SerializeEntity(Entity entity) {
+    nlohmann::json entityJson;
+    if (!entity) return entityJson;
+
+    entityJson["Entity"] = (uint64_t)entity.GetUUID();
+
+    // LA MAGIE C++17 : Le compilateur génère tous les if automatiquement !
+    std::apply([&](auto... args) {
+        (SerializeSingleComponent<decltype(args)>(entityJson, entity), ...);
+    }, AllComponents{});
+
+    return entityJson;
+}
+
+Entity SceneSerializer::DeserializeEntity(const nlohmann::json& entityJson) {
+    uint64_t uuid = entityJson["Entity"].get<uint64_t>();
+
+    // Astuce pour récupérer le nom si le TagComponent existe dans le JSON
+    std::string name = "Empty Entity";
+    if (entityJson.contains("TagComponent")) name = entityJson["TagComponent"]["Tag"].get<std::string>();
+
+    Entity deserializedEntity = m_Scene->CreateEntityWithUUID(uuid, name);
+
+    // LA MAGIE INVERSE
+    std::apply([&](auto... args) {
+        (DeserializeSingleComponent<decltype(args)>(entityJson, deserializedEntity), ...);
+    }, AllComponents{});
+
+    return deserializedEntity;
+}
+
+Entity SceneSerializer::DeserializeEntity(const nlohmann::json& entityJson) {
+    uint64_t uuid = entityJson["Entity"].get<uint64_t>();
+
+    // Astuce pour récupérer le nom si le TagComponent existe dans le JSON
+    std::string name = "Empty Entity";
+    if (entityJson.contains("TagComponent")) name = entityJson["TagComponent"]["Tag"].get<std::string>();
+
+    Entity deserializedEntity = m_Scene->CreateEntityWithUUID(uuid, name);
+
+    // LA MAGIE INVERSE
+    std::apply([&](auto... args) {
+        (DeserializeSingleComponent<decltype(args)>(entityJson, deserializedEntity), ...);
+    }, AllComponents{});
+
+    return deserializedEntity;
 }
