@@ -26,17 +26,22 @@ public:
     static void BeginOutlineDraw(const glm::mat4& outlineTransform, const glm::vec3& color);
     static void EndOutline();
 
+    static void SetShadowResolution(uint32_t resolution);
+
 private:
     struct RendererData {
         std::unique_ptr<Shader> MainShader;
         std::unique_ptr<Shader> GridShader;
-        std::unique_ptr<Shader> LineShader; // For debug Lines
+        std::unique_ptr<Shader> LineShader;
         std::unique_ptr<Shader> OutlineShader;
+
+        // --- NOUVEAU : Le matériel pour les ombres ---
+        std::unique_ptr<Shader> ShadowShader;
+        std::unique_ptr<Framebuffer> ShadowFramebuffer;
 
         uint32_t GridVAO, GridVBO;
         uint32_t DebugBoxVAO, DebugBoxVBO;
 
-        // Ajoute ces deux lignes pour stocker l'état de la caméra
         glm::mat4 CurrentView;
         glm::mat4 CurrentProjection;
     };

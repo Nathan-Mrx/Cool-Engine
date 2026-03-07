@@ -15,6 +15,8 @@ struct ProjectConfig {
     std::filesystem::path BinariesDirectory; // Binaires compilés
 
     std::string StartScene = "Scenes/Default.cescene";
+
+    uint32_t ShadowResolution = 2048;
 };
 
 class Project {

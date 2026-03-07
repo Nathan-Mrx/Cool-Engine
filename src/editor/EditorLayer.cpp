@@ -454,6 +454,7 @@ void EditorLayer::DrawProjectSettings() {
         static int selectedCategory = 0;
         if (ImGui::Selectable("Maps & Modes", selectedCategory == 0)) selectedCategory = 0;
         if (ImGui::Selectable("General", selectedCategory == 1)) selectedCategory = 1;
+        if (ImGui::Selectable("Graphics", selectedCategory == 2)) selectedCategory = 2;
         ImGui::EndChild();
 
         ImGui::SameLine();
@@ -523,6 +524,39 @@ void EditorLayer::DrawProjectSettings() {
                     const std::filesystem::path projFilePath = Project::GetProjectDirectory() / projFileName;
                     Project::SaveActive(projFilePath);
                 }
+            }
+        } else if (selectedCategory == 2) { // GRAPHICS
+            ImGui::TextDisabled("RENDERING SETTINGS");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (const auto project = Project::GetActive()) {
+                auto& config = project->GetConfig();
+
+                ImGui::Text("Shadow Map Resolution");
+                ImGui::SameLine(200.0f);
+
+                const char* resolutions[] = { "1024 (Low)", "2048 (Medium)", "4096 (High)", "8192 (Ultra)" };
+                int currentResIndex = 1; // 2048 par défaut
+                if (config.ShadowResolution == 1024) currentResIndex = 0;
+                if (config.ShadowResolution == 4096) currentResIndex = 2;
+                if (config.ShadowResolution == 8192) currentResIndex = 3;
+
+                ImGui::PushItemWidth(150.0f);
+                if (ImGui::Combo("##ShadowRes", &currentResIndex, resolutions, IM_ARRAYSIZE(resolutions))) {
+                    uint32_t newRes = 2048;
+                    if (currentResIndex == 0) newRes = 1024;
+                    if (currentResIndex == 2) newRes = 4096;
+                    if (currentResIndex == 3) newRes = 8192;
+
+                    config.ShadowResolution = newRes;
+                    Renderer::SetShadowResolution(newRes); // On l'applique immédiatement au GPU !
+
+                    // Sauvegarde
+                    const std::string projFileName = Project::GetProjectDirectory().filename().string() + ".ceproj";
+                    Project::SaveActive(Project::GetProjectDirectory() / projFileName);
+                }
+                ImGui::PopItemWidth();
             }
         }
 
