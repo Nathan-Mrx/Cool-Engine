@@ -1221,6 +1221,10 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
     vec3 specular = numerator / denominator;
 
+    // --- LE VACCIN ANTI-FIREFLIES ---
+    // On empêche un rebond de lumière d'être plus de 10 fois plus intense que la source
+    // Cela détruit les mathématiques absurdes générées par des Normal Maps très bruyantes (comme le rotin)
+    specular = clamp(specular, vec3(0.0), vec3(10.0));
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
     kD *= 1.0 - metallic;
@@ -1236,10 +1240,7 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
         float shadow = 0.0; // Pas d'ombre dans la bulle de preview !
     #endif
 
-    // ========================================================
     // --- APPLICATION RÉALISTE DU CIEL (IBL) ---
-    // ========================================================
-
     // On pivote la normale selon la rotation de la Skybox
     float skyC = cos(u_SkyboxRotation);
     float skyS = sin(u_SkyboxRotation);
