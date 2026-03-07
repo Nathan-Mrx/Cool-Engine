@@ -43,4 +43,32 @@ public:
 
         return textureID;
     }
+
+    static unsigned int LoadHDR(const char* path) {
+        stbi_set_flip_vertically_on_load(true);
+        int width, height, nrComponents;
+
+        // --- FIX 1 : On force 3 canaux (RGB) au lieu de 0 pour éviter les décalages mémoire ---
+        float *data = stbi_loadf(path, &width, &height, &nrComponents, 3);
+
+        unsigned int hdrTexture = 0;
+        if (data) {
+            glGenTextures(1, &hdrTexture);
+            glBindTexture(GL_TEXTURE_2D, hdrTexture);
+
+            // --- FIX 2 : GL_RGB32F au lieu de 16F pour encaisser la chaleur du soleil ! ---
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, width, height, 0, GL_RGB, GL_FLOAT, data);
+
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+            stbi_image_free(data);
+        } else {
+            std::cout << "[TextureLoader] Echec du chargement HDR : " << path << std::endl;
+        }
+
+        return hdrTexture;
+    }
 };

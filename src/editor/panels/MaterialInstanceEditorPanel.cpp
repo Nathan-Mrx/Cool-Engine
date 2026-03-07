@@ -312,6 +312,13 @@ void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
         m_PreviewShader->SetVec3("uViewPos", camPos);
         m_PreviewShader->SetFloat("uTime", (float)glfwGetTime());
 
+        // =========================================================
+        // --- NOUVEAU : INJECTION DE L'IRRADIANCE MAP (IBL) ---
+        // =========================================================
+        glActiveTexture(GL_TEXTURE14);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
+        m_PreviewShader->SetInt("uIrradianceMap", 14);
+
         int texSlot = 0;
         for (auto& [key, param] : m_Parameters) {
             if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);

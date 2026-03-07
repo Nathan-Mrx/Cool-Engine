@@ -15,6 +15,7 @@
 
 #include "editor/materials/MaterialNodeRegistry.h"
 #include "project/Project.h"
+#include "renderer/Renderer.h"
 
 static void DrawPinIcon(PinType type, bool connected) {
     ImVec2 size(24, 14); // Plus large pour la marge
@@ -185,6 +186,13 @@ void MaterialEditorPanel::RenderPreview3D() {
         m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
         m_PreviewShader->SetVec3("uViewPos", camPos);
         m_PreviewShader->SetFloat("uTime", m_TotalTime);
+
+        // =========================================================
+        // --- NOUVEAU : INJECTION DE L'IRRADIANCE MAP (IBL) ---
+        // =========================================================
+        glActiveTexture(GL_TEXTURE14);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
+        m_PreviewShader->SetInt("uIrradianceMap", 14);
 
         // Injection des valeurs interactives
         int slot = 0;
@@ -1021,6 +1029,9 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << "uniform mat4 uLightSpaceMatrices[3];\n";
     shaderCode << "uniform float uCascadeDistances[3];\n\n";
 
+    // --- UNIFORMS IBL ---
+    shaderCode << "uniform samplerCube uIrradianceMap;\n\n";
+
     // --- PARAMÈTRES (INSTANCES) ET TEXTURES ---
     for (auto& node : m_Nodes) {
         if (node.IsParameter) {
@@ -1223,9 +1234,31 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
         float shadow = 0.0; // Pas d'ombre dans la bulle de preview !
     #endif
 
-    vec3 ambient = vec3(0.15) * albedo * ao;
+    // ========================================================
+    // --- NOUVEAU : APPLICATION RÉALISTE DU CIEL (IBL) ---
+    // ========================================================
+
+    // 1. On récupère la lumière du ciel (et on baisse l'exposition car les vrais HDR sont surpuissants)
+    float iblExposure = 0.3; // <-- Tu pourras modifier ça ! (0.1 = sombre, 1.0 = plein jour)
+    vec3 irradiance = texture(uIrradianceMap, vec3(N.x, N.z, -N.y)).rgb * iblExposure;
+
+    // 2. CONSERVATION DE L'ÉNERGIE (Le fix de la texture bizarre)
+    // On calcule l'effet Fresnel ambiant (combien de lumière rebondit selon l'angle de vue)
+    vec3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
+
+    // kD représente la partie "non métallique" (diffuse) de l'objet
+    vec3 kD_ambient = 1.0 - F_ambient;
+    kD_ambient *= 1.0 - metallic;
+
+    // 3. La lumière ambiante n'éclaire QUE la partie diffuse !
+    vec3 ambient = (kD_ambient * irradiance) * albedo * ao;
+
+    // ========================================================
+
+    // On additionne la lumière ambiante du ciel + (Le soleil en direct bloqué par l'ombre)
     vec3 color = ambient + (1.0 - shadow) * Lo;
 
+    // Tonemapping et Gamma Correction
     color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0/2.2));
 

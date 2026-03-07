@@ -28,6 +28,8 @@ public:
 
     static void SetShadowResolution(uint32_t resolution);
 
+    static uint32_t GetIrradianceMapID();
+
 private:
     struct RendererData {
         std::unique_ptr<Shader> MainShader;
@@ -44,6 +46,19 @@ private:
 
         glm::mat4 CurrentView;
         glm::mat4 CurrentProjection;
+
+        // --- SKYBOX ---
+        std::unique_ptr<Shader> SkyboxShader;
+        uint32_t SkyboxVAO, SkyboxVBO;
+        uint32_t EnvironmentMapID;
+
+        // --- NOUVEAU : IBL BAKING ---
+        std::unique_ptr<Shader> EquirectToCubeShader;
+        std::unique_ptr<Shader> IrradianceShader;
+        uint32_t EnvCubemap;
+        uint32_t IrradianceMap;
     };
     static RendererData* s_Data;
+
+    static void SetupIBL(); // Fonction interne
 };
