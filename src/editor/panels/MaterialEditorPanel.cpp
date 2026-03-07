@@ -247,27 +247,62 @@ void MaterialEditorPanel::DrawNodeEditorWindow(bool& isOpen) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
     if (ImGui::Begin("Material Editor", &isOpen)) {
-        ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
-        if (ImGui::Button("Force Update Preview", ImVec2(150, 30))) CompilePreviewShader();
+        float scale = ImGui::GetIO().FontGlobalScale;
+
+        // 1. La barre d'outils du haut DOIT être scalée (c'est de l'UI classique)
+        ImGui::SetCursorPos(ImVec2(10.0f * scale, 10.0f * scale));
+        if (ImGui::Button("Force Update Preview", ImVec2(150 * scale, 30 * scale))) CompilePreviewShader();
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Preview is Live. Press Ctrl+S to Apply to Scene.");
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        if (avail.x < 100.0f) avail.x = 800.0f;
-        if (avail.y < 100.0f) avail.y = 600.0f;
+        if (avail.x < 100.0f * scale) avail.x = 800.0f * scale;
+        if (avail.y < 100.0f * scale) avail.y = 600.0f * scale;
+
+        // =====================================================================
+        // BOUCLIER ANTI-SCALE : On isole le Canvas Nodal de l'échelle globale
+        // =====================================================================
+        ImGuiStyle oldStyle = ImGui::GetStyle(); // On sauvegarde le style actuel
+
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.FramePadding.x /= scale;
+        style.FramePadding.y /= scale;
+        style.ItemSpacing.x /= scale;
+        style.ItemSpacing.y /= scale;
+        style.ItemInnerSpacing.x /= scale;
+        style.ItemInnerSpacing.y /= scale;
+
+        // On force le texte de cette fenêtre à s'afficher à l'échelle 1.0x
+        ImGui::SetWindowFontScale(1.0f / scale);
+        // =====================================================================
 
         ed::SetCurrentEditor(m_Context);
         ed::Begin("My Material Graph", avail);
 
         UpdateWildcardPins();
-
         HandleShortcuts();
         DrawNodes();
         DrawLinks();
         HandleInteraction();
+
+        // --- PAUSE DU BOUCLIER POUR LES MENUS ---
+        // Les popups (clic droit) sont de l'UI classique, on veut qu'ils soient grands !
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::GetStyle() = oldStyle;
+
         DrawContextMenus();
 
-        // Placement initial par défaut
+        // --- REMISE DU BOUCLIER ---
+        ImGui::SetWindowFontScale(1.0f / scale);
+        style = ImGui::GetStyle();
+        style.FramePadding.x /= scale;
+        style.FramePadding.y /= scale;
+        style.ItemSpacing.x /= scale;
+        style.ItemSpacing.y /= scale;
+        style.ItemInnerSpacing.x /= scale;
+        style.ItemInnerSpacing.y /= scale;
+        // ----------------------------------------
+
         if (m_FirstFrame && m_Nodes.size() >= 2) {
             ed::SetNodePosition(m_Nodes[0].ID, ImVec2(400, 100));
             ed::SetNodePosition(m_Nodes[1].ID, ImVec2(50, 100));
@@ -276,6 +311,12 @@ void MaterialEditorPanel::DrawNodeEditorWindow(bool& isOpen) {
 
         ed::End();
         ed::SetCurrentEditor(nullptr);
+
+        // =====================================================================
+        // FIN DU BOUCLIER : Restauration de l'état normal pour le reste de l'UI
+        // =====================================================================
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::GetStyle() = oldStyle;
     }
     ImGui::End();
     ImGui::PopStyleVar();

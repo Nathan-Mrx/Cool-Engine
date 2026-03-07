@@ -60,6 +60,7 @@ void EditorLayer::OnAttach() {
 
 void EditorLayer::OnDetach() {
     // Nettoyage si nécessaire
+    SaveEditorPreferences();
 }
 
 void EditorLayer::DrawMenuBar() {
@@ -996,34 +997,61 @@ Entity Scene::GetEntityByUUID(UUID uuid) {
 // =========================================================================================
 
 void EditorLayer::LoadEditorPreferences() {
+    // 1. On récupère la scale de l'OS (Ton 145% Linux -> 1.45f)
+    float osScaleX, osScaleY;
+    glfwGetWindowContentScale(Application::Get().GetWindow(), &osScaleX, &osScaleY);
+    m_UIScale = osScaleX; // Par défaut, on épouse le système !
+
+    // 2. On écrase avec le choix de l'utilisateur si le fichier existe
     std::ifstream file("editor_preferences.json");
     if (file.is_open()) {
         nlohmann::json data;
         try {
             file >> data;
-            if (data.contains("UIScale")) {
-                m_UIScale = data["UIScale"].get<float>();
-
-                // Application immédiate de l'échelle au démarrage
-                ImGui::GetIO().FontGlobalScale = m_UIScale;
-                ImGuiStyle& style = ImGui::GetStyle();
-                style = ImGuiStyle(); // Reset
-                UITheme::Apply();     // Réapplique notre thème plat
-                style.ScaleAllSizes(m_UIScale); // Étire tous les paddings/boutons
-            }
+            if (data.contains("UIScale")) m_UIScale = data["UIScale"].get<float>();
         } catch(...) {}
         file.close();
     }
+
+    // 3. Application
+    ImGui::GetIO().FontGlobalScale = m_UIScale;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = ImGuiStyle();
+    UITheme::Apply();
+    style.ScaleAllSizes(m_UIScale);
 }
 
 void EditorLayer::SaveEditorPreferences() {
     nlohmann::json data;
+
+    // On charge le fichier existant pour ne pas écraser d'autres paramètres futurs
+    std::ifstream inFile("editor_preferences.json");
+    if (inFile.is_open()) {
+        try { inFile >> data; } catch(...) {}
+        inFile.close();
+    }
+
     data["UIScale"] = m_UIScale;
 
-    std::ofstream file("editor_preferences.json");
-    if (file.is_open()) {
-        file << data.dump(4);
-        file.close();
+    // --- SAUVEGARDE DE LA TAILLE DE LA FENÊTRE ---
+    GLFWwindow* window = Application::Get().GetWindow();
+    int w, h;
+    glfwGetWindowSize(window, &w, &h);
+    bool maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED);
+
+    // Règle d'or : On ne sauvegarde la largeur/hauteur QUE si la fenêtre n'est pas maximisée.
+    // Sinon, quand on quittera le mode maximisé plus tard, la fenêtre prendra la taille de l'écran entier.
+    if (!maximized) {
+        data["WindowWidth"] = w;
+        data["WindowHeight"] = h;
+    }
+    data["WindowMaximized"] = maximized;
+
+    // Écriture sur le disque
+    std::ofstream outFile("editor_preferences.json");
+    if (outFile.is_open()) {
+        outFile << data.dump(4);
+        outFile.close();
     }
 }
 
@@ -1054,8 +1082,11 @@ void EditorLayer::DrawEditorPreferences() {
         }
 
         ImGui::Spacing();
-        if (ImGui::Button("Reset to Default", ImVec2(150, 0))) {
-            m_UIScale = 1.0f;
+        if (ImGui::Button("Reset to Default", ImVec2(150 * m_UIScale, 0))) {
+            float osScaleX, osScaleY;
+            glfwGetWindowContentScale(Application::Get().GetWindow(), &osScaleX, &osScaleY);
+
+            m_UIScale = osScaleX; // Retour au 145% naturel !
             ImGui::GetIO().FontGlobalScale = m_UIScale;
 
             ImGuiStyle& style = ImGui::GetStyle();

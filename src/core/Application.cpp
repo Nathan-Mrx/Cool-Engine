@@ -13,6 +13,8 @@
 
 #include "editor/UITheme.h"
 #include "physics/PhysicsEngine.h"
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 
 Application* Application::s_Instance = nullptr;
@@ -22,7 +24,30 @@ Application::Application(const std::string& name, int width, int height) {
 
     // 1. Initialisation système (GLFW, GLAD, etc.)
     if (!glfwInit()) return;
+
+    // --- LECTURE DE LA TAILLE SAUVEGARDÉE ---
+    bool maximized = false;
+    std::ifstream file("editor_preferences.json");
+    if (file.is_open()) {
+        nlohmann::json data;
+        try {
+            file >> data;
+            // On écrase les dimensions par défaut si elles existent dans le fichier
+            width = data.value("WindowWidth", width);
+            height = data.value("WindowHeight", height);
+            maximized = data.value("WindowMaximized", false);
+        } catch(...) {}
+        file.close();
+    }
+
+    // Création de la fenêtre avec les dimensions restaurées
     m_Window = glfwCreateWindow(width, height, name.c_str(), nullptr, nullptr);
+
+    // Si on l'avait fermée maximisée, on restaure cet état
+    if (maximized) {
+        glfwMaximizeWindow(m_Window);
+    }
+
     glfwMakeContextCurrent(m_Window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     glfwSwapInterval(1);
