@@ -16,7 +16,7 @@
 #include "editor/UndoManager.h"
 
 // =========================================================================================
-// COMMANDE D'UNDO POUR LE SYSTEME DE FICHIERS
+// COMMANDE D'UNDO POUR LE SYSTEME DE FICHIERS (Renommer & Déplacer)
 // =========================================================================================
 class FileSystemCommand : public IUndoableAction {
 public:
@@ -72,10 +72,31 @@ void ContentBrowserPanel::OnImGuiRender() {
         snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", name.c_str());
     }
 
-    DrawTopBar();
-    DrawContentGrid();
+    // --- LE NOUVEAU LAYOUT EN DEUX PANNEAUX ---
+    if (ImGui::BeginTable("ContentBrowserTable", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+        ImGui::TableSetupColumn("Tree", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+        ImGui::TableSetupColumn("Content", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextRow();
+
+        // PANNEAU DE GAUCHE : L'arborescence
+        ImGui::TableSetColumnIndex(0);
+        ImGui::BeginChild("FolderTree");
+        DrawDirectoryTree(Project::GetContentDirectory());
+        ImGui::EndChild();
+
+        // PANNEAU DE DROITE : La grille de contenu
+        ImGui::TableSetColumnIndex(1);
+        ImGui::BeginChild("FolderContent");
+        DrawTopBar();
+        DrawContentGrid();
+        ImGui::EndChild();
+
+        ImGui::EndTable();
+    }
+
     HandleBackgroundContextMenu();
     DrawCreateAssetPopup();
+    DrawMovePopup(); // Le popup modal est dessiné par-dessus tout
 
     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) {
         m_SelectedPath = "";
@@ -83,6 +104,99 @@ void ContentBrowserPanel::OnImGuiRender() {
     }
 
     ImGui::End();
+}
+
+void ContentBrowserPanel::DrawDirectoryTree(const std::filesystem::path& directoryPath) {
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (m_CurrentDirectory == directoryPath) flags |= ImGuiTreeNodeFlags_Selected;
+
+    std::string filename = directoryPath.filename().string();
+    if (directoryPath == Project::GetContentDirectory()) filename = "Content";
+
+    // CORRECTION 1 : On utilise le texte explicite comme ID (pas de cast en void*)
+    std::string pathStr = directoryPath.string();
+    bool opened = ImGui::TreeNodeEx(pathStr.c_str(), flags, "%s", filename.c_str());
+
+    if (ImGui::IsItemClicked()) {
+        m_CurrentDirectory = directoryPath;
+        m_SelectedPath = "";
+    }
+
+    // Permet de glisser un objet DEPUIS la grille VERS ce noeud de l'arbre
+    HandleDragDropOnDirectory(directoryPath);
+
+    if (opened) {
+        // CORRECTION 2 : On récupère et on trie les dossiers par ordre alphabétique
+        std::vector<std::filesystem::path> subDirs;
+        for (auto& directoryEntry : std::filesystem::directory_iterator(directoryPath)) {
+            if (directoryEntry.is_directory()) {
+                subDirs.push_back(directoryEntry.path());
+            }
+        }
+
+        std::sort(subDirs.begin(), subDirs.end());
+
+        for (const auto& subDir : subDirs) {
+            DrawDirectoryTree(subDir);
+        }
+        ImGui::TreePop();
+    }
+}
+
+void ContentBrowserPanel::HandleDragDropOnDirectory(const std::filesystem::path& targetPath) {
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+            std::filesystem::path itemPath = (const char*)payload->Data;
+
+            // Sécurité : On ne déplace pas un dossier dans lui-même, ni dans son propre sous-dossier
+            if (itemPath != targetPath && targetPath.string().find(itemPath.string()) != 0) {
+                m_ItemToMove = itemPath;
+                m_MoveDestination = targetPath;
+                m_OpenMovePopup = true; // Ouvre le popup !
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+}
+
+void ContentBrowserPanel::DrawMovePopup() {
+    if (m_OpenMovePopup) {
+        ImGui::OpenPopup("Move Asset");
+        m_OpenMovePopup = false;
+    }
+
+    // Force la fenêtre à apparaître exactement sous la souris lors de son ouverture
+    ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing);
+
+    // On utilise un simple "BeginPopup" sans "Modal" pour retirer le fond bloquant !
+    if (ImGui::BeginPopup("Move Asset")) {
+        ImGui::Text("Voulez-vous deplacer :\n'%s'\nvers le dossier :\n'%s' ?",
+            m_ItemToMove.filename().string().c_str(),
+            m_MoveDestination.filename().string().c_str());
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+        if (ImGui::Button("Deplacer", ImVec2(120, 0))) {
+            std::filesystem::path newPath = m_MoveDestination / m_ItemToMove.filename();
+            if (!std::filesystem::exists(newPath)) {
+                try {
+                    std::filesystem::rename(m_ItemToMove, newPath);
+                    UndoManager::BeginTransaction("Move Asset");
+                    UndoManager::PushAction(std::make_unique<FileSystemCommand>(FileSystemCommand::ActionType::Rename, m_ItemToMove, newPath));
+                    UndoManager::EndTransaction();
+
+                    if (m_SelectedPath == m_ItemToMove) m_SelectedPath = newPath;
+                } catch (...) {}
+            }
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("Annuler", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void ContentBrowserPanel::DrawTopBar() {
@@ -102,7 +216,6 @@ void ContentBrowserPanel::DrawTopBar() {
             std::filesystem::path newPath = m_CurrentDirectory / folderName;
             if (!std::filesystem::exists(newPath)) {
                 std::filesystem::create_directory(newPath);
-
                 UndoManager::BeginTransaction("Create Folder");
                 UndoManager::PushAction(std::make_unique<FileSystemCommand>(FileSystemCommand::ActionType::Create, newPath));
                 UndoManager::EndTransaction();
@@ -113,7 +226,6 @@ void ContentBrowserPanel::DrawTopBar() {
     }
 
     ImGui::SameLine();
-
     std::filesystem::path relativePath = std::filesystem::relative(m_CurrentDirectory, Project::GetProjectDirectory());
     ImGui::Text("%s", relativePath.string().c_str());
     ImGui::Separator();
@@ -178,6 +290,17 @@ void ContentBrowserPanel::DrawDirectoryEntry(const std::filesystem::directory_en
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) { m_SelectedPath = path; m_IsRenaming = false; }
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { m_CurrentDirectory /= path.filename(); m_SelectedPath = ""; }
+
+    // Rendre le dossier lui-même "Déplaçable"
+    if (ImGui::BeginDragDropSource()) {
+        std::string itemPath = path.string();
+        ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath.c_str(), itemPath.size() + 1);
+        ImGui::Text("Move %s", path.filename().string().c_str());
+        ImGui::EndDragDropSource();
+    }
+
+    // Permet de glisser un objet SUR ce dossier dans la grille
+    HandleDragDropOnDirectory(path);
 }
 
 void ContentBrowserPanel::DrawFileEntry(const std::filesystem::directory_entry& entry, float thumbnailSize) {
@@ -212,7 +335,7 @@ void ContentBrowserPanel::DrawFileEntry(const std::filesystem::directory_entry& 
     if (ImGui::BeginDragDropSource()) {
         std::string itemPath = path.string();
         ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath.c_str(), itemPath.size() + 1);
-        ImGui::Text("Drop %s", filename.c_str());
+        ImGui::Text("Move %s", filename.c_str());
         ImGui::EndDragDropSource();
     }
 }
@@ -229,11 +352,9 @@ void ContentBrowserPanel::DrawItemLabelOrRename(const std::filesystem::directory
             if (!std::filesystem::exists(newPath) && strlen(m_RenameBuffer) > 0) {
                 try {
                     std::filesystem::rename(path, newPath);
-
                     UndoManager::BeginTransaction("Rename Asset");
                     UndoManager::PushAction(std::make_unique<FileSystemCommand>(FileSystemCommand::ActionType::Rename, path, newPath));
                     UndoManager::EndTransaction();
-
                     m_SelectedPath = newPath;
                 } catch (...) {}
             }

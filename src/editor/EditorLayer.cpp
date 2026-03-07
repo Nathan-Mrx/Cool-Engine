@@ -42,10 +42,10 @@ void EditorLayer::OnAttach() {
     m_ContentBrowserPanel = std::make_unique<ContentBrowserPanel>();
 
     // 2. Callbacks du Content Browser
-    m_ContentBrowserPanel->OnSceneOpenCallback = [this](const std::filesystem::path& path) { OpenScene(path); };
-    m_ContentBrowserPanel->OnPrefabOpenCallback = [this](const std::filesystem::path& path) { OpenPrefab(path); };
-    m_ContentBrowserPanel->OnMaterialOpenCallback = [this](const std::filesystem::path& path) { OpenMaterial(path); };
-    m_ContentBrowserPanel->OnMaterialInstanceOpenCallback = [this](const std::filesystem::path& path) { OpenMaterialInstance(path); };
+    m_ContentBrowserPanel->SetSceneOpenCallback([this](const std::filesystem::path& path) { OpenScene(path); });
+    m_ContentBrowserPanel->SetPrefabOpenCallback([this](const std::filesystem::path& path) { OpenPrefab(path); });
+    m_ContentBrowserPanel->SetMaterialOpenCallback([this](const std::filesystem::path& path) { OpenMaterial(path); });
+    m_ContentBrowserPanel->SetMaterialInstanceOpenCallback([this](const std::filesystem::path& path) { OpenMaterialInstance(path); });
 
     FramebufferSpecification fbSpec{};
     fbSpec.Width = 1280;
