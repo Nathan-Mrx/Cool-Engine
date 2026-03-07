@@ -11,6 +11,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include "editor/UITheme.h"
 #include "physics/PhysicsEngine.h"
 
 
@@ -37,8 +38,8 @@ Application::Application(const std::string& name, int width, int height) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;    // Pour ton layout macOS-style
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;  // Permet de sortir les fenêtres de l'app
 
-    // Setup du style (Sombre par défaut, très pro)
-    ImGui::StyleColorsDark();
+    UITheme::Apply();
+    UITheme::LoadFonts();
 
     // Liaison avec les backends
     ImGui_ImplGlfw_InitForOpenGL(m_Window, true);

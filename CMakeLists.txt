@@ -79,6 +79,7 @@ set(SOURCES
         src/ecs/Components.generated.h
         src/scene/NodeDefinitions.h
         src/scene/NodeRegistry.generated.h
+        src/editor/UITheme.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
@@ -163,6 +164,14 @@ add_custom_command(TARGET GameEngine POST_BUILD
         ${CMAKE_SOURCE_DIR}/icons
         $<TARGET_FILE_DIR:GameEngine>/icons
         COMMENT "Copie des icones vers le dossier de build..."
+)
+
+# Copier le dossier des assets à côté de l'exécutable après la compilation
+add_custom_command(TARGET GameEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:GameEngine>/assets
+        COMMENT "Copie des assets vers le dossier de build..."
 )
 
 # Jolt nécessite quelques définitions de préprocesseur pour fonctionner correctement
