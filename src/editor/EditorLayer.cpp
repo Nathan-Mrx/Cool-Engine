@@ -190,19 +190,19 @@ void EditorLayer::OnUpdate(float deltaTime) {
 
 void EditorLayer::UpdateEditor(float deltaTime) {
     if (m_ViewportFocused) {
-        float speed = 1000.0f * deltaTime;
+        float speed = 500.0f * deltaTime;
         if (Input::IsKeyPressed(GLFW_KEY_LEFT_SHIFT)) speed *= 3.0f;
 
         bool isCtrlPressed = Input::IsKeyPressed(GLFW_KEY_LEFT_CONTROL) || Input::IsKeyPressed(GLFW_KEY_RIGHT_CONTROL);
 
-        if (!isCtrlPressed)
+        if (!isCtrlPressed && Input::IsMouseButtonPressed(1))
         {
             if (Input::IsKeyPressed(GLFW_KEY_W)) m_EditorCamera.Position += speed * m_EditorCamera.Front;
             if (Input::IsKeyPressed(GLFW_KEY_S)) m_EditorCamera.Position -= speed * m_EditorCamera.Front;
             if (Input::IsKeyPressed(GLFW_KEY_A)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
             if (Input::IsKeyPressed(GLFW_KEY_D)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.Front, m_EditorCamera.WorldUp)) * speed;
-            if (Input::IsKeyPressed(GLFW_KEY_Q)) m_EditorCamera.Position -= glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
-            if (Input::IsKeyPressed(GLFW_KEY_E)) m_EditorCamera.Position += glm::normalize(glm::cross(m_EditorCamera.WorldUp, m_EditorCamera.Front)) * speed;
+            if (Input::IsKeyPressed(GLFW_KEY_Q)) m_EditorCamera.Position -= m_EditorCamera.WorldUp * speed;
+            if (Input::IsKeyPressed(GLFW_KEY_E)) m_EditorCamera.Position += m_EditorCamera.WorldUp * speed;
         }
 
         glm::vec2 mousePos = Input::GetMousePosition();
