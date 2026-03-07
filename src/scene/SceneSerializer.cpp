@@ -136,6 +136,12 @@ void SceneSerializer::Serialize(const std::string& filepath) {
         if (entity.HasComponent<MaterialComponent>()) {
             entityJson["MaterialComponent"]["AssetPath"] = entity.GetComponent<MaterialComponent>().AssetPath;
         }
+        if (entity.HasComponent<SkyboxComponent>())
+        {
+            entityJson["SkyboxComponent"]["HDRPath"] = entity.GetComponent<SkyboxComponent>().HDRPath;
+            entityJson["SkyboxComponent"]["Intensity"] = entity.GetComponent<SkyboxComponent>().Intensity;
+            entityJson["SkyboxComponent"]["Rotation"] = entity.GetComponent<SkyboxComponent>().Rotation;
+        }
 
         entitiesData.push_back(entityJson);
     }
@@ -290,6 +296,17 @@ bool SceneSerializer::Deserialize(const std::string& filepath) {
 
             // Appeler SetAndCompile va lire le fichier et recréer le Shader !
             mat.SetAndCompile(jMat["AssetPath"].get<std::string>());
+        }
+
+        if (entityJson.contains("SkyboxComponent"))
+        {
+            auto& jSkybox = entityJson["SkyboxComponent"];
+            if (!deserializedEntity.HasComponent<SkyboxComponent>()) deserializedEntity.AddComponent<SkyboxComponent>();
+            auto& skybox = deserializedEntity.GetComponent<SkyboxComponent>();
+
+            skybox.HDRPath = jSkybox["HDRPath"].get<std::string>();
+            skybox.Intensity = jSkybox["Intensity"].get<float>();
+            skybox.Rotation = jSkybox["Rotation"].get<float>();
         }
 
     }
