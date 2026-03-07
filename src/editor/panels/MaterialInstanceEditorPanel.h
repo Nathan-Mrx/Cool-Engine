@@ -46,6 +46,21 @@ public:
     // Callbacks
     std::function<void(const std::filesystem::path&)> OnMaterialInstanceSavedCallback;
 
+    // --- ACCESSEURS POUR LE SYSTEME D'UNDO ---
+    const std::filesystem::path& GetCurrentPath() const { return m_CurrentPath; }
+
+    // ON REMPLACE std::map PAR std::unordered_map ICI :
+    void SetFullState(const std::string& parentPath, const std::unordered_map<std::string, MIParameter>& params) {
+        bool parentChanged = (m_ParentMaterialPath != parentPath);
+        m_ParentMaterialPath = parentPath;
+        if (parentChanged) LoadParentParameters();
+
+        m_Parameters = params;
+        EvaluateParameterVisibility();
+        CompilePreviewShader();
+        Save(); // Auto-save lors de l'Undo !
+    }
+
 private:
     void LoadParentParameters();
     void CompilePreviewShader();
