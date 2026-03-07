@@ -5,11 +5,13 @@
 #include <string>
 #include <filesystem>
 #include <map>
+#include <nfd.hpp>
 
 #include "renderer/Mesh.h"
 #include "../renderer/ModelLoader.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include <fstream>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <nlohmann/json.hpp>
@@ -313,3 +315,5 @@ private:
         }
     }
 };
+
+#include "Components.generated.h"

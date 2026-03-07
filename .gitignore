@@ -42,6 +42,7 @@ Makefile
 compile_commands.json
 vcpkg-manifest-install.log
 *.generated.cpp
+*.generated.h
 
 # vcpkg
 vcpkg_installed/

@@ -2,6 +2,7 @@
 #include "../../ecs/Components.h"
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "editor/EditorCommands.h"
 #include "editor/UndoManager.h"
@@ -9,64 +10,33 @@
 #include "scene/SceneSerializer.h"
 #include "scripts/ScriptRegistry.h"
 
-// --- RÉFLEXION UI ---
-template <typename T>
-const char* GetComponentName() {
-    if constexpr (std::is_same_v<T, TagComponent>) return "Tag";
-    if constexpr (std::is_same_v<T, TransformComponent>) return "Transform";
-    if constexpr (std::is_same_v<T, ColorComponent>) return "Color";
-    if constexpr (std::is_same_v<T, CameraComponent>) return "Camera";
-    if constexpr (std::is_same_v<T, MeshComponent>) return "Mesh";
-    if constexpr (std::is_same_v<T, DirectionalLightComponent>) return "Directional Light";
-    //if constexpr (std::is_same_v<T, PointLightComponent>) return "Point Light"; // not implemented yet
-    if constexpr (std::is_same_v<T, RigidBodyComponent>) return "Rigid Body";
-    if constexpr (std::is_same_v<T, BoxColliderComponent>) return "Box Collider";
-    if constexpr (std::is_same_v<T, NativeScriptComponent>) return "Native Script";
-    if constexpr (std::is_same_v<T, RelationshipComponent>) return "Relationship";
-    if constexpr (std::is_same_v<T, PrefabComponent>) return "Prefab";
-    if constexpr (std::is_same_v<T, MaterialComponent>) return "Material";
-    return "Unknown Component";
-}
-
 // =========================================================================================
 // SYSTEME DE PROPRIÉTÉS (Property Drawer)
 // =========================================================================================
 
-// Helper magique pour dessiner un widget ImGui et gérer l'Undo global O(1) automatiquement !
 template<typename Comp, typename FieldType, typename DrawFunc>
 static void DrawUndoableProperty(const std::string& label, Entity entity, const std::shared_ptr<Scene>& sceneContext, Comp& component, FieldType& field, DrawFunc drawFunc) {
     static Comp s_StartComp;
     static bool s_IsDragging = false;
 
-    // On capture l'état entier du composant AVANT l'édition
     if (!s_IsDragging) s_StartComp = component;
 
-    // On dessine le widget ImGui (DragFloat, ColorEdit, etc.)
     drawFunc(label.c_str(), field);
 
-    // Détection du début du glissement de souris
     if (ImGui::IsItemActivated()) s_IsDragging = true;
 
-    // Détection du relâchement de la souris APRES modification
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         s_IsDragging = false;
         UndoManager::BeginTransaction("Edit " + label);
-        UndoManager::PushAction(std::make_unique<EntityComponentCommand<Comp>>(
-            sceneContext,
-            entity.GetUUID(),
-            s_StartComp,
-            component
-        ));
+        UndoManager::PushAction(std::make_unique<EntityComponentCommand<Comp>>(sceneContext, entity.GetUUID(), s_StartComp, component));
         UndoManager::EndTransaction();
-    }
-    // Si on annule (Echap) ou qu'on clique sans modifier
-    else if (ImGui::IsItemDeactivated()) {
+    } else if (ImGui::IsItemDeactivated()) {
         s_IsDragging = false;
     }
 }
 
 // -----------------------------------------------------------------------------------------
-// Déclaration générique (Rétrocompatibilité pour les composants pas encore migrés)
+// Déclaration générique (Fallback de sécurité si un composant manque de spécialisation)
 template<typename T>
 void DrawComponentUI(Entity entity, const std::shared_ptr<Scene>& context) {
     if (entity.HasComponent<T>()) {
@@ -74,14 +44,19 @@ void DrawComponentUI(Entity entity, const std::shared_ptr<Scene>& context) {
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
 
         if (ImGui::TreeNodeEx((void*)typeid(T).hash_code(), flags, "%s", name)) {
-            auto& component = entity.GetComponent<T>();
-            component.OnImGuiRender(); // Ancien système temporaire
+            ImGui::TextDisabled("UI non definie pour ce composant.");
             ImGui::TreePop();
         }
     }
 }
 
-// --- SPÉCIALISATIONS AAA (Nouveau Système Propre) ---
+// --- LES COMPOSANTS INVISIBLES (Ignorés dans la boucle standard) ---
+template<> void DrawComponentUI<TagComponent>(Entity entity, const std::shared_ptr<Scene>& context) {}
+template<> void DrawComponentUI<IDComponent>(Entity entity, const std::shared_ptr<Scene>& context) {}
+template<> void DrawComponentUI<RelationshipComponent>(Entity entity, const std::shared_ptr<Scene>& context) {}
+template<> void DrawComponentUI<PrefabComponent>(Entity entity, const std::shared_ptr<Scene>& context) {}
+
+// --- SPÉCIALISATIONS AAA ---
 
 template<>
 void DrawComponentUI<TransformComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
@@ -92,7 +67,7 @@ void DrawComponentUI<TransformComponent>(Entity entity, const std::shared_ptr<Sc
 
             DrawUndoableProperty("Location", entity, context, tc, tc.Location, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
             DrawUndoableProperty("Rotation", entity, context, tc, tc.RotationEuler, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
-            tc.Rotation = glm::quat(glm::radians(tc.RotationEuler)); // Synchro mathématique
+            tc.Rotation = glm::quat(glm::radians(tc.RotationEuler));
             DrawUndoableProperty("Scale", entity, context, tc, tc.Scale, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
 
             ImGui::TreePop();
@@ -112,41 +87,171 @@ void DrawComponentUI<ColorComponent>(Entity entity, const std::shared_ptr<Scene>
     }
 }
 
+template<>
+void DrawComponentUI<CameraComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<CameraComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(CameraComponent).hash_code(), flags, "Camera")) {
+            auto& cc = entity.GetComponent<CameraComponent>();
+            DrawUndoableProperty("Primary", entity, context, cc, cc.Primary, [](const char* l, bool& v) { ImGui::Checkbox(l, &v); });
+            DrawUndoableProperty("FOV", entity, context, cc, cc.FOV, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.5f, 10.0f, 150.0f); });
+            DrawUndoableProperty("Near Clip", entity, context, cc, cc.NearClip, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.1f, 0.01f, 100.0f); });
+            DrawUndoableProperty("Far Clip", entity, context, cc, cc.FarClip, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 100.0f, 100.0f, 1000000.0f); });
+            ImGui::TreePop();
+        }
+    }
+}
+
+template<>
+void DrawComponentUI<DirectionalLightComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<DirectionalLightComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(DirectionalLightComponent).hash_code(), flags, "Directional Light")) {
+            auto& dlc = entity.GetComponent<DirectionalLightComponent>();
+            DrawUndoableProperty("Color", entity, context, dlc, dlc.Color, [](const char* l, glm::vec3& v) { ImGui::ColorEdit3(l, glm::value_ptr(v)); });
+            DrawUndoableProperty("Ambient", entity, context, dlc, dlc.AmbientIntensity, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.01f, 0.0f, 1.0f); });
+            DrawUndoableProperty("Diffuse", entity, context, dlc, dlc.DiffuseIntensity, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.01f, 0.0f, 1.0f); });
+            ImGui::TreePop();
+        }
+    }
+}
+
+template<>
+void DrawComponentUI<RigidBodyComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<RigidBodyComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(RigidBodyComponent).hash_code(), flags, "Rigid Body")) {
+            auto& rb = entity.GetComponent<RigidBodyComponent>();
+
+            const char* bodyTypeStrings[] = { "Static", "Kinematic", "Dynamic" };
+            const char* currentBodyTypeString = bodyTypeStrings[(int)rb.Type];
+
+            if (ImGui::BeginCombo("Body Type", currentBodyTypeString)) {
+                for (int i = 0; i < 3; i++) {
+                    bool isSelected = currentBodyTypeString == bodyTypeStrings[i];
+                    if (ImGui::Selectable(bodyTypeStrings[i], isSelected)) {
+                        RigidBodyComponent before = rb;
+                        rb.Type = (RigidBodyType)i;
+
+                        UndoManager::BeginTransaction("Change Body Type");
+                        UndoManager::PushAction(std::make_unique<EntityComponentCommand<RigidBodyComponent>>(context, entity.GetUUID(), before, rb));
+                        UndoManager::EndTransaction();
+                    }
+                    if (isSelected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            if (rb.Type == RigidBodyType::Dynamic) {
+                DrawUndoableProperty("Mass", entity, context, rb, rb.Mass, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.1f, 0.01f, 10000.0f); });
+            }
+            ImGui::TreePop();
+        }
+    }
+}
+
+template<>
+void DrawComponentUI<BoxColliderComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<BoxColliderComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(BoxColliderComponent).hash_code(), flags, "Box Collider")) {
+            auto& bc = entity.GetComponent<BoxColliderComponent>();
+
+            glm::vec3 visualSize = bc.HalfSize * 2.0f;
+            DrawUndoableProperty("Size", entity, context, bc, visualSize, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
+            bc.HalfSize = visualSize / 2.0f;
+
+            DrawUndoableProperty("Offset", entity, context, bc, bc.Offset, [](const char* l, glm::vec3& v) { ImGui::DragFloat3(l, glm::value_ptr(v), 0.1f); });
+            DrawUndoableProperty("Friction", entity, context, bc, bc.Friction, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.01f, 0.0f, 1.0f); });
+            DrawUndoableProperty("Restitution", entity, context, bc, bc.Restitution, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.01f, 0.0f, 1.0f); });
+            ImGui::TreePop();
+        }
+    }
+}
+
+template<>
+void DrawComponentUI<MeshComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<MeshComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(MeshComponent).hash_code(), flags, "Mesh")) {
+            auto& mesh = entity.GetComponent<MeshComponent>();
+
+            if (mesh.MeshData) ImGui::TextWrapped("Path: %s", mesh.AssetPath.c_str());
+            else ImGui::TextColored(ImVec4(1, 0, 0, 1), "No Mesh Assigned");
+
+            ImGui::Spacing();
+            ImGui::Button("Drop .obj Here to Load", ImVec2(-1, 40));
+
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                    std::filesystem::path filepath = (const char*)payload->Data;
+                    if (filepath.extension() == ".obj" || filepath.extension() == ".fbx") {
+                        MeshComponent before = mesh;
+                        mesh.AssetPath = filepath.string();
+                        mesh.MeshData = ModelLoader::LoadModel(mesh.AssetPath);
+
+                        UndoManager::BeginTransaction("Assign Mesh");
+                        UndoManager::PushAction(std::make_unique<EntityComponentCommand<MeshComponent>>(context, entity.GetUUID(), before, mesh));
+                        UndoManager::EndTransaction();
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::TreePop();
+        }
+    }
+}
+
+template<>
+void DrawComponentUI<MaterialComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<MaterialComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(MaterialComponent).hash_code(), flags, "Material")) {
+            auto& mat = entity.GetComponent<MaterialComponent>();
+
+            if (!mat.AssetPath.empty()) ImGui::TextWrapped("Mat: %s", std::filesystem::path(mat.AssetPath).filename().string().c_str());
+            else ImGui::TextColored(ImVec4(1, 0, 0, 1), "No Material Assigned");
+
+            ImGui::Button("Drop .cemat/.cematinst", ImVec2(-1, 30));
+
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                    std::filesystem::path filepath = (const char*)payload->Data;
+                    if (filepath.extension() == ".cemat" || filepath.extension() == ".cematinst") {
+                        MaterialComponent before = mat;
+                        mat.SetAndCompile(filepath.string());
+
+                        UndoManager::BeginTransaction("Assign Material");
+                        UndoManager::PushAction(std::make_unique<EntityComponentCommand<MaterialComponent>>(context, entity.GetUUID(), before, mat));
+                        UndoManager::EndTransaction();
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::TreePop();
+        }
+    }
+}
+
+template<>
+void DrawComponentUI<NativeScriptComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<NativeScriptComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(NativeScriptComponent).hash_code(), flags, "Native Script")) {
+            auto& nsc = entity.GetComponent<NativeScriptComponent>();
+            ImGui::Text("Script: %s", nsc.ScriptName.c_str());
+            ImGui::TreePop();
+        }
+    }
+}
+
 template<typename T>
 void DrawAddComponentEntry(Entity entity) {
-    // On n'affiche le composant dans la liste que si l'entité ne l'a pas encore !
     if (!entity.HasComponent<T>()) {
         if (ImGui::MenuItem(GetComponentName<T>())) {
             entity.AddComponent<T>();
             ImGui::CloseCurrentPopup();
         }
-    }
-}
-
-template<typename Component, typename ValueType>
-void DrawUndoableWidget(
-    Entity entity,
-    ValueType& componentValue,
-    std::function<bool()> drawImGuiWidget,
-    std::function<void(Component&, const ValueType&)> assignFunc
-) {
-    static ValueType s_StartValue;
-    static bool s_IsDragging = false;
-
-    if (!s_IsDragging) s_StartValue = componentValue;
-
-    drawImGuiWidget(); // Dessine le bouton ImGui
-
-    if (ImGui::IsItemActivated()) s_IsDragging = true;
-
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        s_IsDragging = false;
-        ValueType endValue = componentValue;
-        ValueType startValue = s_StartValue;
-
-
-    } else if (ImGui::IsItemDeactivated()) {
-        s_IsDragging = false;
     }
 }
 
@@ -157,7 +262,6 @@ void SceneHierarchyPanel::OnImGuiRender() {
     DrawHierarchyWindow();
     DrawInspectorWindow();
 
-    // Traitement de la destruction en fin de frame pour ne pas casser les itérateurs ImGui/EnTT
     if (m_EntityToDestroy) {
         m_Context->DestroyEntity(m_EntityToDestroy);
         if (m_SelectionContext == m_EntityToDestroy) m_SelectionContext = {};
@@ -173,12 +277,10 @@ void SceneHierarchyPanel::DrawHierarchyWindow() {
 
     HandleHierarchyShortcuts();
 
-    // Rendu de l'arbre des entités
     auto view = m_Context->m_Registry.view<TagComponent>();
     for (auto entityID : view) {
         Entity entity{ entityID, m_Context.get() };
 
-        // N'afficher que les objets racine (les enfants sont gérés récursivement)
         bool isRoot = true;
         if (entity.HasComponent<RelationshipComponent>()) {
             if (entity.GetComponent<RelationshipComponent>().Parent != entt::null) {
@@ -206,7 +308,6 @@ void SceneHierarchyPanel::HandleHierarchyShortcuts() {
 }
 
 void SceneHierarchyPanel::HandleHierarchyEmptySpaceDragDrop() {
-    // Zone invisible prenant tout le reste de la fenêtre pour accepter les drops
     ImGui::Dummy(ImGui::GetContentRegionAvail());
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
@@ -291,10 +392,6 @@ void SceneHierarchyPanel::DrawHierarchyContextMenu() {
                 newEntity.AddComponent<DirectionalLightComponent>();
                 autoParentToPrefabRoot(newEntity);
             }
-            if (ImGui::MenuItem("Point Light")) {
-                auto newEntity = m_Context->CreateEntity("Point Light");
-                autoParentToPrefabRoot(newEntity);
-            }
             ImGui::EndMenu();
         }
 
@@ -323,7 +420,6 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
 
     bool opened = false;
 
-    // Gestion de l'affichage (Input Text vs Texte Classique)
     if (m_IsRenaming && m_RenamingEntity == entity) {
         opened = DrawEntityNodeRenaming(entity, flags, entityID);
     } else {
@@ -345,7 +441,6 @@ void SceneHierarchyPanel::DrawEntityNode(Entity entity) {
     HandleEntityNodeDragDrop(entity);
     DrawEntityNodeContextMenu(entity, hasScript, isPrefab);
 
-    // Rendu récursif des enfants
     if (opened) {
         if (!isPrefab && hasChildren) {
             entt::entity childID = entity.GetComponent<RelationshipComponent>().FirstChild;
@@ -445,7 +540,6 @@ void SceneHierarchyPanel::DrawInspectorWindow() {
         }
     }
 
-    // Déselection si on clique dans le vide de l'inspecteur
     if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered()) {
         m_SelectionContext = {};
     }
@@ -464,19 +558,13 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
 
-            // On vérifie le retour du BeginChild
             if (ImGui::BeginChild("MiniHierarchy", ImVec2(0, 150), true)) {
-
                 ImGui::PushID("PrefabInspector");
                 DrawMiniHierarchy(prefabRoot);
                 ImGui::PopID();
+            }
 
-            } // Fin du 'if' ICI !
-
-            // --- LE FIX IMGUI ---
-            // EndChild doit absolument être en dehors du 'if', il faut l'appeler à chaque frame !
             ImGui::EndChild();
-
             ImGui::PopStyleColor();
         }
         ImGui::PopStyleColor();
@@ -484,7 +572,22 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
         ImGui::Spacing();
     }
 
-    // 1. Dessin des composants existants
+    // --- LE TAG (Nom de l'entité) TOUT EN HAUT ---
+    if (entity.HasComponent<TagComponent>()) {
+        auto& tag = entity.GetComponent<TagComponent>().Tag;
+        char buffer[256];
+        memset(buffer, 0, sizeof(buffer));
+        strncpy(buffer, tag.c_str(), sizeof(buffer));
+
+        ImGui::PushItemWidth(-1);
+        if (ImGui::InputText("##Tag", buffer, sizeof(buffer))) {
+            tag = std::string(buffer);
+        }
+        ImGui::PopItemWidth();
+        ImGui::Spacing();
+    }
+
+    // 1. Dessin des composants via la boucle Tuple
     std::apply([&](auto... args) {
         (DrawComponentUI<decltype(args)>(entity, m_Context), ...);
     }, AllComponents{});
@@ -495,8 +598,6 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
     ImGui::Spacing();
 
     ImVec2 buttonSize(150.0f, 30.0f);
-
-    // On centre le bouton mathématiquement
     float cursorX = (ImGui::GetContentRegionAvail().x - buttonSize.x) * 0.5f;
     if (cursorX > 0.0f) {
         ImGui::SetCursorPosX(cursorX);
@@ -508,33 +609,29 @@ void SceneHierarchyPanel::DrawComponents(Entity entity) {
 
     // 3. Le Popup (Menu déroulant)
     if (ImGui::BeginPopup("AddComponentPopup")) {
-        // On réutilise la magie de la réflexion pour lister tous les composants possibles !
         std::apply([&](auto... args) {
             (DrawAddComponentEntry<decltype(args)>(entity), ...);
         }, AllComponents{});
 
         ImGui::EndPopup();
     }
-
 }
 
 void SceneHierarchyPanel::SetContext(const std::shared_ptr<Scene>& context) {
     m_Context = context;
-    m_SelectionContext = {}; // On réinitialise la sélection lors du changement de scène
+    m_SelectionContext = {};
 }
 
 Entity SceneHierarchyPanel::GetPrefabRoot(Entity entity) {
     if (!entity) return {};
 
-    // Si l'entité elle-même est la racine
     if (entity.HasComponent<PrefabComponent>()) return entity;
 
-    // Sinon on remonte l'arbre des parents jusqu'à trouver la racine
     if (entity.HasComponent<RelationshipComponent>()) {
         entt::entity parentID = entity.GetComponent<RelationshipComponent>().Parent;
         if (parentID != entt::null) {
             Entity parent{parentID, m_Context.get()};
-            return GetPrefabRoot(parent); // Appel récursif
+            return GetPrefabRoot(parent);
         }
     }
     return {};
@@ -543,17 +640,14 @@ Entity SceneHierarchyPanel::GetPrefabRoot(Entity entity) {
 void SceneHierarchyPanel::DrawMiniHierarchy(Entity node) {
     auto& tag = node.GetComponent<TagComponent>().Tag;
 
-    // Options de l'arbre
     ImGuiTreeNodeFlags flags = ((m_SelectionContext == node) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
 
     bool hasChildren = node.HasComponent<RelationshipComponent>() && node.GetComponent<RelationshipComponent>().FirstChild != entt::null;
-    if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf; // Visuel de feuille
+    if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
 
-    // --- LE FIX : On évite le piège du booléen ---
     uint32_t entityID = (uint32_t)(entt::entity)node;
     bool opened = ImGui::TreeNodeEx((void*)(uint64_t)entityID, flags, "%s", tag.c_str());
 
-    // Si on clique, ça devient le vrai SelectionContext du moteur !
     if (ImGui::IsItemClicked()) m_SelectionContext = node;
 
     if (opened) {
@@ -561,7 +655,7 @@ void SceneHierarchyPanel::DrawMiniHierarchy(Entity node) {
             entt::entity childID = node.GetComponent<RelationshipComponent>().FirstChild;
             while (childID != entt::null) {
                 Entity child{childID, m_Context.get()};
-                DrawMiniHierarchy(child); // Rendu récursif
+                DrawMiniHierarchy(child);
                 childID = child.GetComponent<RelationshipComponent>().NextSibling;
             }
         }

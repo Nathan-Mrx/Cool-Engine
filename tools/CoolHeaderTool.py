@@ -186,7 +186,7 @@ def generate_component_registry(engine_source_dir, output_file):
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: python CoolHeaderTool.py [--scripts | --materials] <SourceDir> <OutputCppFile>")
+        print("Usage: python CoolHeaderTool.py <mode> <source_dir> <output_file>")
         sys.exit(1)
 
     mode = sys.argv[1]
@@ -202,4 +202,5 @@ if __name__ == "__main__":
     elif mode == "--components":
         generate_component_registry(source_dir, output_file)
     else:
-        print("Mode inconnu. Utilisez --scripts ou --materials")
+        print("Mode inconnu. Utilisez --scripts, --materials, --assets ou --components")
+        sys.exit(1)
