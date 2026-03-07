@@ -23,16 +23,17 @@ uniform sampler2DArray uShadowMap; // Array de textures !
 uniform mat4 uLightSpaceMatrices[3];
 uniform float uCascadeDistances[3];
 
-const vec2 poissonDisk[16] = vec2[](
-vec2( -0.94201624, -0.39906216 ), vec2( 0.94558609, -0.76890725 ),
-vec2( -0.094184101, -0.92938870 ), vec2( 0.34495938, 0.29387760 ),
-vec2( -0.91588581, 0.45771432 ), vec2( -0.81544232, -0.87912464 ),
-vec2( -0.38277543, 0.27676845 ), vec2( 0.97484398, 0.75648379 ),
-vec2( 0.44323325, -0.97511554 ), vec2( 0.53742981, -0.47373420 ),
-vec2( -0.26496911, -0.41893023 ), vec2( 0.79197514, 0.19090188 ),
-vec2( -0.24188840, 0.99706507 ), vec2( -0.81409955, 0.91437590 ),
-vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100467 )
-);
+// --- LA SPIRALE DE VOGEL ---
+const float GOLDEN_ANGLE = 2.39996323; // PI * (3.0 - sqrt(5.0))
+
+vec2 VogelDiskSample(int i, int numSamples, float noiseAngle) {
+    // Calcule le rayon (plus on avance, plus on s'éloigne du centre)
+    float r = sqrt(float(i) + 0.5) / sqrt(float(numSamples));
+    // Calcule l'angle (Nombre d'or + notre bruit rotatif)
+    float theta = float(i) * GOLDEN_ANGLE + noiseAngle;
+
+    return vec2(r * cos(theta), r * sin(theta));
+}
 
 float InterleavedGradientNoise(vec2 position_screen) {
     vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
@@ -41,27 +42,20 @@ float InterleavedGradientNoise(vec2 position_screen) {
 
 // Fonction qui retourne [Ombre, IndexDeLaCascade]
 vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
-    // 1. TROUVER LA BONNE CASCADE SELON LA DISTANCE
+    // ------------------------------------------------------------------
+    // ROUTINE CSM (Identique à avant)
+    // ------------------------------------------------------------------
     int layer = -1;
     for (int i = 0; i < 3; ++i) {
-        if (vViewDepth < uCascadeDistances[i]) {
-            layer = i;
-            break;
-        }
+        if (vViewDepth < uCascadeDistances[i]) { layer = i; break; }
     }
-    if (layer == -1) layer = 2; // Sécurité
+    if (layer == -1) layer = 2;
 
-    // --- LE FIX NORMAL BIAS ---
-    // Plus la cascade est grande, plus ses pixels sont gros.
-    // On doit donc décaler virtuellement la surface plus fort pour fuir l'acné.
-    float normalBiasOffset = 2.0; // 2 cm de décalage pour la cascade ultra-nette (Rouge)
-    if (layer == 1) normalBiasOffset = 6.0;  // 6 cm pour la moyenne (Verte)
-    if (layer == 2) normalBiasOffset = 20.0; // 20 cm pour la lointaine (Bleue)
+    float normalBiasOffset = 2.0;
+    if (layer == 1) normalBiasOffset = 6.0;
+    if (layer == 2) normalBiasOffset = 20.0;
 
-    // On crée une fausse position légèrement surélevée
     vec3 biasedFragPos = fragPosWorld + normal * normalBiasOffset;
-
-    // 2. PROJETER LE PIXEL (avec la position truquée !)
     vec4 fragPosLightSpace = uLightSpaceMatrices[layer] * vec4(biasedFragPos, 1.0);
 
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
@@ -70,34 +64,77 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     if(projCoords.z > 1.0) return vec2(0.0, layer);
 
     float currentDepth = projCoords.z;
-
-    // On remet un tout petit depth bias de sécurité, mais le gros du travail est fait par le Normal Bias
     float bias = max(0.0005 * (1.0 - dot(normal, lightDir)), 0.00005);
-    if (layer == 1) bias *= 1.5;
-    if (layer == 2) bias *= 2.0;
 
+    // Bruit rotatif pour casser les motifs (utilisé deux fois maintenant !)
     float noise = InterleavedGradientNoise(gl_FragCoord.xy);
     float angle = noise * 6.28318530718;
     float s = sin(angle);
     float c = cos(angle);
     mat2 rotationMat = mat2(c, -s, s, c);
 
-    float shadow = 0.0;
-    // L'astuce : textureSize sur un sampler2DArray retourne un vec3(width, height, layers) !
     vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
-    float spread = 1.5;
 
-    for(int i = 0; i < 16; i++) {
-        vec2 rotatedOffset = rotationMat * poissonDisk[i];
+    // ==================================================================
+    // PCSS - ÉTAPE 1 : BLOCKER SEARCH
+    // ==================================================================
+    int blockers = 0;
+    float avgBlockerDepth = 0.0;
+    float searchRadius = 4.0;
+    if (layer == 1) searchRadius = 2.0;
+    if (layer == 2) searchRadius = 1.0;
 
-        // --- NOUVEAU : On utilise un vec3 pour lire la texture. Le .z est l'index de la couche ! ---
-        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + rotatedOffset * texelSize * spread, float(layer))).r;
+    int blockerSamples = 16; // 16 est suffisant pour la recherche
+    for(int i = 0; i < blockerSamples; i++) {
+        // NOUVEAU : On appelle la fonction Vogel
+        vec2 offset = VogelDiskSample(i, blockerSamples, angle) * searchRadius * texelSize;
+        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
 
+        if (pcfDepth < currentDepth - bias) {
+            blockers++;
+            avgBlockerDepth += pcfDepth;
+        }
+    }
+
+    // Si rien ne bloque la lumière dans les environs, on est en plein soleil !
+    if (blockers == 0) return vec2(0.0, layer);
+
+    avgBlockerDepth /= float(blockers); // Profondeur moyenne de l'obstacle
+
+    // ==================================================================
+    // PCSS - ÉTAPE 2 : PENUMBRA ESTIMATION (Calcul du flou de pénombre)
+    // ==================================================================
+    // Distance entre la surface actuelle et l'objet qui projette l'ombre
+    float distanceToBlocker = currentDepth - avgBlockerDepth;
+
+    // LA TAILLE DU SOLEIL : C'est LA variable avec laquelle tu vas jouer.
+    // Plus elle est grande, plus les ombres lointaines seront floues.
+    float sunSize = 350.0;
+
+    float penumbraRadius = distanceToBlocker * sunSize;
+
+    // On clampe pour éviter que le flou ne détruise les performances ou bave trop
+    float maxBlur = 12.0;
+    if (layer == 1) maxBlur = 6.0;
+    if (layer == 2) maxBlur = 2.0;
+
+    // Le rayon final qui va servir à écarter nos points de lecture
+    float filterRadiusUV = clamp(penumbraRadius, 1.0, maxBlur);
+
+    // ==================================================================
+    // PCSS - ÉTAPE 3 : VARIABLE PCF
+    // ==================================================================
+    float shadow = 0.0;
+    int pcfSamples = 32; // <-- LA MAGIE EST ICI : Essaie 32, ou 64 si ton GPU encaisse bien !
+
+    for(int i = 0; i < pcfSamples; i++) {
+        // NOUVEAU : On utilise Vogel pour générer 32 points floutés
+        vec2 offset = VogelDiskSample(i, pcfSamples, angle) * filterRadiusUV * texelSize;
+        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
         shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
     }
 
-    shadow /= 16.0;
-
+    shadow /= float(pcfSamples);
     return vec2(shadow, layer);
 }
 
