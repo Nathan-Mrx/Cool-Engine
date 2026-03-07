@@ -604,3 +604,42 @@ struct StaticSwitchParameterNodeDef : public IMaterialNodeDef {
         return varName;
     }
 };
+
+CEMAT_NODE()
+struct BreakVec2NodeDef : public IMaterialNodeDef
+{
+    std::string GetName() const override { return "Break Vec2"; }
+    std::string GetCategory() const override { return "Utility"; }
+    ImColor GetColor() const override { return ImColor(45, 55, 65, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "V", ed::PinKind::Input, PinType::Vec2 });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "X (R)", ed::PinKind::Output, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "Y (G)", ed::PinKind::Output, PinType::Float });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string v = evaluateInput(0, "vec2(0.0)");
+        bodyBuilder << "    vec2 " << varName << " = " << v << ";\n";
+        return varName;
+    }
+};
+
+CEMAT_NODE()
+struct MakeVec2NodeDef : public IMaterialNodeDef
+{
+    std::string GetName() const override { return "Make Vec2"; }
+    std::string GetCategory() const override { return "Utility"; }
+    ImColor GetColor() const override { return ImColor(45, 55, 65, 255); }
+    void Initialize(MaterialNode& node, int& nextId) const override {
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "X (R)", ed::PinKind::Input, PinType::Float });
+        node.Inputs.push_back({ ed::PinId(nextId++), node.ID, "Y (G)", ed::PinKind::Input, PinType::Float });
+        node.Outputs.push_back({ ed::PinId(nextId++), node.ID, "XY", ed::PinKind::Output, PinType::Vec2 });
+    }
+    std::string GenerateGLSL(const MaterialNode& node, std::stringstream& bodyBuilder, const std::function<std::string(int, const std::string&)>& evaluateInput) const override {
+        std::string varName = "val_" + std::to_string((int)node.ID.Get());
+        std::string x = evaluateInput(0, "0.0");
+        std::string y = evaluateInput(1, "0.0");
+        bodyBuilder << "    vec2 " << varName << " = vec2(" << x << ", " << y << ");\n";
+        return varName;
+    }
+};
