@@ -299,6 +299,7 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
             glActiveTexture(GL_TEXTURE14);
             glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->IrradianceMap);
             activeShader->SetInt("uIrradianceMap", 14);
+            
 
             // --- NOUVEAU : ENVOI DES RÉGLAGES DE LA SKYBOX ---
             activeShader->SetFloat("u_SkyboxIntensity", skyboxIntensity);
