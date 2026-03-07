@@ -84,3 +84,41 @@ private:
     UUID m_EntityID;
     nlohmann::json m_EntityData;
 };
+
+class EntityReparentCommand : public IUndoableAction {
+public:
+    EntityReparentCommand(std::shared_ptr<Scene> scene, UUID entityID, uint64_t oldParentID, uint64_t newParentID)
+        : m_Scene(std::move(scene)), m_EntityID(entityID), m_OldParentID(oldParentID), m_NewParentID(newParentID) {}
+
+    void Undo() override {
+        if (auto scene = m_Scene.lock()) {
+            Entity entity = scene->GetEntityByUUID(m_EntityID);
+            if (!entity) return;
+
+            if (m_OldParentID == 0) scene->UnparentEntity(entity);
+            else {
+                Entity oldParent = scene->GetEntityByUUID(m_OldParentID);
+                if (oldParent) scene->ParentEntity(entity, oldParent);
+            }
+        }
+    }
+
+    void Redo() override {
+        if (auto scene = m_Scene.lock()) {
+            Entity entity = scene->GetEntityByUUID(m_EntityID);
+            if (!entity) return;
+
+            if (m_NewParentID == 0) scene->UnparentEntity(entity);
+            else {
+                Entity newParent = scene->GetEntityByUUID(m_NewParentID);
+                if (newParent) scene->ParentEntity(entity, newParent);
+            }
+        }
+    }
+
+private:
+    std::weak_ptr<Scene> m_Scene;
+    UUID m_EntityID;
+    uint64_t m_OldParentID;
+    uint64_t m_NewParentID;
+};

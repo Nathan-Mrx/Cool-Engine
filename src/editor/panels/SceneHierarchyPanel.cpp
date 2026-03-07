@@ -296,16 +296,40 @@ void SceneHierarchyPanel::HandleHierarchyShortcuts() {
         m_RenamingEntity = m_SelectionContext;
         snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", m_SelectionContext.GetComponent<TagComponent>().Tag.c_str());
     }
+    // Raccourci de Suppression (Le Undo est déjà géré dans OnImGuiRender !)
+    if (ImGui::IsWindowFocused() && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && m_SelectionContext) {
+        m_EntityToDestroy = m_SelectionContext;
+    }
 }
 
 void SceneHierarchyPanel::HandleHierarchyEmptySpaceDragDrop() {
     ImGui::Dummy(ImGui::GetContentRegionAvail());
     if (ImGui::BeginDragDropTarget()) {
+        // Dé-parenter une entité (La ramener à la racine)
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_HIERARCHY_ENTITY")) {
+            uint64_t droppedUUID = *(const uint64_t*)payload->Data;
+            Entity droppedEntity = m_Context->GetEntityByUUID(droppedUUID);
+            if (droppedEntity && droppedEntity.HasComponent<RelationshipComponent>() && droppedEntity.GetComponent<RelationshipComponent>().Parent != entt::null) {
+                uint64_t oldParentUUID = Entity{droppedEntity.GetComponent<RelationshipComponent>().Parent, m_Context.get()}.GetUUID();
+
+                m_Context->UnparentEntity(droppedEntity);
+
+                UndoManager::BeginTransaction("Unparent Node");
+                UndoManager::PushAction(std::make_unique<EntityReparentCommand>(m_Context, droppedEntity.GetUUID(), oldParentUUID, 0));
+                UndoManager::EndTransaction();
+            }
+        }
+        // Lâcher un Prefab à la racine
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
             std::filesystem::path filepath = (const char*)payload->Data;
             if (filepath.extension() == ".ceprefab") {
                 SceneSerializer serializer(m_Context);
-                serializer.DeserializePrefab(filepath.string());
+                Entity prefabRoot = serializer.DeserializePrefab(filepath.string());
+                if (prefabRoot) {
+                    UndoManager::BeginTransaction("Instantiate Prefab");
+                    UndoManager::PushAction(std::make_unique<EntityLifecycleCommand>(m_Context, EntityLifecycleCommand::ActionType::Create, serializer.SerializeEntity(prefabRoot)));
+                    UndoManager::EndTransaction();
+                }
             }
         }
         ImGui::EndDragDropTarget();
@@ -445,13 +469,49 @@ bool SceneHierarchyPanel::DrawEntityNodeRenaming(Entity entity, ImGuiTreeNodeFla
 }
 
 void SceneHierarchyPanel::HandleEntityNodeDragDrop(Entity entity) {
+    // 1. Source : Permet de glisser cette entité
+    if (ImGui::BeginDragDropSource()) {
+        uint64_t uuid = entity.GetUUID();
+        ImGui::SetDragDropPayload("SCENE_HIERARCHY_ENTITY", &uuid, sizeof(uint64_t));
+        ImGui::Text("%s", entity.GetComponent<TagComponent>().Tag.c_str());
+        ImGui::EndDragDropSource();
+    }
+
+    // 2. Cible : Permet de lâcher quelque chose SUR cette entité
     if (ImGui::BeginDragDropTarget()) {
+        // A. Lâcher une autre entité pour la parenter
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_HIERARCHY_ENTITY")) {
+            uint64_t droppedUUID = *(const uint64_t*)payload->Data;
+            Entity droppedEntity = m_Context->GetEntityByUUID(droppedUUID);
+
+            if (droppedEntity && droppedEntity != entity) {
+                uint64_t oldParentUUID = 0;
+                if (droppedEntity.HasComponent<RelationshipComponent>()) {
+                    entt::entity pID = droppedEntity.GetComponent<RelationshipComponent>().Parent;
+                    if (pID != entt::null) oldParentUUID = Entity{pID, m_Context.get()}.GetUUID();
+                }
+
+                m_Context->ParentEntity(droppedEntity, entity);
+
+                UndoManager::BeginTransaction("Reparent Node");
+                UndoManager::PushAction(std::make_unique<EntityReparentCommand>(m_Context, droppedEntity.GetUUID(), oldParentUUID, entity.GetUUID()));
+                UndoManager::EndTransaction();
+            }
+        }
+
+        // B. Lâcher un Prefab pour l'instancier en tant qu'enfant ! (UNDO AJOUTÉ)
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
             std::filesystem::path filepath = (const char*)payload->Data;
             if (filepath.extension() == ".ceprefab") {
                 SceneSerializer serializer(m_Context);
                 Entity prefabRoot = serializer.DeserializePrefab(filepath.string());
-                if (prefabRoot) m_Context->ParentEntity(prefabRoot, entity);
+                if (prefabRoot) {
+                    m_Context->ParentEntity(prefabRoot, entity);
+
+                    UndoManager::BeginTransaction("Instantiate Prefab");
+                    UndoManager::PushAction(std::make_unique<EntityLifecycleCommand>(m_Context, EntityLifecycleCommand::ActionType::Create, serializer.SerializeEntity(prefabRoot)));
+                    UndoManager::EndTransaction();
+                }
             }
         }
         ImGui::EndDragDropTarget();
@@ -460,6 +520,8 @@ void SceneHierarchyPanel::HandleEntityNodeDragDrop(Entity entity) {
 
 void SceneHierarchyPanel::DrawEntityNodeContextMenu(Entity entity, bool hasScript, bool isPrefab) {
     if (ImGui::BeginPopupContextItem()) {
+
+        // --- SECTION SCRIPT ---
         if (!hasScript) {
             if (ImGui::BeginMenu("Attach Script...")) {
                 for (auto const& [name, func] : ScriptRegistry::Registry) {
@@ -479,17 +541,53 @@ void SceneHierarchyPanel::DrawEntityNodeContextMenu(Entity entity, bool hasScrip
         }
 
         ImGui::Separator();
+
+        // --- SECTION CREATE CHILD (Dynamique via le CHT !) ---
         if (!isPrefab) {
             if (ImGui::BeginMenu("Create Child")) {
-                if (ImGui::MenuItem("Empty Node")) {
-                    Entity child = m_Context->CreateEntity("Empty Node");
-                    m_Context->ParentEntity(child, entity);
+
+                // Fonction locale pour créer l'enfant et gérer l'Undo
+                auto createChildNode = [&](const NodeRegistryEntry& node) {
+                    Entity child = m_Context->CreateEntity(node.Name);
+                    node.SetupFunc(child);
+                    m_Context->ParentEntity(child, entity); // On parente directement à l'entité sur laquelle on a fait clic-droit
+
+                    // Enregistrement pour le Undo global
+                    SceneSerializer serializer(m_Context);
+                    UndoManager::BeginTransaction("Create Child " + node.Name);
+                    UndoManager::PushAction(std::make_unique<EntityLifecycleCommand>(
+                        m_Context, EntityLifecycleCommand::ActionType::Create, serializer.SerializeEntity(child)
+                    ));
+                    UndoManager::EndTransaction();
+                };
+
+                // 1. Afficher les noeuds sans catégorie d'abord
+                if (NodeRegistry::Categories.find("") != NodeRegistry::Categories.end()) {
+                    for (const auto& node : NodeRegistry::Categories[""]) {
+                        if (ImGui::MenuItem(node.Name.c_str())) createChildNode(node);
+                    }
+                    ImGui::Separator();
                 }
+
+                // 2. Afficher les catégories sous forme de sous-menus
+                for (const auto& [category, nodes] : NodeRegistry::Categories) {
+                    if (category.empty()) continue; // Déjà géré au-dessus
+
+                    if (ImGui::BeginMenu(category.c_str())) {
+                        for (const auto& node : nodes) {
+                            if (ImGui::MenuItem(node.Name.c_str())) createChildNode(node);
+                        }
+                        ImGui::EndMenu();
+                    }
+                }
+
                 ImGui::EndMenu();
             }
         }
 
         ImGui::Separator();
+
+        // --- SECTION DESTRUCTON ---
         if (ImGui::MenuItem("Delete Node")) m_EntityToDestroy = entity;
 
         ImGui::EndPopup();

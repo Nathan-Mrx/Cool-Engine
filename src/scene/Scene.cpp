@@ -156,37 +156,6 @@ void Scene::OnUpdateScripts(float ts) {
     }
 }
 
-void Scene::ParentEntity(Entity entity, Entity parent) {
-    // 1. On s'assure que les deux ont le composant
-    if (!entity.HasComponent<RelationshipComponent>()) entity.AddComponent<RelationshipComponent>();
-    if (!parent.HasComponent<RelationshipComponent>()) parent.AddComponent<RelationshipComponent>();
-
-    auto& rel = entity.GetComponent<RelationshipComponent>();
-    auto& parentRel = parent.GetComponent<RelationshipComponent>();
-
-    // 2. On définit le parent
-    rel.Parent = parent;
-
-    // 3. On l'ajoute à la liste des enfants du parent
-    if (parentRel.FirstChild == entt::null) {
-        // C'est le tout premier enfant !
-        parentRel.FirstChild = entity;
-    } else {
-        // Il a déjà des enfants, on cherche le dernier "frère" de la liste
-        entt::entity current = parentRel.FirstChild;
-        auto* currentRel = &m_Registry.get<RelationshipComponent>(current);
-
-        while (currentRel->NextSibling != entt::null) {
-            current = currentRel->NextSibling;
-            currentRel = &m_Registry.get<RelationshipComponent>(current);
-        }
-
-        // On attache notre entité à la fin de la fratrie
-        currentRel->NextSibling = entity;
-        rel.PreviousSibling = current;
-    }
-}
-
 glm::mat4 Scene::GetWorldTransform(Entity entity) {
     glm::mat4 transform(1.0f);
 
@@ -210,4 +179,70 @@ glm::mat4 Scene::GetWorldTransform(Entity entity) {
 
 UUID Entity::GetUUID() {
     return GetComponent<IDComponent>().ID;
+}
+
+void Scene::UnparentEntity(Entity entity) {
+    if (!entity || !entity.HasComponent<RelationshipComponent>()) return;
+    auto& rel = entity.GetComponent<RelationshipComponent>();
+
+    if (rel.Parent != entt::null) {
+        Entity parent{ rel.Parent, this };
+        auto& parentRel = parent.GetComponent<RelationshipComponent>();
+
+        // Si on était le premier enfant, on passe le relais au suivant
+        if (parentRel.FirstChild == entity) {
+            parentRel.FirstChild = rel.NextSibling;
+        }
+        // On recoud les liens entre le frère précédent et le frère suivant
+        if (rel.PreviousSibling != entt::null) {
+            Entity prev{ rel.PreviousSibling, this };
+            prev.GetComponent<RelationshipComponent>().NextSibling = rel.NextSibling;
+        }
+        if (rel.NextSibling != entt::null) {
+            Entity next{ rel.NextSibling, this };
+            next.GetComponent<RelationshipComponent>().PreviousSibling = rel.PreviousSibling;
+        }
+    }
+
+    rel.Parent = entt::null;
+    rel.NextSibling = entt::null;
+    rel.PreviousSibling = entt::null;
+}
+
+void Scene::ParentEntity(Entity entity, Entity parent) {
+    if (!entity || !parent || entity == parent) return;
+
+    // SÉCURITÉ AAA : Éviter les cycles (Un objet ne peut pas devenir l'enfant de son propre enfant)
+    Entity current = parent;
+    while (current) {
+        if (current == entity) return; // Cycle détecté, on annule !
+        if (current.HasComponent<RelationshipComponent>()) {
+            entt::entity pID = current.GetComponent<RelationshipComponent>().Parent;
+            current = pID != entt::null ? Entity{pID, this} : Entity{};
+        } else break;
+    }
+
+    UnparentEntity(entity); // On le détache proprement de son ancien parent d'abord
+
+    if (!entity.HasComponent<RelationshipComponent>()) entity.AddComponent<RelationshipComponent>();
+    if (!parent.HasComponent<RelationshipComponent>()) parent.AddComponent<RelationshipComponent>();
+
+    auto& rel = entity.GetComponent<RelationshipComponent>();
+    auto& parentRel = parent.GetComponent<RelationshipComponent>();
+
+    rel.Parent = parent;
+
+    // Ajout à la fin de la liste des enfants
+    if (parentRel.FirstChild == entt::null) {
+        parentRel.FirstChild = entity;
+    } else {
+        entt::entity currID = parentRel.FirstChild;
+        auto* currRel = &m_Registry.get<RelationshipComponent>(currID);
+        while (currRel->NextSibling != entt::null) {
+            currID = currRel->NextSibling;
+            currRel = &m_Registry.get<RelationshipComponent>(currID);
+        }
+        currRel->NextSibling = entity;
+        rel.PreviousSibling = currID;
+    }
 }

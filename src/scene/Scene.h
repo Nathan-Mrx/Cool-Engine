@@ -30,6 +30,8 @@ public:
 
     // Gestion de la hiérarchie
     void ParentEntity(Entity entity, Entity parent);
+    void UnparentEntity(Entity entity);
+
     glm::mat4 GetWorldTransform(Entity entity);
 
 private:
