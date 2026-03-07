@@ -1031,6 +1031,8 @@ std::string MaterialEditorPanel::CompileMaterial() {
 
     // --- UNIFORMS IBL ---
     shaderCode << "uniform samplerCube uIrradianceMap;\n\n";
+    shaderCode << "uniform float u_SkyboxIntensity = 0.5;\n";
+    shaderCode << "uniform float u_SkyboxRotation = 0.0;\n\n";
 
     // --- PARAMÈTRES (INSTANCES) ET TEXTURES ---
     for (auto& node : m_Nodes) {
@@ -1235,22 +1237,22 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     #endif
 
     // ========================================================
-    // --- NOUVEAU : APPLICATION RÉALISTE DU CIEL (IBL) ---
+    // --- APPLICATION RÉALISTE DU CIEL (IBL) ---
     // ========================================================
 
-    // 1. On récupère la lumière du ciel (et on baisse l'exposition car les vrais HDR sont surpuissants)
-    float iblExposure = 0.3; // <-- Tu pourras modifier ça ! (0.1 = sombre, 1.0 = plein jour)
-    vec3 irradiance = texture(uIrradianceMap, vec3(N.x, N.z, -N.y)).rgb * iblExposure;
+    // On pivote la normale selon la rotation de la Skybox
+    float skyC = cos(u_SkyboxRotation);
+    float skyS = sin(u_SkyboxRotation);
+    vec3 rotN = N;
+    rotN.xy = vec2(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC);
 
-    // 2. CONSERVATION DE L'ÉNERGIE (Le fix de la texture bizarre)
-    // On calcule l'effet Fresnel ambiant (combien de lumière rebondit selon l'angle de vue)
+    // On applique l'intensité choisie par l'utilisateur
+    vec3 irradiance = texture(uIrradianceMap, vec3(rotN.x, rotN.z, -rotN.y)).rgb * u_SkyboxIntensity;
+
     vec3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
-
-    // kD représente la partie "non métallique" (diffuse) de l'objet
     vec3 kD_ambient = 1.0 - F_ambient;
     kD_ambient *= 1.0 - metallic;
 
-    // 3. La lumière ambiante n'éclaire QUE la partie diffuse !
     vec3 ambient = (kD_ambient * irradiance) * albedo * ao;
 
     // ========================================================

@@ -50,7 +50,8 @@ private:
         // --- SKYBOX ---
         std::unique_ptr<Shader> SkyboxShader;
         uint32_t SkyboxVAO, SkyboxVBO;
-        uint32_t EnvironmentMapID;
+        uint32_t EnvironmentMapID = 0;
+        std::string CurrentSkyboxPath = "";
 
         // --- NOUVEAU : IBL BAKING ---
         std::unique_ptr<Shader> EquirectToCubeShader;
@@ -60,5 +61,5 @@ private:
     };
     static RendererData* s_Data;
 
-    static void SetupIBL(); // Fonction interne
+    static void UpdateSkybox(const std::string& hdrPath);
 };

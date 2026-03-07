@@ -66,3 +66,10 @@ struct PointLightNode {
         // entity.AddComponent<PointLightComponent>();
     }
 };
+
+CE_NODE("Skybox", "Environment")
+struct SkyboxNode {
+    static void Setup(Entity entity) {
+        entity.AddComponent<SkyboxComponent>();
+    }
+};

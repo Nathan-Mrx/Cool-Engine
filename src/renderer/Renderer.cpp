@@ -16,37 +16,19 @@ void Renderer::Init() {
 
     s_Data->SkyboxShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox.frag");
 
-    // Modifie le chemin si ton image s'appelle autrement
-    s_Data->EnvironmentMapID = TextureLoader::LoadHDR("assets/textures/sky.hdr");
-
-    float skyboxVertices[] = {
-        // Face Arrière
-        -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
-        // Face Gauche
-        -1.0f, -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
-        // Face Droite
-         1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
-        // Face Avant
-        -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
-        // Face Haut
-        -1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f,
-        // Face Bas
-        -1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f
-    };
-
-    glGenVertexArrays(1, &s_Data->SkyboxVAO);
-    glGenBuffers(1, &s_Data->SkyboxVBO);
-    glBindVertexArray(s_Data->SkyboxVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, s_Data->SkyboxVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    // --- AJOUTE LA TEXTURE NOIRE PAR DEFAUT POUR LE PBR ---
+    glGenTextures(1, &s_Data->IrradianceMap);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->IrradianceMap);
+    for (unsigned int i = 0; i < 6; ++i) {
+        float black[3] = {0.0f, 0.0f, 0.0f};
+        // On utilise GL_RGB32F comme ce qu'on avait corrigé pour le HDR
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB32F, 1, 1, 0, GL_RGB, GL_FLOAT, black);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
     FramebufferSpecification shadowSpec;
     shadowSpec.Width = 2048;  // Haute résolution (2K) pour des ombres nettes
@@ -94,12 +76,28 @@ void Renderer::Init() {
     glBufferData(GL_ARRAY_BUFFER, sizeof(boxVertices), boxVertices, GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-
-    SetupIBL();
 }
 
 
 void Renderer::RenderScene(Scene* scene, int renderMode) {
+    // =====================================================
+    // 0. LECTURE DE LA SKYBOX
+    // =====================================================
+    std::string activeSkyboxPath = "";
+    float skyboxIntensity = 0.5f; // Valeurs par défaut
+    float skyboxRotation = 0.0f;
+
+    auto skyboxView = scene->m_Registry.view<SkyboxComponent>();
+    for (auto entity : skyboxView) {
+        auto& skybox = skyboxView.get<SkyboxComponent>(entity);
+        activeSkyboxPath = skybox.HDRPath;
+        skyboxIntensity = skybox.Intensity;
+        skyboxRotation = skybox.Rotation;
+        break;
+    }
+
+    UpdateSkybox(activeSkyboxPath);
+
     // =====================================================
     // 1. LECTURE GLOBALE DE LA LUMIÈRE
     // =====================================================
@@ -273,6 +271,10 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
             glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->IrradianceMap);
             activeShader->SetInt("uIrradianceMap", 14);
 
+            // --- NOUVEAU : ENVOI DES RÉGLAGES DE LA SKYBOX ---
+            activeShader->SetFloat("u_SkyboxIntensity", skyboxIntensity);
+            activeShader->SetFloat("u_SkyboxRotation", glm::radians(skyboxRotation));
+
             // On envoie les tableaux de matrices et de distances au Shader
             for (int i = 0; i < 3; i++) {
                 activeShader->SetMat4("uLightSpaceMatrices[" + std::to_string(i) + "]", lightSpaceMatrices[i]);
@@ -301,10 +303,14 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
     // =====================================================
     glDepthFunc(GL_LEQUAL); // Important ! Laisse passer les pixels à la profondeur 1.0 exacte
 
-    if (s_Data->SkyboxShader) {
+    if (!activeSkyboxPath.empty() && s_Data->SkyboxShader && s_Data->EnvironmentMapID) {
         s_Data->SkyboxShader->Use();
         s_Data->SkyboxShader->SetMat4("uView", s_Data->CurrentView);
         s_Data->SkyboxShader->SetMat4("uProjection", s_Data->CurrentProjection);
+
+        // --- NOUVEAU : ENVOI DES RÉGLAGES ---
+        s_Data->SkyboxShader->SetFloat("uIntensity", skyboxIntensity);
+        s_Data->SkyboxShader->SetFloat("uRotation", glm::radians(skyboxRotation));
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, s_Data->EnvironmentMapID);
@@ -498,30 +504,37 @@ void Renderer::SetShadowResolution(uint32_t resolution) {
     }
 }
 
-void Renderer::SetupIBL() {
-    s_Data->EquirectToCubeShader = std::make_unique<Shader>("shaders/cubemap.vert", "shaders/equirect_to_cube.frag");
-    s_Data->IrradianceShader = std::make_unique<Shader>("shaders/cubemap.vert", "shaders/irradiance.frag");
+void Renderer::UpdateSkybox(const std::string& hdrPath) {
+    if (s_Data->CurrentSkyboxPath == hdrPath) return; // Déjà chargée
+    s_Data->CurrentSkyboxPath = hdrPath;
+
+    if (hdrPath.empty()) return;
+
+    uint32_t newEnvMap = TextureLoader::LoadHDR(hdrPath.c_str());
+    if (newEnvMap == 0) return;
+
+    // Sauvegarde du FBO de l'éditeur pour ne pas casser l'affichage
+    GLint previousFBO;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFBO);
+    GLint previousViewport[4];
+    glGetIntegerv(GL_VIEWPORT, previousViewport);
+
+    // Nettoyage des anciennes textures
+    if (s_Data->EnvironmentMapID) glDeleteTextures(1, &s_Data->EnvironmentMapID);
+    if (s_Data->EnvCubemap) glDeleteTextures(1, &s_Data->EnvCubemap);
+    // (L'IrradianceMap de base sera écrasée plus bas, pas besoin de la delete si on réutilise l'ID, mais c'est plus propre)
+    if (s_Data->IrradianceMap) glDeleteTextures(1, &s_Data->IrradianceMap);
+
+    s_Data->EnvironmentMapID = newEnvMap;
+
+    if (!s_Data->EquirectToCubeShader) {
+        s_Data->EquirectToCubeShader = std::make_unique<Shader>("shaders/cubemap.vert", "shaders/equirect_to_cube.frag");
+        s_Data->IrradianceShader = std::make_unique<Shader>("shaders/cubemap.vert", "shaders/irradiance.frag");
+    }
 
     unsigned int captureFBO, captureRBO;
     glGenFramebuffers(1, &captureFBO);
     glGenRenderbuffers(1, &captureRBO);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
-    glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 512, 512);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, captureRBO);
-
-    // 1. TRANSFORMATION EN CUBEMAP
-    glGenTextures(1, &s_Data->EnvCubemap);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->EnvCubemap);
-    for (unsigned int i = 0; i < 6; ++i) {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, 512, 512, 0, GL_RGB, GL_FLOAT, nullptr);
-    }
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
     glm::mat4 captureViews[] = {

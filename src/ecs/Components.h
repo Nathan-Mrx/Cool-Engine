@@ -316,4 +316,13 @@ private:
     }
 };
 
+CE_COMPONENT()
+struct SkyboxComponent {
+    CE_PROPERTY() std::string HDRPath = "";
+
+    // NOUVEAU : Réglages d'exposition et de rotation
+    CE_PROPERTY() float Intensity = 0.5f;
+    CE_PROPERTY() float Rotation = 0.0f; // En degrés
+};
+
 #include "Components.generated.h"

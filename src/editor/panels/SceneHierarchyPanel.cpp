@@ -246,6 +246,47 @@ void DrawComponentUI<NativeScriptComponent>(Entity entity, const std::shared_ptr
     }
 }
 
+template<>
+void DrawComponentUI<SkyboxComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
+    if (entity.HasComponent<SkyboxComponent>()) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx((void*)typeid(SkyboxComponent).hash_code(), flags, "Skybox")) {
+            auto& skybox = entity.GetComponent<SkyboxComponent>();
+
+            // 1. Le chemin du fichier (Avec Drag & Drop)
+            if (!skybox.HDRPath.empty()) {
+                ImGui::TextWrapped("HDR: %s", std::filesystem::path(skybox.HDRPath).filename().string().c_str());
+            } else {
+                ImGui::TextColored(ImVec4(1, 0, 0, 1), "No HDR Assigned");
+            }
+
+            ImGui::Button("Drop .hdr Here", ImVec2(-1, 30));
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                    std::filesystem::path filepath = (const char*)payload->Data;
+                    if (filepath.extension() == ".hdr") {
+                        SkyboxComponent before = skybox;
+                        skybox.HDRPath = filepath.string();
+
+                        UndoManager::BeginTransaction("Assign Skybox HDR");
+                        UndoManager::PushAction(std::make_unique<EntityComponentCommand<SkyboxComponent>>(context, entity.GetUUID(), before, skybox));
+                        UndoManager::EndTransaction();
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            ImGui::Spacing();
+
+            // 2. Les réglages
+            DrawUndoableProperty("Intensity", entity, context, skybox, skybox.Intensity, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.05f, 0.0f, 10.0f); });
+            DrawUndoableProperty("Rotation", entity, context, skybox, skybox.Rotation, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 1.0f, 0.0f, 360.0f); });
+
+            ImGui::TreePop();
+        }
+    }
+}
+
 // =========================================================================================
 // ENTRY POINT DU RENDU UI
 // =========================================================================================
