@@ -7,6 +7,8 @@ uint32_t Renderer::GetIrradianceMapID() { return s_Data->IrradianceMap; }
 
 
 void Renderer::Init() {
+    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+
     s_Data->MainShader = std::make_unique<Shader>("shaders/default.vert", "shaders/default.frag");
     s_Data->GridShader = std::make_unique<Shader>("shaders/grid.vert", "shaders/grid.frag");
     s_Data->LineShader = std::make_unique<Shader>("shaders/line.vert", "shaders/line.frag");

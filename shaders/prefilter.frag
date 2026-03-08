@@ -43,7 +43,10 @@ void main() {
         if(NdotL > 0.0) {
             vec3 color = texture(uEnvironmentMap, L).rgb;
             if(!isnan(color.r) && !isinf(color.r)) {
-                color = min(color, vec3(50.0));
+
+                // --- ON BAISSE LE PLAFOND POUR DÉTRUIRE LES TACHES BLANCHES ---
+                color = min(color, vec3(10.0));
+
                 prefilteredColor += color * NdotL;
                 totalWeight      += NdotL;
             }

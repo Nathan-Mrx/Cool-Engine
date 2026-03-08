@@ -26,17 +26,14 @@ void main() {
     for(float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta) {
         for(float theta = 0.0; theta < 0.5 * PI; theta += sampleDelta) {
             vec3 tangentSample = vec3(sin(theta) * cos(phi),  sin(theta) * sin(phi), cos(theta));
+            // tangent space to world
             vec3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
 
-            vec3 sampledColor = texture(uEnvironmentMap, sampleVec).rgb;
+            // --- LE VACCIN ANTI-CARRÉS ET ANTI-FLICKERING ---
+            vec3 envColor = texture(uEnvironmentMap, sampleVec).rgb;
+            envColor = min(envColor, vec3(10.0)); // On écrase l'énergie nucléaire du soleil !
 
-            // --- SÉCURITÉ MAXIMUM : On n'additionne que si la couleur est 100% saine ---
-            if (!isnan(sampledColor.r) && !isinf(sampledColor.r) &&
-            !isnan(sampledColor.g) && !isnan(sampledColor.b)) {
-
-                irradiance += sampledColor * cos(theta) * sin(theta);
-                nrSamples += 1.0;
-            }
+            irradiance += envColor * cos(theta) * sin(theta);
         }
     }
 
