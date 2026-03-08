@@ -1,5 +1,6 @@
 #include "Mesh.h"
 #include <glad/glad.h>
+#include "RendererAPI.h" // Indispensable pour la vérification !
 
 Mesh::Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices)
     : m_Vertices(vertices), m_Indices(indices)
@@ -8,6 +9,9 @@ Mesh::Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices)
 }
 
 void Mesh::SetupMesh() {
+    // --- SÉCURITÉ VULKAN : On n'alloue pas de VBO/VAO OpenGL ---
+    if (RendererAPI::GetAPI() != RendererAPI::API::OpenGL) return;
+
     // Génération des IDs
     glGenVertexArrays(1, &m_VAO);
     glGenBuffers(1, &m_VBO);
@@ -24,19 +28,15 @@ void Mesh::SetupMesh() {
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_Indices.size() * sizeof(unsigned int), &m_Indices[0], GL_STATIC_DRAW);
 
     // 3. Définition des attributs de sommet
-    // Position (Location 0)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
 
-    // Normales (Location 1)
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Normal));
 
-    // UVs / Coordonnées de texture (Location 2)
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, TexCoords));
 
-    // Tangentes (Location 3)
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Tangent));
 
@@ -44,8 +44,10 @@ void Mesh::SetupMesh() {
 }
 
 void Mesh::Draw() {
+    // --- SÉCURITÉ VULKAN : Pas de dessin OpenGL pur ---
+    if (RendererAPI::GetAPI() != RendererAPI::API::OpenGL) return;
+
     glBindVertexArray(m_VAO);
-    // On utilise glDrawElements car on utilise un Index Buffer (EBO)
     glDrawElements(GL_TRIANGLES, static_cast<unsigned int>(m_Indices.size()), GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 }

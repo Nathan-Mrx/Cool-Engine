@@ -297,7 +297,10 @@ private:
             outFrag << glsl;
             outFrag.close();
 
-            ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
+            // --- SÉCURITÉ VULKAN : On ne crée pas le programme shader OpenGL ---
+            if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+                ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
+            }
         }
 
         if (data.contains("Nodes")) {
