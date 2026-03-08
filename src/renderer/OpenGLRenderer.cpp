@@ -70,7 +70,7 @@ void OpenGLRenderer::Init() {
     shadowSpec.Height = 2048;
     shadowSpec.DepthOnly = true; // Mode spécial qu'on a codé juste avant !
     shadowSpec.Layers = 3;   // <-- LE NIVEAU AAA EST ICI
-    m_Data->ShadowFramebuffer = std::make_unique<Framebuffer>(shadowSpec);
+    m_Data->ShadowFramebuffer = Framebuffer::Create(shadowSpec);
 
     // --- INITIALISATION DE LA GRILLE ---
     float gridVertices[] = {

@@ -50,7 +50,7 @@ private:
 
         // --- NOUVEAU : Le matériel pour les ombres ---
         std::unique_ptr<Shader> ShadowShader;
-        std::unique_ptr<Framebuffer> ShadowFramebuffer;
+        std::shared_ptr<Framebuffer> ShadowFramebuffer;
 
         uint32_t GridVAO, GridVBO;
         uint32_t DebugBoxVAO, DebugBoxVBO;

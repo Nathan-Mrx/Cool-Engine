@@ -28,15 +28,18 @@
 void EditorLayer::OnAttach() {
     LoadEditorPreferences();
 
-    int width, height, channels;
-    stbi_set_flip_vertically_on_load(false);
-    if (unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4)) {
-        glGenTextures(1, &m_SplashTextureID);
-        glBindTexture(GL_TEXTURE_2D, m_SplashTextureID);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-        stbi_image_free(data);
+    // --- SÉCURITÉ : On ne charge la texture brute qu'en OpenGL ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        int width, height, channels;
+        stbi_set_flip_vertically_on_load(false);
+        if (unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4)) {
+            glGenTextures(1, &m_SplashTextureID);
+            glBindTexture(GL_TEXTURE_2D, m_SplashTextureID);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+            stbi_image_free(data);
+        }
     }
 
     AssetRegistry::RegisterAllAssets();
@@ -55,7 +58,7 @@ void EditorLayer::OnAttach() {
     FramebufferSpecification fbSpec{};
     fbSpec.Width = 1280;
     fbSpec.Height = 720;
-    m_ViewportFramebuffer = std::make_unique<Framebuffer>(fbSpec);
+    m_ViewportFramebuffer = Framebuffer::Create(fbSpec);
 }
 
 void EditorLayer::OnDetach() {
@@ -146,46 +149,43 @@ void EditorLayer::OnUpdate(float deltaTime) {
 
     ResizeViewportIfNeeded();
 
-    // Rendu hors-écran dans le Framebuffer
-    m_ViewportFramebuffer->Bind();
-
-    // --- LE VRAI APPEL DE TON RENDERER ---
-    Renderer::Clear();
-
-    // 1. LOGIQUE D'UPDATE
+    // 1. LOGIQUE D'UPDATE (Indépendant de l'API Graphique)
     switch (m_SceneState) {
-        case SceneState::Edit:
-            UpdateEditor(deltaTime);
-            break;
-        case SceneState::Play:
-            UpdateRuntime(deltaTime);
-            break;
-        case SceneState::Pause:
-            // En pause, on met quand même à jour la caméra pour pouvoir bouger
-            UpdateEditor(deltaTime);
-            break;
+    case SceneState::Edit:
+        UpdateEditor(deltaTime);
+        break;
+    case SceneState::Play:
+        UpdateRuntime(deltaTime);
+        break;
+    case SceneState::Pause:
+        UpdateEditor(deltaTime); // On permet le mouvement de caméra en pause
+        break;
     }
 
-    // 2. PREPARATION DES MATRICES
-    // Calcul de la vue et projection depuis l'EditorCamera
-    glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
-    float aspect = m_ViewportSize.x / m_ViewportSize.y;
-    if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
-    glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+    // =========================================================
+    // --- SÉCURITÉ VULKAN ---
+    // On ignore temporairement le dessin de la scène 3D en Vulkan,
+    // tant que Renderer::BeginScene n'est pas implémenté !
+    // =========================================================
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        m_ViewportFramebuffer->Bind();
+        Renderer::Clear();
 
-    // 3. RENDU
-    // --- TES VRAIES FONCTIONS DE RENDERER.H ---
-    Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+        glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+        float aspect = m_ViewportSize.x / m_ViewportSize.y;
+        if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
 
-    Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+        Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+        Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
 
-    if (m_ShowGrid) {
-        Renderer::DrawGrid(true);
+        if (m_ShowGrid) {
+            Renderer::DrawGrid(true);
+        }
+
+        Renderer::EndScene();
+        m_ViewportFramebuffer->Unbind();
     }
-
-    Renderer::EndScene();
-
-    m_ViewportFramebuffer->Unbind();
 }
 
 void EditorLayer::UpdateEditor(float deltaTime) {
@@ -352,7 +352,7 @@ void EditorLayer::DrawTabs() {
             // On calcule la position de l'icône pour qu'elle soit centrée verticalement à gauche
             ImVec2 iconPos = ImVec2(itemMin.x + ImGui::GetStyle().FramePadding.x, itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f);
 
-            if (isKnownAsset && info.IconID != 0) {
+            if (isKnownAsset && info.IconID != 0 && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
                 // On ajoute les UVs inversés : ImVec2(0, 1) et ImVec2(1, 0) pour remettre l'image à l'endroit !
                 ImGui::GetWindowDrawList()->AddImage(
                     (ImTextureID)static_cast<uintptr_t>(info.IconID),
@@ -408,6 +408,9 @@ void EditorLayer::CloseTab(int index) {
 }
 
 void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
+    // --- SÉCURITÉ : Pas encore de lecture de pixels en Vulkan ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return;
+
     if (!m_ViewportFramebuffer) return;
 
     auto& fb = m_ViewportFramebuffer;
@@ -848,7 +851,19 @@ void EditorLayer::DrawViewportWindow() {
     m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
     const uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
-    ImGui::Image((ImTextureID)static_cast<uintptr_t>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+
+    // --- SÉCURITÉ : On s'assure de ne pas envoyer 0 à Vulkan ---
+    if (textureID != 0) {
+        ImGui::Image((ImTextureID)static_cast<uintptr_t>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+    } else {
+        // En attendant le vrai Framebuffer Vulkan, on dessine un fond gris pour la Vue Scène !
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImGui::GetCursorScreenPos(),
+            ImVec2(ImGui::GetCursorScreenPos().x + m_ViewportSize.x, ImGui::GetCursorScreenPos().y + m_ViewportSize.y),
+            IM_COL32(30, 30, 30, 255)
+        );
+        ImGui::Dummy(ImVec2{ m_ViewportSize.x, m_ViewportSize.y }); // Garde la place occupée
+    }
 
     // --- L'INCRUSTATION DE LA BARRE D'OUTILS (OVERLAY) ---
     ImGui::SetCursorPos(ImVec2(m_ViewportSize.x / 2.0f - 50.0f, 15.0f));

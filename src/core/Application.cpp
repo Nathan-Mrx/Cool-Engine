@@ -10,22 +10,28 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
-// (Plus tard, on ajoutera #include <imgui_impl_vulkan.h> ici)
+#include <imgui_impl_vulkan.h> // Indispensable pour l'architecture Vulkan
 
 #include "editor/UITheme.h"
 #include "physics/PhysicsEngine.h"
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-
 Application* Application::s_Instance = nullptr;
 
 Application::Application(const std::string& name, int width, int height) {
     s_Instance = this;
 
+    // --- DIAGNOSTIC GLFW ---
+    glfwSetErrorCallback([](int error, const char* description) {
+        std::cerr << "[GLFW Error " << error << "] " << description << "\n";
+    });
+
+    // ==========================================
     // 1. SYSTÈME ET FENÊTRE
+    // ==========================================
     if (!glfwInit()) {
-        std::cout << "Erreur: Impossible d'initialiser GLFW!\n";
+        std::cerr << "Erreur: Impossible d'initialiser GLFW!\n";
         return;
     }
 
@@ -42,7 +48,7 @@ Application::Application(const std::string& name, int width, int height) {
         file.close();
     }
 
-    // Le paramètre crucial
+    // Configuration de la fenêtre selon l'API sélectionnée
     if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     } else {
@@ -57,23 +63,27 @@ Application::Application(const std::string& name, int width, int height) {
     if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
         glfwMakeContextCurrent(m_Window);
         if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-            std::cout << "Failed to initialize OpenGL loader!\n";
+            std::cerr << "Failed to initialize OpenGL loader!\n";
         }
         glfwSwapInterval(1);
     }
 
-    // ==========================================================
-    // --- LE FIX EST ICI : ON ALLUME VULKAN IMMÉDIATEMENT ---
-    // Avant ImGui, avant les polices, avant NFD. Aucune corruption possible !
-    // ==========================================================
+    // ==========================================
+    // 2. INITIALISATION MOTEUR GRAPHIQUE
+    // Doit TOUJOURS être appelé avant NFD/ImGui sur Linux (Sécurité Wayland)
+    // ==========================================
     Renderer::Init();
     PhysicsEngine::Init();
 
-    // 2. SYSTÈMES SECONDAIRES
+    // ==========================================
+    // 3. SYSTÈMES SECONDAIRES
+    // ==========================================
     Input::Init(m_Window);
-    NFD::Init(); // Maintenant que Vulkan a sa surface, GTK/Wayland peut s'allumer
+    NFD::Init();
 
-    // 3. IMGUI : CRÉATION ET LIAISON
+    // ==========================================
+    // 4. IMGUI : CONTEXTE DE BASE
+    // ==========================================
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -81,6 +91,9 @@ Application::Application(const std::string& name, int width, int height) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
+    // ==========================================
+    // 5. IMGUI : LIAISON API GRAPHIQUE
+    // ==========================================
     if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
         ImGui_ImplGlfw_InitForOpenGL(m_Window, true);
         ImGui_ImplOpenGL3_Init("#version 460");
@@ -89,18 +102,27 @@ Application::Application(const std::string& name, int width, int height) {
         Renderer::InitImGui(m_Window);
     }
 
-    // 4. THÈME VISUEL (En tout dernier, car il interagit avec ImGui qui est maintenant lié !)
+    // ==========================================
+    // 6. THÈME VISUEL ET POLICES
+    // ==========================================
     UITheme::Apply();
     UITheme::LoadFonts();
+
+    // ==========================================
+    // 7. L'ÉDITEUR
+    // ==========================================
+    m_EditorLayer = std::make_unique<EditorLayer>();
+    m_EditorLayer->OnAttach();
 }
+
 Application::~Application() {
+    // 1. Détacher l'éditeur proprement
     if (m_EditorLayer) {
         m_EditorLayer->OnDetach();
+        m_EditorLayer.reset();
     }
 
-    PhysicsEngine::Shutdown();
-
-    // --- SHUTDOWN IMGUI SELON L'API ---
+    // 2. Éteindre ImGui
     if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
@@ -110,23 +132,30 @@ Application::~Application() {
     }
     ImGui::DestroyContext();
 
-    Renderer::Shutdown();
+    // 3. Éteindre les sous-systèmes
     NFD::Quit();
+    PhysicsEngine::Shutdown();
+    Renderer::Shutdown();
+
+    // 4. Détruire la fenêtre
     glfwDestroyWindow(m_Window);
     glfwTerminate();
 }
 
 void Application::Run() {
-    while (m_Running && !glfwWindowShouldClose(m_Window)) {
+    while (!glfwWindowShouldClose(m_Window)) {
         float time = (float)glfwGetTime();
         m_DeltaTime = time - m_LastFrameTime;
         m_LastFrameTime = time;
 
-        // Indispensable pour garder la fenêtre réactive et lire les inputs
         glfwPollEvents();
 
+        // ==========================================
         // --- BOUCLE DE RENDU OPENGL ---
+        // ==========================================
         if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+
+            Renderer::Clear();
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
@@ -149,19 +178,24 @@ void Application::Run() {
 
             glfwSwapBuffers(m_Window);
         }
+
+        // ==========================================
         // --- BOUCLE DE RENDU VULKAN ---
+        // ==========================================
         else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
 
-            Renderer::Clear(); // Démarre la frame (Bleue)
+            Renderer::Clear();
 
             Renderer::BeginImGuiFrame();
 
-            // Pour l'instant on garde notre Editeur en quarantaine, on teste juste la bête !
-            ImGui::ShowDemoWindow();
+            if (m_EditorLayer) {
+                m_EditorLayer->OnUpdate(m_DeltaTime);
+                m_EditorLayer->OnImGuiRender();
+            }
 
-            Renderer::EndImGuiFrame(); // Injecte l'interface
+            Renderer::EndImGuiFrame();
 
-            Renderer::EndScene(); // Soumet au GPU
+            Renderer::EndScene();
 
             // Support des Viewports ImGui sans crasher Wayland
             if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {

@@ -8,7 +8,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "renderer/Shader.h"
-#include "renderer/Framebuffer.h"
+#include "renderer/OpenGLFramebuffer.h"
 #include "renderer/Mesh.h"
 
 struct MIParameter {

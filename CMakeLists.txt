@@ -23,7 +23,7 @@ set(SOURCES
         src/core/Application.cpp
         src/renderer/Shader.cpp
         src/ecs/Components.h
-        src/renderer/Framebuffer.cpp
+        src/renderer/OpenGLFramebuffer.cpp
         src/core/Input.cpp
         src/project/Project.cpp
         src/renderer/Mesh.cpp
@@ -88,6 +88,9 @@ set(SOURCES
         src/renderer/Renderer.h
         src/renderer/VulkanRenderer.cpp
         src/renderer/VulkanRenderer.h
+        src/renderer/Framebuffer.cpp
+        src/renderer/VulkanFramebuffer.cpp
+        src/renderer/VulkanFramebuffer.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---

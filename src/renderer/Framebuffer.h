@@ -1,43 +1,30 @@
 #pragma once
 
-#include <glad/glad.h>
-#include <iostream>
+#include <memory>
+#include <cstdint>
 
 struct FramebufferSpecification {
     uint32_t Width, Height;
     bool DepthOnly = false;
     uint32_t Layers = 1;
-    // On pourrait ajouter d'autres options ici plus tard (MSAA, formats spécifiques...)
 };
 
 class Framebuffer {
 public:
-    Framebuffer(const FramebufferSpecification& spec);
-    ~Framebuffer();
+    virtual ~Framebuffer() = default;
 
-    void Invalidate();
-    void Bind();
-    void Unbind();
+    virtual void Bind() = 0;
+    virtual void Unbind() = 0;
+    virtual void Resize(uint32_t width, uint32_t height) = 0;
+    virtual void BindDepthLayer(uint32_t layer) = 0;
 
-    void BindDepthLayer(uint32_t layer);
+    virtual int ReadPixel(uint32_t attachmentIndex, int x, int y) = 0;
+    virtual void ClearAttachment(uint32_t attachmentIndex, int value) = 0;
 
-    void Resize(uint32_t width, uint32_t height);
+    virtual uint32_t GetColorAttachmentRendererID() const = 0;
+    virtual uint32_t GetDepthAttachmentRendererID() const = 0;
+    virtual const FramebufferSpecification& GetSpecification() const = 0;
 
-    uint32_t GetColorAttachmentRendererID() const { return m_ColorAttachment; }
-    uint32_t GetDepthAttachmentRendererID() const { return m_DepthAttachment; }
-    const FramebufferSpecification& GetSpecification() const { return m_Specification; }
-
-    int ReadPixel(uint32_t attachmentIndex, int x, int y);
-    void ClearAttachment(uint32_t attachmentIndex, int value);
-
-private:
-    void CreateShadowMap();
-    void CreateNormal();
-
-private:
-    uint32_t m_RendererID = 0;
-    uint32_t m_ColorAttachment = 0;
-    uint32_t m_EntityIDAttachment = 0; // <-- NOUVEAU : Texture pour les IDs
-    uint32_t m_DepthAttachment = 0;
-    FramebufferSpecification m_Specification;
+    // La Factory qui choisira entre OpenGL et Vulkan
+    static std::shared_ptr<Framebuffer> Create(const FramebufferSpecification& spec);
 };

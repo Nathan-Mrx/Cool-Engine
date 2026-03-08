@@ -61,7 +61,7 @@ void MaterialInstanceEditorPanel::Load(const std::filesystem::path& path) {
     if (!m_PreviewFramebuffer) {
         FramebufferSpecification spec;
         spec.Width = 800; spec.Height = 600;
-        m_PreviewFramebuffer = std::make_shared<Framebuffer>(spec);
+        m_PreviewFramebuffer = Framebuffer::Create(spec);
         m_PreviewMesh = PrimitiveFactory::CreateSphere();
     }
 

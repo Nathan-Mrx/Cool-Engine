@@ -96,7 +96,7 @@ MaterialEditorPanel::MaterialEditorPanel() {
     FramebufferSpecification fbSpec;
     fbSpec.Width = 512;
     fbSpec.Height = 512;
-    m_PreviewFramebuffer = std::make_shared<Framebuffer>(fbSpec);
+    m_PreviewFramebuffer = Framebuffer::Create(fbSpec);
     m_PreviewMesh = PrimitiveFactory::CreateSphere();
 
     CompilePreviewShader();

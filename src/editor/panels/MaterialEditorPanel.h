@@ -9,7 +9,7 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
-#include "../../renderer/Framebuffer.h"
+#include "../../renderer/OpenGLFramebuffer.h"
 #include "../../renderer/Mesh.h"
 #include "../../renderer/Shader.h"
 #include "../materials/MaterialGraph.h"

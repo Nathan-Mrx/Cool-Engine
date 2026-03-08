@@ -7,7 +7,7 @@
 #include "panels/SceneHierarchyPanel.h"
 #include "panels/ContentBrowserPanel.h"
 #include "panels/HubPanel.h"
-#include "../renderer/Framebuffer.h"
+#include "../renderer/OpenGLFramebuffer.h"
 #include "../project/ProjectCompiler.h"
 
 #include <imgui.h>
@@ -120,7 +120,7 @@ private:
     SceneHierarchyPanel m_SceneHierarchyPanel;
     std::unique_ptr<ContentBrowserPanel> m_ContentBrowserPanel;
     HubPanel m_HubPanel;
-    std::unique_ptr<Framebuffer> m_ViewportFramebuffer;
+    std::shared_ptr<Framebuffer> m_ViewportFramebuffer;
     bool m_ShowGrid = true;
 
     glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
