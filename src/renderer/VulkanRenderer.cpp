@@ -15,10 +15,16 @@ void VulkanRenderer::Init() {
     PickPhysicalDevice();
     CreateLogicalDevice();
     CreateSwapChain();
+    CreateImageViews();
 }
 
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
+
+    // Destruction des Image Views
+    for (auto imageView : m_SwapChainImageViews) {
+        vkDestroyImageView(m_Device, imageView, nullptr);
+    }
 
     // Destruction de la Swapchain
     if (m_SwapChain != VK_NULL_HANDLE) {
@@ -408,6 +414,44 @@ void VulkanRenderer::CreateSwapChain() {
 
     std::cout << "[Vulkan] Swapchain creee avec " << imageCount << " images (Resolution: "
               << extent.width << "x" << extent.height << ").\n";
+}
+
+// ==============================================================================
+// --- ÉTAPE 5 : LES IMAGE VIEWS (Les "lunettes" pour lire la VRAM) ---
+// ==============================================================================
+void VulkanRenderer::CreateImageViews() {
+    // On redimensionne notre tableau pour qu'il ait exactement la même taille que celui des images
+    m_SwapChainImageViews.resize(m_SwapChainImages.size());
+
+    for (size_t i = 0; i < m_SwapChainImages.size(); i++) {
+        VkImageViewCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = m_SwapChainImages[i];
+
+        // C'est une image 2D classique
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.format = m_SwapChainImageFormat;
+
+        // On ne mélange pas les couleurs (le rouge reste rouge, etc.)
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+        // On définit l'objectif de l'image (C'est pour y mettre des couleurs, pas de la profondeur)
+        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createInfo.subresourceRange.baseMipLevel = 0;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = 0;
+        createInfo.subresourceRange.layerCount = 1;
+
+        // On crée la vue !
+        if (vkCreateImageView(m_Device, &createInfo, nullptr, &m_SwapChainImageViews[i]) != VK_SUCCESS) {
+            throw std::runtime_error("Erreur fatale: Impossible de creer une Image View !");
+        }
+    }
+
+    std::cout << "[Vulkan] " << m_SwapChainImageViews.size() << " Image Views creees avec succes.\n";
 }
 
 // --------------------------------------------------------------
