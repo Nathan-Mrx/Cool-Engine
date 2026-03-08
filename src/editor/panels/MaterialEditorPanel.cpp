@@ -1077,27 +1077,19 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << R"(
 const float PI = 3.14159265359;
 
-// --- LE SECRET DES COULEURS AAA : ACES TONEMAPPING ---
 vec3 ACESFilm(vec3 x) {
-    float a = 2.51f;
-    float b = 0.03f;
-    float c = 2.43f;
-    float d = 0.59f;
-    float e = 0.14f;
+    float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
     return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
 
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness*roughness;
-    float a2 = a*a;
-    float NdotH = max(dot(N, H), 0.0);
+    float a = roughness*roughness; float a2 = a*a; float NdotH = max(dot(N, H), 0.0);
     float denom = (NdotH*NdotH * (a2 - 1.0) + 1.0);
     return a2 / (PI * denom * denom);
 }
 
 float GeometrySchlickGGX(float NdotV, float roughness) {
-    float r = (roughness + 1.0);
-    float k = (r*r) / 8.0;
+    float r = (roughness + 1.0); float k = (r*r) / 8.0;
     return NdotV / (NdotV * (1.0 - k) + k);
 }
 
@@ -1109,6 +1101,7 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// --- LE FIX DE LA SURBRILLANCE (HALO LUMINEUX) ---
 vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
@@ -1234,25 +1227,34 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     std::unordered_set<int> visitedNodes;
     std::stringstream bodyBuilder;
 
-    std::string v_baseColor = (rootNode->Inputs.size() > 0) ? EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder) : "vec3(1.0)";
-    std::string v_normal    = (rootNode->Inputs.size() > 1) ? EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder) : "vec3(0.5, 0.5, 1.0)";
-    std::string v_metallic  = (rootNode->Inputs.size() > 2) ? EvaluatePinGLSL(rootNode->Inputs[2].ID, visitedNodes, bodyBuilder) : "0.0";
-    std::string v_roughness = (rootNode->Inputs.size() > 3) ? EvaluatePinGLSL(rootNode->Inputs[3].ID, visitedNodes, bodyBuilder) : "0.5";
-    std::string v_specular  = (rootNode->Inputs.size() > 4) ? EvaluatePinGLSL(rootNode->Inputs[4].ID, visitedNodes, bodyBuilder) : "0.5";
-    std::string v_ao        = (rootNode->Inputs.size() > 5) ? EvaluatePinGLSL(rootNode->Inputs[5].ID, visitedNodes, bodyBuilder) : "1.0";
+    // LE FIX ABSOLU DES PINS DÉBRANCHÉS
+    auto getRootPin = [&](int index, const std::string& fallback) {
+        if (index >= rootNode->Inputs.size()) return fallback;
+        bool hasLink = false;
+        for (auto& l : m_Links) {
+            if (l.EndPinID == rootNode->Inputs[index].ID) { hasLink = true; break; }
+        }
+        if (hasLink) return EvaluatePinGLSL(rootNode->Inputs[index].ID, visitedNodes, bodyBuilder);
+        return fallback;
+    };
 
-    // Détecter si le pin Normal est connecté (pour éviter le TBN dégénéré)
+    std::string v_baseColor = getRootPin(0, "vec3(1.0)");
+
+    // Si la normale est débranchée, on force un bleu flat parfait (0.5, 0.5, 1.0) !
+    std::string v_normal    = getRootPin(1, "vec3(0.5, 0.5, 1.0)");
+
+    std::string v_metallic  = getRootPin(2, "0.0");
+    std::string v_roughness = getRootPin(3, "0.5");
+    std::string v_specular  = getRootPin(4, "0.5");
+    std::string v_ao        = getRootPin(5, "1.0");
+
+    // --- LE FIX DE COMPILATION : On remet le détecteur disparu ! ---
     bool normalConnected = false;
     if (rootNode->Inputs.size() > 1) {
         for (auto& link : m_Links) {
             if (link.EndPinID == rootNode->Inputs[1].ID) { normalConnected = true; break; }
         }
     }
-
-    if (v_baseColor.empty() || v_baseColor.find("vec3(0") != std::string::npos) v_baseColor = "vec3(1.0)";
-    if (v_metallic.empty())  v_metallic = "0.0";
-    if (v_roughness.empty()) v_roughness = "0.5";
-    if (v_ao.empty() || v_ao == "0.0" || v_ao == "0") v_ao = "1.0";
 
     // ========================================================
     // --- MAIN ---
@@ -1278,24 +1280,22 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     shaderCode << "        return;\n";
     shaderCode << "    }\n";
 
-    shaderCode << "    // --- LE BOUCLIER ANTI-DIVISION PAR ZÉRO ---\n";
+    // --- LE BOUCLIER ANTI-DIVISION PAR ZÉRO ---
     shaderCode << "    roughness = clamp(roughness, 0.05, 1.0);\n";
     shaderCode << "    ao = clamp(ao, 0.05, 1.0);\n\n";
 
-    // --- GEOMETRIC SPECULAR ANTI-ALIASING (Style Filament/UE5) ---
-    shaderCode << "    // Specular AA : adoucit le speculaire sur les details haute frequence de la normal map\n";
-    shaderCode << "    float normalVariance = length(fwidth(N));\n";
-    shaderCode << "    float aaRoughness2 = roughness * roughness + 0.15 * normalVariance * normalVariance;\n";
-    shaderCode << "    roughness = clamp(sqrt(aaRoughness2), roughness, 1.0);\n\n";
+    // J'ai supprimé l'AA Spéculaire qui détruisait tes Normal Maps !
 
     // --- LE CÂBLAGE FINAL OMBRE + PBR ---
     shaderCode << R"(
-    // --- LES 3 VECTEURS INDISPENSABLES ---
+    roughness = clamp(roughness, 0.05, 1.0);
+    ao = clamp(ao, 0.01, 1.0);
+
     vec3 V = normalize(uViewPos - vFragPos);
     vec3 L = normalize(-uLightDir);
-    vec3 H = normalize(V + L + vec3(0.000001)); // Le +0.000001 évite une division par zéro !
+    vec3 H = normalize(V + L + vec3(0.000001));
 
-    vec3 F0 = vec3(0.08 * specularValue);
+    vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
     vec3 radiance = uLightColor;
 
@@ -1304,17 +1304,10 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     vec3 numerator    = NDF * G * F;
-
-    // --- LE FIX MATHÉMATIQUE (Pour éviter la division par zéro) ---
-    float denominator = 4.0 * max(dot(N, V), 0.001) * max(dot(N, L), 0.001);
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
     vec3 specular = numerator / denominator;
 
-    // --- LE VACCIN ANTI-STRIES JAUNES ULTIME (Destruction de l'empoisonnement NaN) ---
-    if (isnan(specular.x) || isnan(specular.y) || isnan(specular.z) || isinf(specular.x)) {
-        specular = vec3(0.0);
-    } else {
-        specular = clamp(specular, vec3(0.0), vec3(4.0));
-    }
+    specular = clamp(specular, vec3(0.0), vec3(10.0));
 
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
@@ -1337,14 +1330,20 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
 
     // 1. DIFFUSE IBL
     vec3 rotN = vec3(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC, N.z);
-    vec3 irradiance = texture(uIrradianceMap, rotN).rgb * u_SkyboxIntensity;
+
+    // Le -rotN.y fait le pont entre Z-Up et Y-Up !
+    vec3 iblNormal = vec3(rotN.x, rotN.z, -rotN.y);
+    vec3 irradiance = texture(uIrradianceMap, iblNormal).rgb * u_SkyboxIntensity;
 
     // 2. SPECULAR IBL (Les reflets dynamiques !)
     vec3 R = reflect(-V, N);
     vec3 rotR = vec3(R.x * skyC - R.y * skyS, R.x * skyS + R.y * skyC, R.z);
 
     const float MAX_REFLECTION_LOD = 4.0;
-    vec3 prefilteredColor = textureLod(uPrefilterMap, rotR, roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity;
+
+    // Le même fix pour les reflets !
+    vec3 iblReflect = vec3(rotR.x, rotR.z, -rotR.y);
+    vec3 prefilteredColor = textureLod(uPrefilterMap, iblReflect, roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity;
 
     vec2 envBRDF = texture(uBRDFLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
 
@@ -1362,7 +1361,7 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
 
     // --- LE BOUCLIER ANTI-INVISIBILITÉ LINUX ---
     if (isnan(color.x) || isnan(color.y) || isnan(color.z) || isinf(color.x)) {
-        color = vec3(0.0); // Le noir pur vaut mieux que l'invisibilité !
+        color = vec3(0.0);
     }
 
     // Tonemapping ACES
