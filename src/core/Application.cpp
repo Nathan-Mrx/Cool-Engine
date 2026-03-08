@@ -10,6 +10,7 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+// (Plus tard, on ajoutera #include <imgui_impl_vulkan.h> ici)
 
 #include "editor/UITheme.h"
 #include "physics/PhysicsEngine.h"
@@ -22,7 +23,7 @@ Application* Application::s_Instance = nullptr;
 Application::Application(const std::string& name, int width, int height) {
     s_Instance = this;
 
-    // 1. Initialisation système (GLFW, GLAD, etc.)
+    // 1. Initialisation système (GLFW)
     if (!glfwInit()) return;
 
     // --- LECTURE DE LA TAILLE SAUVEGARDÉE ---
@@ -32,7 +33,6 @@ Application::Application(const std::string& name, int width, int height) {
         nlohmann::json data;
         try {
             file >> data;
-            // On écrase les dimensions par défaut si elles existent dans le fichier
             width = data.value("WindowWidth", width);
             height = data.value("WindowHeight", height);
             maximized = data.value("WindowMaximized", false);
@@ -40,53 +40,85 @@ Application::Application(const std::string& name, int width, int height) {
         file.close();
     }
 
-    // Création de la fenêtre avec les dimensions restaurées
+    // --- CONFIGURATION DE LA FENÊTRE SELON L'API ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+        // On interdit formellement à GLFW de créer un contexte OpenGL
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    } else {
+        // Configuration classique pour OpenGL
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    }
+
+    // Création de la fenêtre
     m_Window = glfwCreateWindow(width, height, name.c_str(), nullptr, nullptr);
 
-    // Si on l'avait fermée maximisée, on restaure cet état
     if (maximized) {
         glfwMaximizeWindow(m_Window);
     }
 
-    glfwMakeContextCurrent(m_Window);
-    gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-    glfwSwapInterval(1);
+    // --- INITIALISATION DE GLAD (OPENGL UNIQUEMENT) ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        glfwMakeContextCurrent(m_Window);
+        if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+            std::cout << "Failed to initialize OpenGL loader!\n";
+        }
+        glfwSwapInterval(1);
+    }
 
     Input::Init(m_Window);
     NFD::Init();
 
-    // 2. INITIALISATION IMGUI
+    // 2. INITIALISATION IMGUI (Partie commune)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;    // Pour ton layout macOS-style
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;  // Permet de sortir les fenêtres de l'app
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
     UITheme::Apply();
     UITheme::LoadFonts();
 
-    // Liaison avec les backends
-    ImGui_ImplGlfw_InitForOpenGL(m_Window, true);
-    ImGui_ImplOpenGL3_Init("#version 460"); // Aligné sur tes shaders
+    // --- LIAISON IMGUI AVEC L'API ACTIVE ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        ImGui_ImplGlfw_InitForOpenGL(m_Window, true);
+        ImGui_ImplOpenGL3_Init("#version 460");
+    }
+    else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+        // Pour l'instant on laisse vide, l'éditeur ne s'affichera pas,
+        // mais le moteur ne crashera pas !
+    }
 
-    // 3. Initialisation des moteurs de haut niveau
-    Renderer::Init();
-
+    // 3. Initialisation des moteurs de bas et haut niveau
+    Renderer::Init(); // C'est ici que VulkanRenderer::Init() est appelé !
     PhysicsEngine::Init();
 
-    m_EditorLayer = std::make_unique<EditorLayer>();
-    m_EditorLayer->OnAttach();
+    // --- LE FIX SIGSEGV EST ICI ---
+    // On instancie l'Editeur SEULEMENT en OpenGL pour éviter qu'il n'appelle
+    // des Framebuffers ou Textures sans que GLAD ne soit chargé !
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        m_EditorLayer = std::make_unique<EditorLayer>();
+        m_EditorLayer->OnAttach();
+    }
 }
 
 Application::~Application() {
-    m_EditorLayer->OnDetach();
+    if (m_EditorLayer) {
+        m_EditorLayer->OnDetach();
+    }
 
     PhysicsEngine::Shutdown();
 
-    // SHUTDOWN IMGUI
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+    // --- SHUTDOWN IMGUI SELON L'API ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+    }
+    else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+        // On détruira l'implémentation Vulkan ici plus tard
+    }
     ImGui::DestroyContext();
 
     Renderer::Shutdown();
@@ -101,37 +133,44 @@ void Application::Run() {
         m_DeltaTime = time - m_LastFrameTime;
         m_LastFrameTime = time;
 
+        // Indispensable pour garder la fenêtre réactive et lire les inputs
         glfwPollEvents();
 
-        // 1. Début de la frame ImGui
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        // --- BOUCLE DE RENDU OPENGL ---
+        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
 
-        // 2. Logique & Rendu de l'Editeur
-        m_EditorLayer->OnUpdate(m_DeltaTime);
-        m_EditorLayer->OnImGuiRender();
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
 
-        // 3. Fin de la frame ImGui
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            if (m_EditorLayer) {
+                m_EditorLayer->OnUpdate(m_DeltaTime);
+                m_EditorLayer->OnImGuiRender();
+            }
 
-        // ---> AJOUTE CE BLOC ICI POUR LES VIEWPORTS <---
-        if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            GLFWwindow* backup_current_context = glfwGetCurrentContext();
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-            glfwMakeContextCurrent(backup_current_context);
+            ImGui::Render();
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+                GLFWwindow* backup_current_context = glfwGetCurrentContext();
+                ImGui::UpdatePlatformWindows();
+                ImGui::RenderPlatformWindowsDefault();
+                glfwMakeContextCurrent(backup_current_context);
+            }
+
+            glfwSwapBuffers(m_Window);
         }
-
-        glfwSwapBuffers(m_Window);
+        // --- BOUCLE DE RENDU VULKAN ---
+        else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+            // Le moteur "tourne dans le vide" pour l'instant
+            // mais il reste parfaitement fluide et prêt à fermer !
+        }
     }
 }
 
 void Application::SetWindowIcon(const std::string& path) {
     GLFWimage images[1];
     int channels;
-    // On charge les pixels de l'icône (PNG recommandé)
     images[0].pixels = stbi_load(path.c_str(), &images[0].width, &images[0].height, &channels, 4);
 
     if (images[0].pixels) {
