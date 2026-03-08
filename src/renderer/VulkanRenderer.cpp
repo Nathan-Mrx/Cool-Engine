@@ -16,10 +16,16 @@ void VulkanRenderer::Init() {
     CreateLogicalDevice();
     CreateSwapChain();
     CreateImageViews();
+    CreateRenderPass();
 }
 
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
+
+    // Destruction du Render Pass
+    if (m_RenderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(m_Device, m_RenderPass, nullptr);
+    }
 
     // Destruction des Image Views
     for (auto imageView : m_SwapChainImageViews) {
@@ -452,6 +458,61 @@ void VulkanRenderer::CreateImageViews() {
     }
 
     std::cout << "[Vulkan] " << m_SwapChainImageViews.size() << " Image Views creees avec succes.\n";
+}
+
+// ==============================================================================
+// --- ÉTAPE 6 : LE RENDER PASS (Le plan de vol de l'image) ---
+// ==============================================================================
+void VulkanRenderer::CreateRenderPass() {
+    // 1. Description de la "Cible" (L'image de la Swapchain)
+    VkAttachmentDescription colorAttachment{};
+    colorAttachment.format = m_SwapChainImageFormat; // Même format que nos images
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT; // Pas d'anti-aliasing MSAA pour l'instant
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // Au début de la frame : on efface l'image (le fameux fond noir)
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // A la fin : on garde le résultat en mémoire pour l'afficher
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+    // La transformation magique de l'image :
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // On se fiche de ce qu'il y avait avant sur l'image
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // A la fin du rendu, elle DOIT être prête pour l'écran !
+
+    // 2. La référence à cette cible pour notre "Sous-passe" de rendu
+    VkAttachmentReference colorAttachmentRef{};
+    colorAttachmentRef.attachment = 0; // Index 0 dans notre futur tableau
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // Format ultra-optimisé pendant qu'on dessine
+
+    // 3. La Sous-passe (Ici on fait un rendu graphique standard)
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorAttachmentRef;
+
+    // 4. Dépendance de synchronisation (Crucial !)
+    // On dit à Vulkan : "Attends que l'écran ait fini de lire l'ancienne image avant d'écrire la nouvelle dessus"
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    // 5. Création finale de l'objet
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = 1;
+    renderPassInfo.pDependencies = &dependency;
+
+    if (vkCreateRenderPass(m_Device, &renderPassInfo, nullptr, &m_RenderPass) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le Render Pass !");
+    }
+
+    std::cout << "[Vulkan] Render Pass cree avec succes.\n";
 }
 
 // --------------------------------------------------------------
