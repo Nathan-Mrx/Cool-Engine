@@ -1331,7 +1331,7 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     // --- LE FIX DES MESHES BLANCS (Séparation Fond / Lumière) ---
     // On bride artificiellement la lumière du ciel HDR pour qu'elle agisse
     // comme une ombre douce de jeu vidéo, sans éclipser le Soleil !
-    float iblExposure = 0.03;
+    float iblExposure = 0.02;
 
     // 1. DIFFUSE IBL
     vec3 rotN = vec3(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC, N.z);
