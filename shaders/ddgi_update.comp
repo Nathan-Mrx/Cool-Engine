@@ -1,0 +1,56 @@
+#version 460 core
+
+// On définit des "groupes de travail".
+// Ici, on dit qu'un groupe = 8x8 pixels = 1 sonde de notre grille d'Irradiance !
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// C'est ici qu'on va écrire notre Atlas 2D géant
+layout(rgba16f, binding = 0) uniform writeonly image2D outIrradiance;
+
+uniform samplerCube uEnvironmentMap; // Notre source de lumière temporaire
+uniform ivec3 uProbeCount;           // (16, 8, 16)
+
+// =========================================================================
+// --- MATHÉMATIQUES DDGI : LE DÉPLIAGE OCTAÉDRIQUE ---
+// Transforme une coordonnée 2D (le pixel du carré) en une direction 3D
+// =========================================================================
+vec3 OctDecode(vec2 f) {
+    f = f * 2.0 - 1.0;
+    vec3 n = vec3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
+    float t = clamp(-n.z, 0.0, 1.0);
+    n.x += n.x >= 0.0 ? -t : t;
+    n.y += n.y >= 0.0 ? -t : t;
+    return normalize(n);
+}
+
+void main() {
+    // 1. Quelle sonde est-on en train de calculer ? (ex: Sonde X=5, Y=2, Z=10)
+    ivec3 probeCoord = ivec3(gl_WorkGroupID.x, gl_WorkGroupID.y, gl_WorkGroupID.z);
+
+    // 2. Conversion en index 1D (de 0 à 2047)
+    int probesPerRow = uProbeCount.x * uProbeCount.y;
+    int probeIndex = probeCoord.x + probeCoord.y * uProbeCount.x + probeCoord.z * probesPerRow;
+
+    // 3. Où se trouve le coin de cette sonde dans notre image géante 2D ?
+    int gridX = probeIndex % probesPerRow;
+    int gridY = probeIndex / probesPerRow;
+
+    // 4. Quel pixel exact est traité par ce thread GPU ?
+    ivec2 pixelCoord = ivec2(gridX * 8 + gl_LocalInvocationID.x, gridY * 8 + gl_LocalInvocationID.y);
+
+    // =========================================================================
+    // --- LE CALCUL DE LA LUMIÈRE ---
+    // =========================================================================
+    // On convertit le pixel local (0 à 7) en UV (0.0 à 1.0)
+    vec2 octUV = (vec2(gl_LocalInvocationID.xy) + 0.5) / 8.0;
+
+    // Dans quelle direction ce pixel regarde-t-il ?
+    vec3 rayDir = OctDecode(octUV);
+
+    // POUR L'INSTANT : Au lieu de faire un vrai raytracing sur les murs de la scène,
+    // on capture simplement le ciel ambiant dans cette direction.
+    vec3 color = texture(uEnvironmentMap, rayDir).rgb;
+
+    // On stocke le résultat brutalement dans la mémoire de la carte graphique !
+    imageStore(outIrradiance, pixelCoord, vec4(color, 1.0));
+}

@@ -118,3 +118,65 @@ void Shader::CheckCompileErrors(unsigned int shader, std::string type) {
         }
     }
 }
+
+// ========================================================
+// --- CONSTRUCTEUR COMPUTE SHADER ---
+// ========================================================
+Shader::Shader(const char* computePath) {
+    // 1. Récupération du code source depuis le fichier
+    std::string computeCode;
+    std::ifstream cShaderFile;
+    cShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    try {
+        cShaderFile.open(computePath);
+        std::stringstream cShaderStream;
+        cShaderStream << cShaderFile.rdbuf();
+        cShaderFile.close();
+        computeCode = cShaderStream.str();
+    } catch (std::ifstream::failure& e) {
+        std::cerr << "ERREUR::SHADER::COMPUTE::FICHIER_NON_LU: " << computePath << std::endl;
+    }
+    const char* cShaderCode = computeCode.c_str();
+
+    // 2. Compilation du Shader
+    unsigned int compute;
+    int success;
+    char infoLog[512];
+
+    compute = glCreateShader(GL_COMPUTE_SHADER);
+    glShaderSource(compute, 1, &cShaderCode, NULL);
+    glCompileShader(compute);
+    glGetShaderiv(compute, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(compute, 512, NULL, infoLog);
+        std::cerr << "ERREUR::SHADER::COMPUTE::COMPILATION_ECHOUEE\n" << infoLog << std::endl;
+    }
+
+    // 3. Création et Link du Programme
+    ID = glCreateProgram();
+    glAttachShader(ID, compute);
+    glLinkProgram(ID);
+    glGetProgramiv(ID, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(ID, 512, NULL, infoLog);
+        std::cerr << "ERREUR::SHADER::PROGRAMME::LINKING_ECHOUE\n" << infoLog << std::endl;
+    }
+
+    // 4. Nettoyage
+    glDeleteShader(compute);
+}
+
+// ========================================================
+// --- MÉTHODES COMPUTE ---
+// ========================================================
+void Shader::Dispatch(unsigned int numGroupsX, unsigned int numGroupsY, unsigned int numGroupsZ) {
+    glDispatchCompute(numGroupsX, numGroupsY, numGroupsZ);
+}
+
+void Shader::IssueMemoryBarrier(unsigned int flags) {
+    glMemoryBarrier(flags);
+}
+
+void Shader::SetInt3(const std::string& name, int v0, int v1, int v2) const {
+    glUniform3i(glGetUniformLocation(ID, name.c_str()), v0, v1, v2);
+}
