@@ -30,6 +30,10 @@ public:
 
     static uint32_t GetIrradianceMapID();
 
+
+    static uint32_t GetBRDFLUTID() { return s_Data->BRDFLUTTexture; }
+    static uint32_t GetPrefilterMapID() { return s_Data->PrefilterMap; }
+
 private:
     struct RendererData {
         std::unique_ptr<Shader> MainShader;
@@ -58,8 +62,14 @@ private:
         std::unique_ptr<Shader> IrradianceShader;
         uint32_t EnvCubemap;
         uint32_t IrradianceMap;
+
+        std::unique_ptr<Shader> PrefilterShader;
+        std::unique_ptr<Shader> BRDFShader;
+        uint32_t PrefilterMap = 0;
+        uint32_t BRDFLUTTexture = 0;
     };
     static RendererData* s_Data;
 
     static void UpdateSkybox(const std::string& hdrPath);
+
 };

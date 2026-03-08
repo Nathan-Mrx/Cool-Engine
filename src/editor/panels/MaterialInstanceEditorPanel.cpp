@@ -319,6 +319,14 @@ void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
         glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
         m_PreviewShader->SetInt("uIrradianceMap", 14);
 
+        glActiveTexture(GL_TEXTURE12);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
+        m_PreviewShader->SetInt("uPrefilterMap", 12);
+
+        glActiveTexture(GL_TEXTURE13);
+        glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
+        m_PreviewShader->SetInt("uBRDFLUT", 13);
+
         int texSlot = 0;
         for (auto& [key, param] : m_Parameters) {
             if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);

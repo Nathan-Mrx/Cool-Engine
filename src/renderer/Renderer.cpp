@@ -5,6 +5,7 @@
 Renderer::RendererData* Renderer::s_Data = new Renderer::RendererData();
 uint32_t Renderer::GetIrradianceMapID() { return s_Data->IrradianceMap; }
 
+
 void Renderer::Init() {
     s_Data->MainShader = std::make_unique<Shader>("shaders/default.vert", "shaders/default.frag");
     s_Data->GridShader = std::make_unique<Shader>("shaders/grid.vert", "shaders/grid.frag");
@@ -105,6 +106,34 @@ void Renderer::Init() {
     glBufferData(GL_ARRAY_BUFFER, sizeof(boxVertices), boxVertices, GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    s_Data->BRDFShader = std::make_unique<Shader>("shaders/brdf.vert", "shaders/brdf.frag");
+
+    glGenTextures(1, &s_Data->BRDFLUTTexture);
+    glBindTexture(GL_TEXTURE_2D, s_Data->BRDFLUTTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, 512, 512, 0, GL_RG, GL_FLOAT, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    unsigned int captureFBO, captureRBO;
+    glGenFramebuffers(1, &captureFBO); glGenRenderbuffers(1, &captureRBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+    glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 512, 512);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_Data->BRDFLUTTexture, 0);
+
+    glViewport(0, 0, 512, 512);
+    s_Data->BRDFShader->Use();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    unsigned int emptyVAO; glGenVertexArrays(1, &emptyVAO); glBindVertexArray(emptyVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glDeleteVertexArrays(1, &emptyVAO);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &captureFBO); glDeleteRenderbuffers(1, &captureRBO);
 }
 
 
@@ -299,7 +328,16 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
             glActiveTexture(GL_TEXTURE14);
             glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->IrradianceMap);
             activeShader->SetInt("uIrradianceMap", 14);
-            
+
+            // --- INJECTION DES REFLETS SPÉCULAIRES (IBL COMPLET) ---
+            glActiveTexture(GL_TEXTURE12);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->PrefilterMap);
+            activeShader->SetInt("uPrefilterMap", 12);
+
+            glActiveTexture(GL_TEXTURE13);
+            glBindTexture(GL_TEXTURE_2D, s_Data->BRDFLUTTexture);
+            activeShader->SetInt("uBRDFLUT", 13);
+
 
             // --- NOUVEAU : ENVOI DES RÉGLAGES DE LA SKYBOX ---
             activeShader->SetFloat("u_SkyboxIntensity", skyboxIntensity);
@@ -333,9 +371,20 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
     // =====================================================
     glDepthFunc(GL_LEQUAL); // Important ! Laisse passer les pixels à la profondeur 1.0 exacte
 
+    // =====================================================
+    // 4. PASSE 3 : SKYBOX (Dernière étape pour optimiser les perfs)
+    // =====================================================
+    glDepthFunc(GL_LEQUAL);
+
     if (!activeSkyboxPath.empty() && s_Data->SkyboxShader && s_Data->EnvironmentMapID) {
         s_Data->SkyboxShader->Use();
-        s_Data->SkyboxShader->SetMat4("uView", s_Data->CurrentView);
+
+        // --- LE FIX DE L'ÉCHELLE (CENTIMÈTRES) ---
+        // On détruit la translation de la caméra (mat3 -> mat4)
+        // pour que le ciel soit gigantesque et suive toujours le joueur !
+        glm::mat4 skyboxView = glm::mat4(glm::mat3(s_Data->CurrentView));
+
+        s_Data->SkyboxShader->SetMat4("uView", skyboxView);
         s_Data->SkyboxShader->SetMat4("uProjection", s_Data->CurrentProjection);
 
         // --- NOUVEAU : ENVOI DES RÉGLAGES ---
@@ -560,6 +609,7 @@ void Renderer::UpdateSkybox(const std::string& hdrPath) {
     if (!s_Data->EquirectToCubeShader) {
         s_Data->EquirectToCubeShader = std::make_unique<Shader>("shaders/cubemap.vert", "shaders/equirect_to_cube.frag");
         s_Data->IrradianceShader = std::make_unique<Shader>("shaders/cubemap.vert", "shaders/irradiance.frag");
+        s_Data->PrefilterShader = std::make_unique<Shader>("shaders/cubemap.vert", "shaders/prefilter.frag");
     }
 
     unsigned int captureFBO, captureRBO;
@@ -625,6 +675,45 @@ void Renderer::UpdateSkybox(const std::string& hdrPath) {
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // 3. PREFILTER MAP (Les reflets)
+    if (s_Data->PrefilterMap) glDeleteTextures(1, &s_Data->PrefilterMap);
+    glGenTextures(1, &s_Data->PrefilterMap);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->PrefilterMap);
+    for (unsigned int i = 0; i < 6; ++i) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB32F, 128, 128, 0, GL_RGB, GL_FLOAT, nullptr);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+
+    s_Data->PrefilterShader->Use();
+    s_Data->PrefilterShader->SetInt("uEnvironmentMap", 0);
+    s_Data->PrefilterShader->SetMat4("uProjection", captureProjection);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->EnvCubemap);
+
+    unsigned int maxMipLevels = 5;
+    for (unsigned int mip = 0; mip < maxMipLevels; ++mip) {
+        unsigned int mipWidth  = static_cast<unsigned int>(128 * std::pow(0.5, mip));
+        unsigned int mipHeight = static_cast<unsigned int>(128 * std::pow(0.5, mip));
+        glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, mipWidth, mipHeight);
+        glViewport(0, 0, mipWidth, mipHeight);
+
+        float roughness = (float)mip / (float)(maxMipLevels - 1);
+        s_Data->PrefilterShader->SetFloat("uRoughness", roughness);
+        for (unsigned int i = 0; i < 6; ++i) {
+            s_Data->PrefilterShader->SetMat4("uView", captureViews[i]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, s_Data->PrefilterMap, mip);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glBindVertexArray(s_Data->SkyboxVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+        }
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
     glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);

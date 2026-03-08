@@ -194,6 +194,14 @@ void MaterialEditorPanel::RenderPreview3D() {
         glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
         m_PreviewShader->SetInt("uIrradianceMap", 14);
 
+        glActiveTexture(GL_TEXTURE12);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
+        m_PreviewShader->SetInt("uPrefilterMap", 12);
+
+        glActiveTexture(GL_TEXTURE13);
+        glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
+        m_PreviewShader->SetInt("uBRDFLUT", 13);
+
         // Injection des valeurs interactives
         int slot = 0;
         for (auto& node : m_Nodes) {
@@ -1034,6 +1042,9 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << "uniform float u_SkyboxIntensity = 0.5;\n";
     shaderCode << "uniform float u_SkyboxRotation = 0.0;\n\n";
 
+    shaderCode << "uniform samplerCube uPrefilterMap;\n";
+    shaderCode << "uniform sampler2D uBRDFLUT;\n";
+
     // --- PARAMÈTRES (INSTANCES) ET TEXTURES ---
     for (auto& node : m_Nodes) {
         if (node.IsParameter) {
@@ -1257,15 +1268,10 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
 
     // --- LE CÂBLAGE FINAL OMBRE + PBR ---
     shaderCode << R"(
-    // --- LE BOUCLIER ANTI-DIVISION PAR ZÉRO ---
-    roughness = clamp(roughness, 0.05, 1.0); // Le GGX explose si roughness = 0.0 !
-    ao = clamp(ao, 0.01, 1.0);
-
+    // --- LES 3 VECTEURS INDISPENSABLES ---
     vec3 V = normalize(uViewPos - vFragPos);
     vec3 L = normalize(-uLightDir);
-
-    // On ajoute un micro-vecteur à H pour éviter que (V + L) vaille exactement 0
-    vec3 H = normalize(V + L + vec3(0.000001));
+    vec3 H = normalize(V + L + vec3(0.000001)); // Le +0.000001 évite une division par zéro !
 
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
@@ -1276,12 +1282,17 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     vec3 numerator    = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+
+    // --- LE FIX MATHÉMATIQUE (Pour éviter la division par zéro) ---
+    float denominator = 4.0 * max(dot(N, V), 0.001) * max(dot(N, L), 0.001);
     vec3 specular = numerator / denominator;
 
-    // --- LE VACCIN ANTI-FIREFLIES ---
-    // Détruit les mathématiques absurdes générées par des Normal Maps très bruyantes
-    specular = clamp(specular, vec3(0.0), vec3(10.0));
+    // --- LE VACCIN ANTI-STRIES JAUNES ULTIME (Destruction de l'empoisonnement NaN) ---
+    if (isnan(specular.x) || isnan(specular.y) || isnan(specular.z) || isinf(specular.x)) {
+        specular = vec3(0.0);
+    } else {
+        specular = clamp(specular, vec3(0.0), vec3(10.0));
+    }
 
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
@@ -1290,35 +1301,54 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     float NdotL = max(dot(N, L), 0.0);
     vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
 
-    // --- APPLICATION DE L'OMBRE ICI ---
     #ifndef IS_PREVIEW_VIEWPORT
         vec2 shadowData = ShadowCalculation(vFragPos, N, L);
         float shadow = shadowData.x;
     #else
-        float shadow = 0.0; // Pas d'ombre dans la bulle de preview !
+        float shadow = 0.0;
     #endif
 
-    // --- APPLICATION RÉALISTE DU CIEL (IBL) ---
-    float skyC = cos(u_SkyboxRotation);
-    float skyS = sin(u_SkyboxRotation);
-    vec3 rotN = N;
-    rotN.xy = vec2(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC);
+    // ========================================================
+    // --- APPLICATION RÉALISTE DU CIEL (IBL COMPLET) ---
+    // ========================================================
+    float skyC = cos(u_SkyboxRotation); float skyS = sin(u_SkyboxRotation);
 
-    vec3 irradiance = texture(uIrradianceMap, vec3(rotN.x, rotN.z, -rotN.y)).rgb * u_SkyboxIntensity;
+    // 1. DIFFUSE IBL
+    vec3 rotN = N; rotN.xy = vec2(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC);
+
+    // --- LE FIX Z-UP (On passe à +rotN.y !) ---
+    vec3 irradiance = texture(uIrradianceMap, vec3(rotN.x, rotN.z, rotN.y)).rgb * u_SkyboxIntensity;
+
+    // 2. SPECULAR IBL (Les reflets dynamiques !)
+    vec3 R = reflect(-V, N);
+    vec3 rotR = R; rotR.xy = vec2(R.x * skyC - R.y * skyS, R.x * skyS + R.y * skyC);
+
+    const float MAX_REFLECTION_LOD = 4.0;
+
+    // --- LE FIX Z-UP POUR LE MIROIR (+rotR.y) ---
+    vec3 prefilteredColor = textureLod(uPrefilterMap, vec3(rotR.x, rotR.z, rotR.y), roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity;
+
+    vec2 envBRDF = texture(uBRDFLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
 
     vec3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
     vec3 kD_ambient = 1.0 - F_ambient;
     kD_ambient *= 1.0 - metallic;
 
-    vec3 ambient = (kD_ambient * irradiance) * albedo * ao;
+    vec3 diffuseIBL = irradiance * albedo;
+    vec3 specularIBL = prefilteredColor * (F_ambient * envBRDF.x + envBRDF.y);
+
+    vec3 ambient = (kD_ambient * diffuseIBL + specularIBL) * ao;
 
     // ========================================================
     vec3 color = ambient + (1.0 - shadow) * Lo;
 
-    // Garde la saturation parfaite des marrons et jaunes du rotin !
-    color = ACESFilm(color);
+    // --- LE BOUCLIER ANTI-INVISIBILITÉ LINUX ---
+    if (isnan(color.x) || isnan(color.y) || isnan(color.z) || isinf(color.x)) {
+        color = vec3(0.0); // Le noir pur vaut mieux que l'invisibilité !
+    }
 
-    // Gamma Correction finale (Indispensable pour l'écran)
+    // Tonemapping ACES
+    color = ACESFilm(color);
     color = pow(color, vec3(1.0/2.2));
 
     FragColor = vec4(color, 1.0);
