@@ -53,6 +53,7 @@ private:
     VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
     void CreateRenderPass();
+    void CreateFramebuffers();
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -72,6 +73,8 @@ private:
     std::vector<VkImageView> m_SwapChainImageViews;
 
     VkRenderPass m_RenderPass = VK_NULL_HANDLE;
+
+    std::vector<VkFramebuffer> m_SwapChainFramebuffers;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

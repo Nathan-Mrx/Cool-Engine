@@ -17,10 +17,16 @@ void VulkanRenderer::Init() {
     CreateSwapChain();
     CreateImageViews();
     CreateRenderPass();
+    CreateFramebuffers();
 }
 
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
+
+    // Destruction des Framebuffers
+    for (auto framebuffer : m_SwapChainFramebuffers) {
+        vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
+    }
 
     // Destruction du Render Pass
     if (m_RenderPass != VK_NULL_HANDLE) {
@@ -513,6 +519,40 @@ void VulkanRenderer::CreateRenderPass() {
     }
 
     std::cout << "[Vulkan] Render Pass cree avec succes.\n";
+}
+
+// ==============================================================================
+// --- ÉTAPE 7 : LES FRAMEBUFFERS (Les toiles de peinture) ---
+// ==============================================================================
+void VulkanRenderer::CreateFramebuffers() {
+    // On prépare un tableau de la même taille que nos images (ex: 4)
+    m_SwapChainFramebuffers.resize(m_SwapChainImageViews.size());
+
+    // On crée un Framebuffer pour chaque Image View
+    for (size_t i = 0; i < m_SwapChainImageViews.size(); i++) {
+
+        // Les "Attachments" correspondent à ce qu'on a défini dans le Render Pass.
+        // Ici, on a un seul attachment (la couleur), qui est l'Image View actuelle.
+        VkImageView attachments[] = {
+            m_SwapChainImageViews[i]
+        };
+
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = m_RenderPass; // On lie le Framebuffer au contrat du Render Pass
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.width = m_SwapChainExtent.width;   // Largeur de la fenêtre
+        framebufferInfo.height = m_SwapChainExtent.height; // Hauteur de la fenêtre
+        framebufferInfo.layers = 1; // 1 seule couche (ce n'est pas de la VR stéréoscopique)
+
+        // Création !
+        if (vkCreateFramebuffer(m_Device, &framebufferInfo, nullptr, &m_SwapChainFramebuffers[i]) != VK_SUCCESS) {
+            throw std::runtime_error("Erreur fatale: Impossible de creer un Framebuffer !");
+        }
+    }
+
+    std::cout << "[Vulkan] " << m_SwapChainFramebuffers.size() << " Framebuffers crees avec succes.\n";
 }
 
 // --------------------------------------------------------------
