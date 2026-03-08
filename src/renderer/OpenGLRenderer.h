@@ -36,6 +36,11 @@ public:
     uint32_t GetBRDFLUTID() override { return m_Data->BRDFLUTTexture; }
     uint32_t GetPrefilterMapID() override { return m_Data->PrefilterMap; }
 
+    void InitImGui(GLFWwindow* window) override {}
+    void BeginImGuiFrame() override {}
+    void EndImGuiFrame() override {}
+    void ShutdownImGui() override {}
+
 private:
     struct RendererData {
         std::unique_ptr<Shader> MainShader;

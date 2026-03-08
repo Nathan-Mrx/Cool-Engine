@@ -4,6 +4,10 @@
 #include <stdexcept>
 #include <cstring>
 
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
+
 
 void VulkanRenderer::Init() {
     std::cout << "\n=========================================\n";
@@ -91,40 +95,48 @@ void VulkanRenderer::CreateInstance() {
         throw std::runtime_error("Erreur: Les Validation Layers Vulkan sont demandes, mais non disponibles !");
     }
 
-    // 1. Informations optionnelles mais utiles pour les drivers GPU
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Cool Engine Game";
+    appInfo.pApplicationName = "Cool Engine";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Cool Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_3; // On cible une version moderne de Vulkan
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
-    // 2. Création de l'instance proprement dite
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
-    // 3. Récupération des extensions requises par GLFW pour pouvoir dessiner sur l'écran
+    // --- ON FAIT CONFIANCE À GLFW ---
+    if (!glfwVulkanSupported()) {
+        throw std::runtime_error("Erreur fatale: GLFW ne detecte pas le chargeur Vulkan !");
+    }
+
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+    if (glfwExtensions == nullptr) {
+        throw std::runtime_error("Erreur fatale: GLFW n'a pas trouve les extensions Wayland/X11 !");
+    }
+
     std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+    if (m_EnableValidationLayers) {
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
 
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
 
-    // 4. Activation des Validation Layers (Sécurité)
     if (m_EnableValidationLayers) {
         createInfo.enabledLayerCount = static_cast<uint32_t>(m_ValidationLayers.size());
         createInfo.ppEnabledLayerNames = m_ValidationLayers.data();
-        std::cout << "[Vulkan] Validation Layers actives.\n";
     } else {
         createInfo.enabledLayerCount = 0;
     }
 
-    // 5. L'appel fatidique à la carte graphique !
     if (vkCreateInstance(&createInfo, nullptr, &m_Instance) != VK_SUCCESS) {
-        throw std::runtime_error("Erreur fatale: Impossible de creer l'instance Vulkan !");
+        throw std::runtime_error("Erreur fatale: Impossible de creer l'Instance Vulkan !");
     }
 
     std::cout << "[Vulkan] Instance creee avec succes.\n";
@@ -153,13 +165,20 @@ bool VulkanRenderer::CheckValidationLayerSupport() {
 // --- ÉTAPE 1.5 : LA SURFACE DE FENÊTRE (Le pont avec l'OS) ---
 // ==============================================================================
 void VulkanRenderer::CreateSurface() {
-    // On récupère la fenêtre depuis ton architecture actuelle
     GLFWwindow* window = Application::Get().GetWindow();
 
-    // GLFW gère la complexité de l'OS (X11, Wayland, Windows) pour nous !
-    if (glfwCreateWindowSurface(m_Instance, window, nullptr, &m_Surface) != VK_SUCCESS) {
+    // --- SÉCURITÉ 1 : La fenêtre existe-t-elle ? ---
+    if (window == nullptr) {
+        throw std::runtime_error("Erreur fatale: La fenetre GLFW est NULL ! Elle n'a pas ete creee avant Vulkan !");
+    }
+
+    // --- SÉCURITÉ 2 : Code d'erreur Vulkan ---
+    VkResult result = glfwCreateWindowSurface(m_Instance, window, nullptr, &m_Surface);
+    if (result != VK_SUCCESS) {
+        std::cout << "[Vulkan] Erreur lors de la creation de la surface. Code VkResult: " << result << "\n";
         throw std::runtime_error("Erreur fatale: Impossible de creer la surface de fenetre Vulkan !");
     }
+
     std::cout << "[Vulkan] Surface de fenetre (GLFW) creee avec succes.\n";
 }
 
@@ -747,4 +766,77 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode)
 
 void VulkanRenderer::SetShadowResolution(uint32_t resolution) {
     // Redimensionnement des Framebuffers d'ombres
+}
+
+// ==============================================================================
+// --- ÉTAPE 11 : L'INTÉGRATION IMGUI ---
+// ==============================================================================
+void VulkanRenderer::InitImGui(GLFWwindow* window) {
+    // 1. Création de l'armoire à mémoire (Descriptor Pool) requise par ImGui
+    VkDescriptorPoolSize pool_sizes[] = {
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+    };
+
+    VkDescriptorPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000 * IM_ARRAYSIZE(pool_sizes);
+    pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+
+    if (vkCreateDescriptorPool(m_Device, &pool_info, nullptr, &m_ImGuiPool) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le Descriptor Pool d'ImGui !");
+    }
+
+    // 2. Branchement au backend officiel ImGui Vulkan
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = m_Instance;
+    init_info.PhysicalDevice = m_PhysicalDevice;
+    init_info.Device = m_Device;
+    init_info.QueueFamily = m_GraphicsQueueFamilyIndex;
+    init_info.Queue = m_GraphicsQueue;
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.DescriptorPool = m_ImGuiPool;
+    init_info.Subpass = 0;
+    init_info.MinImageCount = MAX_FRAMES_IN_FLIGHT;
+    init_info.ImageCount = static_cast<uint32_t>(m_SwapChainImages.size());
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.Allocator = nullptr;
+    init_info.CheckVkResultFn = nullptr;
+    init_info.RenderPass = m_RenderPass;
+
+    // Note : Dans les versions récentes de vcpkg, les polices sont envoyées au GPU automatiquement
+    ImGui_ImplVulkan_Init(&init_info);
+}
+
+void VulkanRenderer::BeginImGuiFrame() {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+}
+
+void VulkanRenderer::EndImGuiFrame() {
+    ImGui::Render();
+    // On injecte les commandes de dessin ImGui directement dans le carnet de notre Frame active !
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), m_CommandBuffers[m_CurrentFrame]);
+}
+
+void VulkanRenderer::ShutdownImGui() {
+    // Sécurité avant destruction
+    vkDeviceWaitIdle(m_Device);
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    vkDestroyDescriptorPool(m_Device, m_ImGuiPool, nullptr);
 }

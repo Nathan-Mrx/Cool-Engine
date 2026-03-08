@@ -35,6 +35,11 @@ public:
     uint32_t GetPrefilterMapID() override { return 0; }
     uint32_t GetBRDFLUTID() override { return 0; }
 
+    void InitImGui(GLFWwindow* window) override;
+    void BeginImGuiFrame() override;
+    void EndImGuiFrame() override;
+    void ShutdownImGui() override;
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
@@ -95,6 +100,8 @@ private:
     // --- INDEX ---
     uint32_t m_CurrentImageIndex = 0; // L'image physique de l'écran (0 à 3)
     uint32_t m_CurrentFrame = 0;      // La frame logique en cours de calcul (0 ou 1)
+
+    VkDescriptorPool m_ImGuiPool = VK_NULL_HANDLE;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

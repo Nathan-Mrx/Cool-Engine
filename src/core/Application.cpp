@@ -23,10 +23,12 @@ Application* Application::s_Instance = nullptr;
 Application::Application(const std::string& name, int width, int height) {
     s_Instance = this;
 
-    // 1. Initialisation système (GLFW)
-    if (!glfwInit()) return;
+    // 1. SYSTÈME ET FENÊTRE
+    if (!glfwInit()) {
+        std::cout << "Erreur: Impossible d'initialiser GLFW!\n";
+        return;
+    }
 
-    // --- LECTURE DE LA TAILLE SAUVEGARDÉE ---
     bool maximized = false;
     std::ifstream file("editor_preferences.json");
     if (file.is_open()) {
@@ -40,25 +42,18 @@ Application::Application(const std::string& name, int width, int height) {
         file.close();
     }
 
-    // --- CONFIGURATION DE LA FENÊTRE SELON L'API ---
+    // Le paramètre crucial
     if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
-        // On interdit formellement à GLFW de créer un contexte OpenGL
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     } else {
-        // Configuration classique pour OpenGL
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     }
 
-    // Création de la fenêtre
     m_Window = glfwCreateWindow(width, height, name.c_str(), nullptr, nullptr);
+    if (maximized) glfwMaximizeWindow(m_Window);
 
-    if (maximized) {
-        glfwMaximizeWindow(m_Window);
-    }
-
-    // --- INITIALISATION DE GLAD (OPENGL UNIQUEMENT) ---
     if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
         glfwMakeContextCurrent(m_Window);
         if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -67,10 +62,18 @@ Application::Application(const std::string& name, int width, int height) {
         glfwSwapInterval(1);
     }
 
-    Input::Init(m_Window);
-    NFD::Init();
+    // ==========================================================
+    // --- LE FIX EST ICI : ON ALLUME VULKAN IMMÉDIATEMENT ---
+    // Avant ImGui, avant les polices, avant NFD. Aucune corruption possible !
+    // ==========================================================
+    Renderer::Init();
+    PhysicsEngine::Init();
 
-    // 2. INITIALISATION IMGUI (Partie commune)
+    // 2. SYSTÈMES SECONDAIRES
+    Input::Init(m_Window);
+    NFD::Init(); // Maintenant que Vulkan a sa surface, GTK/Wayland peut s'allumer
+
+    // 3. IMGUI : CRÉATION ET LIAISON
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -78,32 +81,18 @@ Application::Application(const std::string& name, int width, int height) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
-    UITheme::Apply();
-    UITheme::LoadFonts();
-
-    // --- LIAISON IMGUI AVEC L'API ACTIVE ---
     if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
         ImGui_ImplGlfw_InitForOpenGL(m_Window, true);
         ImGui_ImplOpenGL3_Init("#version 460");
     }
     else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
-        // Pour l'instant on laisse vide, l'éditeur ne s'affichera pas,
-        // mais le moteur ne crashera pas !
+        Renderer::InitImGui(m_Window);
     }
 
-    // 3. Initialisation des moteurs de bas et haut niveau
-    Renderer::Init(); // C'est ici que VulkanRenderer::Init() est appelé !
-    PhysicsEngine::Init();
-
-    // --- LE FIX SIGSEGV EST ICI ---
-    // On instancie l'Editeur SEULEMENT en OpenGL pour éviter qu'il n'appelle
-    // des Framebuffers ou Textures sans que GLAD ne soit chargé !
-    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-        m_EditorLayer = std::make_unique<EditorLayer>();
-        m_EditorLayer->OnAttach();
-    }
+    // 4. THÈME VISUEL (En tout dernier, car il interagit avec ImGui qui est maintenant lié !)
+    UITheme::Apply();
+    UITheme::LoadFonts();
 }
-
 Application::~Application() {
     if (m_EditorLayer) {
         m_EditorLayer->OnDetach();
@@ -117,7 +106,7 @@ Application::~Application() {
         ImGui_ImplGlfw_Shutdown();
     }
     else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
-        // On détruira l'implémentation Vulkan ici plus tard
+        Renderer::ShutdownImGui();
     }
     ImGui::DestroyContext();
 
@@ -162,9 +151,23 @@ void Application::Run() {
         }
         // --- BOUCLE DE RENDU VULKAN ---
         else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
-            // Le premier véritable rendu de ton moteur en Vulkan !
-            Renderer::Clear();    // Démarre la frame et efface l'écran en bleu
-            Renderer::EndScene(); // Soumet au GPU et affiche l'image
+
+            Renderer::Clear(); // Démarre la frame (Bleue)
+
+            Renderer::BeginImGuiFrame();
+
+            // Pour l'instant on garde notre Editeur en quarantaine, on teste juste la bête !
+            ImGui::ShowDemoWindow();
+
+            Renderer::EndImGuiFrame(); // Injecte l'interface
+
+            Renderer::EndScene(); // Soumet au GPU
+
+            // Support des Viewports ImGui sans crasher Wayland
+            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+                ImGui::UpdatePlatformWindows();
+                ImGui::RenderPlatformWindowsDefault();
+            }
         }
     }
 }

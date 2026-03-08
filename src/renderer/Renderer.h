@@ -41,6 +41,12 @@ public:
 
     inline static RendererAPI::API GetAPI() { return RendererAPI::GetAPI(); }
 
+    // --- NOUVEAU : REDIRECTIONS IMGUI ---
+    static void InitImGui(GLFWwindow* window) { s_Instance->InitImGui(window); }
+    static void BeginImGuiFrame() { s_Instance->BeginImGuiFrame(); }
+    static void EndImGuiFrame() { s_Instance->EndImGuiFrame(); }
+    static void ShutdownImGui() { s_Instance->ShutdownImGui(); }
+
 private:
     static std::unique_ptr<RendererAPI> s_Instance;
 };

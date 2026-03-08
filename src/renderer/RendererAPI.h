@@ -5,6 +5,8 @@
 
 #include "scene/Scene.h"
 
+struct GLFWwindow;
+
 // L'interface pure de notre moteur de rendu
 class RendererAPI {
 public:
@@ -37,6 +39,12 @@ public:
     // --- GESTION DE L'API ---
     inline static API GetAPI() { return s_API; }
     static void SetAPI(API api) { s_API = api; }
+
+    // --- NOUVEAU : CYCLE DE VIE IMGUI ---
+    virtual void InitImGui(GLFWwindow* window) = 0;
+    virtual void BeginImGuiFrame() = 0;
+    virtual void EndImGuiFrame() = 0;
+    virtual void ShutdownImGui() = 0;
 
 private:
     static API s_API;
