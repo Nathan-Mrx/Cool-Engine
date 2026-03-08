@@ -1328,22 +1328,23 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     // ========================================================
     float skyC = cos(u_SkyboxRotation); float skyS = sin(u_SkyboxRotation);
 
+    // --- LE FIX DES MESHES BLANCS (Séparation Fond / Lumière) ---
+    // On bride artificiellement la lumière du ciel HDR pour qu'elle agisse
+    // comme une ombre douce de jeu vidéo, sans éclipser le Soleil !
+    float iblExposure = 0.03;
+
     // 1. DIFFUSE IBL
     vec3 rotN = vec3(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC, N.z);
-
-    // Le -rotN.y fait le pont entre Z-Up et Y-Up !
     vec3 iblNormal = vec3(rotN.x, rotN.z, -rotN.y);
-    vec3 irradiance = texture(uIrradianceMap, iblNormal).rgb * u_SkyboxIntensity;
+    vec3 irradiance = texture(uIrradianceMap, iblNormal).rgb * u_SkyboxIntensity * iblExposure;
 
     // 2. SPECULAR IBL (Les reflets dynamiques !)
     vec3 R = reflect(-V, N);
     vec3 rotR = vec3(R.x * skyC - R.y * skyS, R.x * skyS + R.y * skyC, R.z);
 
     const float MAX_REFLECTION_LOD = 4.0;
-
-    // Le même fix pour les reflets !
     vec3 iblReflect = vec3(rotR.x, rotR.z, -rotR.y);
-    vec3 prefilteredColor = textureLod(uPrefilterMap, iblReflect, roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity;
+    vec3 prefilteredColor = textureLod(uPrefilterMap, iblReflect, roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity * iblExposure;
 
     vec2 envBRDF = texture(uBRDFLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
 
