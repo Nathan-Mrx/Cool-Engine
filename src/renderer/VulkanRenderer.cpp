@@ -18,10 +18,17 @@ void VulkanRenderer::Init() {
     CreateImageViews();
     CreateRenderPass();
     CreateFramebuffers();
+    CreateCommandPool();
+    CreateCommandBuffer();
 }
 
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
+
+    // Destruction du Command Pool
+    if (m_CommandPool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
+    }
 
     // Destruction des Framebuffers
     for (auto framebuffer : m_SwapChainFramebuffers) {
@@ -553,6 +560,41 @@ void VulkanRenderer::CreateFramebuffers() {
     }
 
     std::cout << "[Vulkan] " << m_SwapChainFramebuffers.size() << " Framebuffers crees avec succes.\n";
+}
+
+// ==============================================================================
+// --- ÉTAPE 8 : COMMAND POOL ET COMMAND BUFFER (Le carnet et le stylo) ---
+// ==============================================================================
+void VulkanRenderer::CreateCommandPool() {
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+
+    // FLAG MAGIQUE : Permet de réinitialiser notre Command Buffer à chaque frame (60 fois par seconde)
+    // sans avoir à détruire et recréer la mémoire entière du Pool.
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+    // On précise que ces commandes sont destinées à la file d'attente graphique (Dessin)
+    poolInfo.queueFamilyIndex = m_GraphicsQueueFamilyIndex;
+
+    if (vkCreateCommandPool(m_Device, &poolInfo, nullptr, &m_CommandPool) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le Command Pool !");
+    }
+    std::cout << "[Vulkan] Command Pool cree avec succes.\n";
+}
+
+void VulkanRenderer::CreateCommandBuffer() {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = m_CommandPool; // On l'attache à notre carnet
+
+    // PRIMARY = Ces commandes peuvent être envoyées directement au GPU pour exécution
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1; // On alloue un seul buffer pour l'instant
+
+    if (vkAllocateCommandBuffers(m_Device, &allocInfo, &m_CommandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible d'allouer le Command Buffer !");
+    }
+    std::cout << "[Vulkan] Command Buffer alloue avec succes.\n";
 }
 
 // --------------------------------------------------------------

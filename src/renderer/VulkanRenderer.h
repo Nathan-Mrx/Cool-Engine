@@ -54,6 +54,8 @@ private:
 
     void CreateRenderPass();
     void CreateFramebuffers();
+    void CreateCommandPool();
+    void CreateCommandBuffer();
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -66,6 +68,7 @@ private:
     uint32_t m_GraphicsQueueFamilyIndex = 0;
     uint32_t m_PresentQueueFamilyIndex = 0;
 
+    // --- VARIABLES SWAPCHAIN ---
     VkSwapchainKHR m_SwapChain = VK_NULL_HANDLE;
     std::vector<VkImage> m_SwapChainImages;
     VkFormat m_SwapChainImageFormat;
@@ -75,6 +78,10 @@ private:
     VkRenderPass m_RenderPass = VK_NULL_HANDLE;
 
     std::vector<VkFramebuffer> m_SwapChainFramebuffers;
+
+    // --- COMMANDES ---
+    VkCommandPool m_CommandPool = VK_NULL_HANDLE;
+    VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {
