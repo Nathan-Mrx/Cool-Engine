@@ -1065,6 +1065,16 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << R"(
 const float PI = 3.14159265359;
 
+// --- LE SECRET DES COULEURS AAA : ACES TONEMAPPING ---
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float a = roughness*roughness;
     float a2 = a*a;
@@ -1229,7 +1239,7 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
 
     shaderCode << bodyBuilder.str();
 
-    shaderCode << "    vec3 albedo = vec3(" << v_baseColor << ");\n";
+    shaderCode << "    vec3 albedo = pow(vec3(" << v_baseColor << "), vec3(2.2));\n";
     shaderCode << "    float metallic = float(" << v_metallic << ");\n";
     shaderCode << "    float roughness = clamp(float(" << v_roughness << "), 0.05, 1.0);\n";
     shaderCode << "    float ao = float(" << v_ao << ");\n\n";
@@ -1305,8 +1315,10 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     // ========================================================
     vec3 color = ambient + (1.0 - shadow) * Lo;
 
-    // Tonemapping et Gamma Correction
-    color = color / (color + vec3(1.0));
+    // Garde la saturation parfaite des marrons et jaunes du rotin !
+    color = ACESFilm(color);
+
+    // Gamma Correction finale (Indispensable pour l'écran)
     color = pow(color, vec3(1.0/2.2));
 
     FragColor = vec4(color, 1.0);
