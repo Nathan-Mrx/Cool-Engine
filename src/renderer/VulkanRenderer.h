@@ -10,6 +10,12 @@
 #include <vector>
 #include <set>
 
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
+};
+
 class VulkanRenderer : public RendererAPI {
 public:
     VulkanRenderer() = default;
@@ -39,6 +45,12 @@ private:
     void CreateLogicalDevice();
     bool FindQueueFamilies(VkPhysicalDevice device, uint32_t& outGraphics, uint32_t& outPresent);
 
+    void CreateSwapChain();
+    SwapChainSupportDetails QuerySwapChainSupport(VkPhysicalDevice device);
+    VkSurfaceFormatKHR ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
+    VkPresentModeKHR ChooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
+    VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
+
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
     VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
@@ -49,6 +61,11 @@ private:
     VkQueue m_PresentQueue = VK_NULL_HANDLE;
     uint32_t m_GraphicsQueueFamilyIndex = 0;
     uint32_t m_PresentQueueFamilyIndex = 0;
+
+    VkSwapchainKHR m_SwapChain = VK_NULL_HANDLE;
+    std::vector<VkImage> m_SwapChainImages;
+    VkFormat m_SwapChainImageFormat;
+    VkExtent2D m_SwapChainExtent;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

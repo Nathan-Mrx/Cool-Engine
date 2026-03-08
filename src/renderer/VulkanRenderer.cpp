@@ -14,10 +14,16 @@ void VulkanRenderer::Init() {
     CreateSurface();
     PickPhysicalDevice();
     CreateLogicalDevice();
+    CreateSwapChain();
 }
 
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
+
+    // Destruction de la Swapchain
+    if (m_SwapChain != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(m_Device, m_SwapChain, nullptr);
+    }
 
     // Destruction du Device Logique
     if (m_Device != VK_NULL_HANDLE) {
@@ -250,6 +256,161 @@ void VulkanRenderer::CreateLogicalDevice() {
     std::cout << "[Vulkan] Device Logique cree. Files d'attente connectees (Graphics: "
               << m_GraphicsQueueFamilyIndex << ", Present: " << m_PresentQueueFamilyIndex << ").\n";
 }
+
+// ==============================================================================
+// --- ÉTAPE 4 : LA SWAPCHAIN (L'usine à Images) ---
+// ==============================================================================
+SwapChainSupportDetails VulkanRenderer::QuerySwapChainSupport(VkPhysicalDevice device) {
+    SwapChainSupportDetails details;
+
+    // 1. Les capacités de base (taille min/max des images)
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, m_Surface, &details.capabilities);
+
+    // 2. Les formats de couleur supportés (ex: RGBA 8-bit, HDR 10-bit)
+    uint32_t formatCount;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_Surface, &formatCount, nullptr);
+    if (formatCount != 0) {
+        details.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_Surface, &formatCount, details.formats.data());
+    }
+
+    // 3. Les modes de présentation (V-Sync, Uncapped, etc.)
+    uint32_t presentModeCount;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_Surface, &presentModeCount, nullptr);
+    if (presentModeCount != 0) {
+        details.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_Surface, &presentModeCount, details.presentModes.data());
+    }
+
+    return details;
+}
+
+VkSurfaceFormatKHR VulkanRenderer::ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+    // On cherche le format idéal : couleurs 8-bit standards (B8G8R8A8) en espace sRGB
+    for (const auto& availableFormat : availableFormats) {
+        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return availableFormat;
+        }
+    }
+    // Si on ne trouve pas, on prend le premier qui vient
+    return availableFormats[0];
+}
+
+VkPresentModeKHR VulkanRenderer::ChooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+    // Mode MAILBOX = "Triple Buffering" (Uncapped FPS, très faible latence, pas de déchirure d'écran)
+    for (const auto& availablePresentMode : availablePresentModes) {
+        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+            return availablePresentMode;
+        }
+    }
+    // Mode FIFO = "V-Sync" standard (60 FPS bloqués, toujours supporté)
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+VkExtent2D VulkanRenderer::ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+    // 1. Sur Linux, une fenêtre qui s'ouvre peut avoir une taille de 0x0 pendant une milliseconde.
+    // On oblige le programme à attendre que l'OS donne de vraies dimensions !
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(Application::Get().GetWindow(), &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(Application::Get().GetWindow(), &width, &height);
+        glfwWaitEvents();
+    }
+
+    // 2. Si l'OS nous donne une taille valide, on l'utilise
+    if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max() && capabilities.currentExtent.width > 0) {
+        return capabilities.currentExtent;
+    } else {
+        VkExtent2D actualExtent = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height)
+        };
+
+        // On borne les valeurs pour respecter les limites de la carte graphique
+        actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+        actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+        return actualExtent;
+    }
+}
+
+void VulkanRenderer::CreateSwapChain() {
+    SwapChainSupportDetails swapChainSupport = QuerySwapChainSupport(m_PhysicalDevice);
+
+    VkSurfaceFormatKHR surfaceFormat = ChooseSwapSurfaceFormat(swapChainSupport.formats);
+    VkPresentModeKHR presentMode = ChooseSwapPresentMode(swapChainSupport.presentModes);
+    VkExtent2D extent = ChooseSwapExtent(swapChainSupport.capabilities);
+
+    // Combien d'images on veut dans la file d'attente ? (Min + 1 pour faire du double/triple buffering)
+    uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+        imageCount = swapChainSupport.capabilities.maxImageCount;
+    }
+
+    VkSwapchainCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    createInfo.surface = m_Surface;
+    createInfo.minImageCount = imageCount;
+    createInfo.imageFormat = surfaceFormat.format;
+    createInfo.imageColorSpace = surfaceFormat.colorSpace;
+    createInfo.imageExtent = extent;
+    createInfo.imageArrayLayers = 1;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // On va dessiner des couleurs dessus !
+
+    // Comment les files d'attentes partagent ces images ?
+    uint32_t queueFamilyIndices[] = {m_GraphicsQueueFamilyIndex, m_PresentQueueFamilyIndex};
+    if (m_GraphicsQueueFamilyIndex != m_PresentQueueFamilyIndex) {
+        createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        createInfo.queueFamilyIndexCount = 2;
+        createInfo.pQueueFamilyIndices = queueFamilyIndices;
+    } else {
+        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
+
+    createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+
+    // On cherche un mode de transparence de fenêtre supporté par le système d'exploitation
+    VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (swapChainSupport.capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) {
+        compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    } else if (swapChainSupport.capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) {
+        compositeAlpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+    } else if (swapChainSupport.capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) {
+        compositeAlpha = VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
+    } else {
+        compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    }
+
+    createInfo.compositeAlpha = compositeAlpha;
+    createInfo.presentMode = presentMode;
+    createInfo.clipped = VK_TRUE;
+    createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+    // ==========================================================
+    // 1. CRÉATION AVEC DIAGNOSTIC EXACT !
+    // ==========================================================
+    VkResult result = vkCreateSwapchainKHR(m_Device, &createInfo, nullptr, &m_SwapChain);
+
+    if (result != VK_SUCCESS) {
+        std::cout << "\n[Vulkan] ERREUR CRITIQUE: Echec de la Swapchain !\n";
+        std::cout << "[Vulkan] Code d'erreur VkResult : " << result << "\n\n";
+        throw std::runtime_error("Erreur fatale: Impossible de creer la Swapchain !");
+    }
+
+    // 2. RÉCUPÉRATION DES IMAGES DANS LA RAM DU GPU
+    vkGetSwapchainImagesKHR(m_Device, m_SwapChain, &imageCount, nullptr);
+    m_SwapChainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(m_Device, m_SwapChain, &imageCount, m_SwapChainImages.data());
+
+    // 3. SAUVEGARDE DE LA CONFIGURATION
+    m_SwapChainImageFormat = surfaceFormat.format;
+    m_SwapChainExtent = extent;
+
+    std::cout << "[Vulkan] Swapchain creee avec " << imageCount << " images (Resolution: "
+              << extent.width << "x" << extent.height << ").\n";
+}
+
+// --------------------------------------------------------------
 
 void VulkanRenderer::Clear() {
     // En Vulkan, le Clear se fait souvent au début d'une "Render Pass".

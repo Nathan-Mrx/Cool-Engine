@@ -25,8 +25,6 @@ int main(int argc, char** argv) {
     Application app("Cool Engine", 1600, 900);
     app.SetWindowIcon("icon.png");
 
-    Renderer::Init();
-
     if (!projectPathToLoad.empty()) {
         if (std::filesystem::exists(projectPathToLoad) && projectPathToLoad.extension() == ".ceproj") {
             Project::LoadAsync(projectPathToLoad);
