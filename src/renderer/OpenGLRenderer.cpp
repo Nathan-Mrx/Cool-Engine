@@ -2,7 +2,6 @@
 #include "../ecs/Components.h"
 #include <glad/glad.h>
 
-RendererAPI::API RendererAPI::s_API = RendererAPI::API::OpenGL;
 uint32_t OpenGLRenderer::GetIrradianceMapID() { return m_Data->IrradianceMap; }
 
 

@@ -1,6 +1,6 @@
 #include "Renderer.h"
 #include "OpenGLRenderer.h"
-// #include "VulkanRenderer.h" // Pour plus tard !
+#include "VulkanRenderer.h"
 
 std::unique_ptr<RendererAPI> Renderer::s_Instance = nullptr;
 
@@ -11,7 +11,7 @@ void Renderer::Init() {
         s_Instance = std::make_unique<OpenGLRenderer>();
         break;
     case RendererAPI::API::Vulkan:
-        // s_Instance = std::make_unique<VulkanRenderer>();
+        s_Instance = std::make_unique<VulkanRenderer>();
         break;
     case RendererAPI::API::None:
     default:

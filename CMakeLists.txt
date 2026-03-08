@@ -15,6 +15,7 @@ find_package(assimp CONFIG REQUIRED)
 find_package(ImGuizmo CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
+find_package(Vulkan REQUIRED)
 
 # Lister tous les fichiers sources du moteur
 set(SOURCES
@@ -85,6 +86,8 @@ set(SOURCES
         src/renderer/RendererAPI.cpp
         src/renderer/Renderer.cpp
         src/renderer/Renderer.h
+        src/renderer/VulkanRenderer.cpp
+        src/renderer/VulkanRenderer.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
@@ -145,7 +148,8 @@ target_link_libraries(GameEngine PRIVATE
         assimp::assimp
         imguizmo::imguizmo
         unofficial::imgui-node-editor::imgui-node-editor
-        Jolt::Jolt)
+        Jolt::Jolt
+        Vulkan::Vulkan)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
 add_custom_command(TARGET GameEngine POST_BUILD
