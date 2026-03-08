@@ -35,8 +35,8 @@ set(SOURCES
         src/scene/Scene.h
         src/scene/Entity.cpp
         src/scene/Entity.h
-        src/renderer/Renderer.cpp
-        src/renderer/Renderer.h
+        src/renderer/OpenGLRenderer.cpp
+        src/renderer/OpenGLRenderer.h
         src/editor/EditorLayer.cpp
         src/editor/EditorLayer.h
         src/editor/panels/SceneHierarchyPanel.cpp
@@ -82,6 +82,9 @@ set(SOURCES
         src/editor/UITheme.h
         src/renderer/DDGIVolume.cpp
         src/renderer/DDGIVolume.h
+        src/renderer/RendererAPI.cpp
+        src/renderer/Renderer.cpp
+        src/renderer/Renderer.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
