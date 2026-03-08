@@ -80,14 +80,21 @@ private:
 
     std::vector<VkFramebuffer> m_SwapChainFramebuffers;
 
+    // --- LA RÈGLE D'OR DE LA PERFORMANCE ---
+    const int MAX_FRAMES_IN_FLIGHT = 2;
+
     // --- COMMANDES ---
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
-    VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer> m_CommandBuffers; // <-- Devient un tableau (2 stylos)
 
     // --- SYNCHRONISATION ---
-    VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE; // Signal: L'image est prête à être peinte
-    VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE; // Signal: Le dessin est fini, on peut afficher
-    VkFence m_InFlightFence = VK_NULL_HANDLE;               // Signal: Le CPU peut préparer la prochaine frame
+    std::vector<VkSemaphore> m_ImageAvailableSemaphores; // 2 feux
+    std::vector<VkSemaphore> m_RenderFinishedSemaphores; // 2 feux
+    std::vector<VkFence> m_InFlightFences;               // 2 feux
+
+    // --- INDEX ---
+    uint32_t m_CurrentImageIndex = 0; // L'image physique de l'écran (0 à 3)
+    uint32_t m_CurrentFrame = 0;      // La frame logique en cours de calcul (0 ou 1)
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

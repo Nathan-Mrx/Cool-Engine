@@ -26,15 +26,21 @@ void VulkanRenderer::Init() {
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
 
+    // --- SÉCURITÉ CRUCIALE ---
+    // On oblige le CPU à attendre que le GPU ait fini de dessiner sa dernière frame !
+    if (m_Device != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(m_Device);
+    }
+
     // Destruction de la Synchronisation
-    if (m_ImageAvailableSemaphore != VK_NULL_HANDLE) {
-        vkDestroySemaphore(m_Device, m_ImageAvailableSemaphore, nullptr);
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(m_Device, m_ImageAvailableSemaphores[i], nullptr);
+        vkDestroyFence(m_Device, m_InFlightFences[i], nullptr);
     }
-    if (m_RenderFinishedSemaphore != VK_NULL_HANDLE) {
-        vkDestroySemaphore(m_Device, m_RenderFinishedSemaphore, nullptr);
-    }
-    if (m_InFlightFence != VK_NULL_HANDLE) {
-        vkDestroyFence(m_Device, m_InFlightFence, nullptr);
+
+    // --- LE FIX (Nettoyage) ---
+    for (size_t i = 0; i < m_RenderFinishedSemaphores.size(); i++) {
+        vkDestroySemaphore(m_Device, m_RenderFinishedSemaphores[i], nullptr);
     }
 
     // Destruction du Command Pool
@@ -595,66 +601,148 @@ void VulkanRenderer::CreateCommandPool() {
 }
 
 void VulkanRenderer::CreateCommandBuffer() {
+    m_CommandBuffers.resize(MAX_FRAMES_IN_FLIGHT); // On prépare la place pour 2 stylos
+
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = m_CommandPool; // On l'attache à notre carnet
-
-    // PRIMARY = Ces commandes peuvent être envoyées directement au GPU pour exécution
+    allocInfo.commandPool = m_CommandPool;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1; // On alloue un seul buffer pour l'instant
+    allocInfo.commandBufferCount = (uint32_t)m_CommandBuffers.size(); // On alloue les 2 !
 
-    if (vkAllocateCommandBuffers(m_Device, &allocInfo, &m_CommandBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Erreur fatale: Impossible d'allouer le Command Buffer !");
+    if (vkAllocateCommandBuffers(m_Device, &allocInfo, m_CommandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible d'allouer les Command Buffers !");
     }
-    std::cout << "[Vulkan] Command Buffer alloue avec succes.\n";
+    std::cout << "[Vulkan] Command Buffers alloues avec succes.\n";
 }
 
 // ==============================================================================
 // --- ÉTAPE 9 : SYNCHRONISATION (Les feux tricolores CPU/GPU) ---
 // ==============================================================================
 void VulkanRenderer::CreateSyncObjects() {
+    m_ImageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    m_InFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+
+    // --- LE FIX (Création) : Autant de sémaphores que d'images ! ---
+    m_RenderFinishedSemaphores.resize(m_SwapChainImages.size());
+
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    // ASTUCE CRUCIALE : On crée la Fence dans l'état "Signalée" (Ouverte).
-    // Sinon, à la toute première frame, le CPU va attendre indéfiniment un signal
-    // d'une frame précédente qui n'a jamais existé !
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    if (vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_ImageAvailableSemaphore) != VK_SUCCESS ||
-        vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_RenderFinishedSemaphore) != VK_SUCCESS ||
-        vkCreateFence(m_Device, &fenceInfo, nullptr, &m_InFlightFence) != VK_SUCCESS) {
+    // Boucle 1 : Liée aux frames du processeur (0 ou 1)
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        if (vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_ImageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(m_Device, &fenceInfo, nullptr, &m_InFlightFences[i]) != VK_SUCCESS) {
+            throw std::runtime_error("Erreur fatale: Impossible de creer les objets de synchronisation CPU !");
+            }
+    }
 
-        throw std::runtime_error("Erreur fatale: Impossible de creer les objets de synchronisation !");
+    // Boucle 2 : Liée aux images physiques de la carte graphique (0, 1, 2, 3...)
+    for (size_t i = 0; i < m_SwapChainImages.size(); i++) {
+        if (vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_RenderFinishedSemaphores[i]) != VK_SUCCESS) {
+            throw std::runtime_error("Erreur fatale: Impossible de creer les semaphores de rendu GPU !");
         }
+    }
 
-    std::cout << "[Vulkan] Objets de synchronisation (Semaphores & Fence) crees avec succes.\n";
+    std::cout << "[Vulkan] Objets de synchronisation crees avec succes.\n";
     std::cout << "\n[Vulkan] === INITIALISATION TERMINEE ===\n";
 }
 
 // --------------------------------------------------------------
 
+// ==============================================================================
+// --- ÉTAPE 10 : LA BOUCLE DE RENDU (Le dessin !) ---
+// ==============================================================================
 void VulkanRenderer::Clear() {
-    // En Vulkan, le Clear se fait souvent au début d'une "Render Pass".
-    // On laissera ça vide pour le moment.
+    // 1. Attendre le feu vert pour la frame actuelle (0 ou 1)
+    vkWaitForFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame], VK_TRUE, UINT64_MAX);
+    vkResetFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame]);
+
+    // 2. Demander une image (On lie ça au sémaphore de la frame actuelle)
+    vkAcquireNextImageKHR(m_Device, m_SwapChain, UINT64_MAX, m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &m_CurrentImageIndex);
+
+    // 3. Réinitialiser et commencer le carnet de la frame actuelle
+    vkResetCommandBuffer(m_CommandBuffers[m_CurrentFrame], 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vkBeginCommandBuffer(m_CommandBuffers[m_CurrentFrame], &beginInfo);
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = m_RenderPass;
+    renderPassInfo.framebuffer = m_SwapChainFramebuffers[m_CurrentImageIndex];
+    renderPassInfo.renderArea.offset = {0, 0};
+    renderPassInfo.renderArea.extent = m_SwapChainExtent;
+
+    VkClearValue clearColor = {{{0.05f, 0.05f, 0.15f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+}
+
+void VulkanRenderer::EndScene() {
+    // 1. Fin du Render Pass
+    vkCmdEndRenderPass(m_CommandBuffers[m_CurrentFrame]);
+    if (vkEndCommandBuffer(m_CommandBuffers[m_CurrentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible d'enregistrer le Command Buffer !");
+    }
+
+    // 2. Soumission (On utilise les feux de la frame actuelle)
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    VkSemaphore waitSemaphores[] = {m_ImageAvailableSemaphores[m_CurrentFrame]};
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_CommandBuffers[m_CurrentFrame];
+
+    // --- LE FIX (Utilisation) : On utilise l'index de l'image physique ! ---
+    VkSemaphore signalSemaphores[] = {m_RenderFinishedSemaphores[m_CurrentImageIndex]};
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(m_GraphicsQueue, 1, &submitInfo, m_InFlightFences[m_CurrentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de soumettre le Command Buffer !");
+    }
+
+    // 3. Présentation
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+
+    VkSwapchainKHR swapChains[] = {m_SwapChain};
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &m_CurrentImageIndex;
+
+    vkQueuePresentKHR(m_PresentQueue, &presentInfo);
+
+    // --- LE SECRET DES PERFORMANCES EST ICI ---
+    // On passe à la frame suivante (0 devient 1, 1 devient 0)
+    m_CurrentFrame = (m_CurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void VulkanRenderer::BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
     // Préparation des buffers de commandes pour la frame
 }
 
-void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
-    // Le cœur du rendu (Raytracing ou Rastérisation classique)
-}
-
 void VulkanRenderer::DrawGrid(bool enable) {
     // Rendu de la grille
 }
 
-void VulkanRenderer::EndScene() {
-    // Envoi des commandes au GPU (vkQueueSubmit) et affichage à l'écran (vkQueuePresentKHR)
+void VulkanRenderer::RenderScene(Scene* scene, int renderMode)
+{
+
 }
 
 void VulkanRenderer::SetShadowResolution(uint32_t resolution) {

@@ -162,8 +162,9 @@ void Application::Run() {
         }
         // --- BOUCLE DE RENDU VULKAN ---
         else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
-            // Le moteur "tourne dans le vide" pour l'instant
-            // mais il reste parfaitement fluide et prêt à fermer !
+            // Le premier véritable rendu de ton moteur en Vulkan !
+            Renderer::Clear();    // Démarre la frame et efface l'écran en bleu
+            Renderer::EndScene(); // Soumet au GPU et affiche l'image
         }
     }
 }
