@@ -1026,7 +1026,8 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << "in vec3 vFragPos;\n";
     shaderCode << "in vec3 vNormal;\n";
     shaderCode << "in vec2 vTexCoords;\n";
-    shaderCode << "in float vViewDepth;\n\n"; // <-- NOUVEAU
+    shaderCode << "in vec3 vTangent;\n";
+    shaderCode << "in float vViewDepth;\n\n";
 
     // --- UNIFORMS STANDARDS ---
     shaderCode << "uniform int uEntityID;\n";
@@ -1108,33 +1109,35 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 vec3 getNormalFromMap(vec3 normalMapColor, vec3 fragPos, vec3 normal, vec2 uv) {
-    vec3 tangentNormal = normalMapColor * 2.0 - 1.0;
-
-    vec3 Q1  = dFdx(fragPos);
-    vec3 Q2  = dFdy(fragPos);
-    vec2 st1 = dFdx(uv);
-    vec2 st2 = dFdy(uv);
-
-    vec3 N   = normalize(normal);
-
-    float det = (st1.x * st2.y - st2.x * st1.y);
+    vec3 tangentNormal = normalize(normalMapColor * 2.0 - 1.0);
+    vec3 N = normalize(normal);
     vec3 T;
 
-    if (abs(det) < 0.000001) {
-        T = cross(abs(N.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), N);
+    // Utiliser la tangente par vertex si disponible
+    if (length(vTangent) > 0.001) {
+        T = normalize(vTangent);
     } else {
-        T = (Q1 * st2.y - Q2 * st1.y) / det;
+        // Fallback screen-space pour les meshes sans tangentes
+        vec3 Q1 = dFdx(fragPos);
+        vec3 Q2 = dFdy(fragPos);
+        vec2 st1 = dFdx(uv);
+        vec2 st2 = dFdy(uv);
+        float det = (st1.x * st2.y - st2.x * st1.y);
+        if (abs(det) > 0.0001) {
+            T = normalize((Q1 * st2.y - Q2 * st1.y) / det);
+        } else {
+            T = cross(abs(N.z) > 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0), N);
+        }
     }
 
-    // --- LE VRAI FIX ANTI-STRIES JAUNES ---
-    vec3 orthoT = T - dot(T, N) * N;
-    if (length(orthoT) < 0.0001) {
-        orthoT = cross(abs(N.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), N);
-    }
-    T = normalize(orthoT);
+    // Orthogonalisation de Gram-Schmidt
+    T = normalize(T - dot(T, N) * N);
     vec3 B = cross(N, T);
-
     mat3 TBN = mat3(T, B, N);
     return normalize(TBN * tangentNormal);
 }
@@ -1232,11 +1235,19 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     std::stringstream bodyBuilder;
 
     std::string v_baseColor = (rootNode->Inputs.size() > 0) ? EvaluatePinGLSL(rootNode->Inputs[0].ID, visitedNodes, bodyBuilder) : "vec3(1.0)";
-    std::string v_normal    = (rootNode->Inputs.size() > 1) ? EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder) : "vec3(0.0, 0.0, 1.0)";
+    std::string v_normal    = (rootNode->Inputs.size() > 1) ? EvaluatePinGLSL(rootNode->Inputs[1].ID, visitedNodes, bodyBuilder) : "vec3(0.5, 0.5, 1.0)";
     std::string v_metallic  = (rootNode->Inputs.size() > 2) ? EvaluatePinGLSL(rootNode->Inputs[2].ID, visitedNodes, bodyBuilder) : "0.0";
     std::string v_roughness = (rootNode->Inputs.size() > 3) ? EvaluatePinGLSL(rootNode->Inputs[3].ID, visitedNodes, bodyBuilder) : "0.5";
     std::string v_specular  = (rootNode->Inputs.size() > 4) ? EvaluatePinGLSL(rootNode->Inputs[4].ID, visitedNodes, bodyBuilder) : "0.5";
     std::string v_ao        = (rootNode->Inputs.size() > 5) ? EvaluatePinGLSL(rootNode->Inputs[5].ID, visitedNodes, bodyBuilder) : "1.0";
+
+    // Détecter si le pin Normal est connecté (pour éviter le TBN dégénéré)
+    bool normalConnected = false;
+    if (rootNode->Inputs.size() > 1) {
+        for (auto& link : m_Links) {
+            if (link.EndPinID == rootNode->Inputs[1].ID) { normalConnected = true; break; }
+        }
+    }
 
     if (v_baseColor.empty() || v_baseColor.find("vec3(0") != std::string::npos) v_baseColor = "vec3(1.0)";
     if (v_metallic.empty())  v_metallic = "0.0";
@@ -1253,9 +1264,14 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     shaderCode << "    vec3 albedo = pow(vec3(" << v_baseColor << "), vec3(2.2));\n";
     shaderCode << "    float metallic = float(" << v_metallic << ");\n";
     shaderCode << "    float roughness = clamp(float(" << v_roughness << "), 0.05, 1.0);\n";
+    shaderCode << "    float specularValue = clamp(float(" << v_specular << "), 0.0, 1.0);\n";
     shaderCode << "    float ao = float(" << v_ao << ");\n\n";
 
-    shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
+    if (normalConnected) {
+        shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
+    } else {
+        shaderCode << "    vec3 N = normalize(vNormal);\n";
+    }
     shaderCode << "    if (uRenderMode == 1 || uRenderMode == 2) {\n";
     shaderCode << "        FragColor = vec4(albedo, 1.0);\n";
     shaderCode << "        EntityID = uEntityID;\n";
@@ -1266,6 +1282,12 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     shaderCode << "    roughness = clamp(roughness, 0.05, 1.0);\n";
     shaderCode << "    ao = clamp(ao, 0.05, 1.0);\n\n";
 
+    // --- GEOMETRIC SPECULAR ANTI-ALIASING (Style Filament/UE5) ---
+    shaderCode << "    // Specular AA : adoucit le speculaire sur les details haute frequence de la normal map\n";
+    shaderCode << "    float normalVariance = length(fwidth(N));\n";
+    shaderCode << "    float aaRoughness2 = roughness * roughness + 0.15 * normalVariance * normalVariance;\n";
+    shaderCode << "    roughness = clamp(sqrt(aaRoughness2), roughness, 1.0);\n\n";
+
     // --- LE CÂBLAGE FINAL OMBRE + PBR ---
     shaderCode << R"(
     // --- LES 3 VECTEURS INDISPENSABLES ---
@@ -1273,7 +1295,7 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     vec3 L = normalize(-uLightDir);
     vec3 H = normalize(V + L + vec3(0.000001)); // Le +0.000001 évite une division par zéro !
 
-    vec3 F0 = vec3(0.04);
+    vec3 F0 = vec3(0.08 * specularValue);
     F0 = mix(F0, albedo, metallic);
     vec3 radiance = uLightColor;
 
@@ -1291,7 +1313,7 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     if (isnan(specular.x) || isnan(specular.y) || isnan(specular.z) || isinf(specular.x)) {
         specular = vec3(0.0);
     } else {
-        specular = clamp(specular, vec3(0.0), vec3(10.0));
+        specular = clamp(specular, vec3(0.0), vec3(4.0));
     }
 
     vec3 kS = F;
@@ -1314,23 +1336,19 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     float skyC = cos(u_SkyboxRotation); float skyS = sin(u_SkyboxRotation);
 
     // 1. DIFFUSE IBL
-    vec3 rotN = N; rotN.xy = vec2(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC);
-
-    // --- LE FIX Z-UP (On passe à +rotN.y !) ---
-    vec3 irradiance = texture(uIrradianceMap, vec3(rotN.x, rotN.z, rotN.y)).rgb * u_SkyboxIntensity;
+    vec3 rotN = vec3(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC, N.z);
+    vec3 irradiance = texture(uIrradianceMap, rotN).rgb * u_SkyboxIntensity;
 
     // 2. SPECULAR IBL (Les reflets dynamiques !)
     vec3 R = reflect(-V, N);
-    vec3 rotR = R; rotR.xy = vec2(R.x * skyC - R.y * skyS, R.x * skyS + R.y * skyC);
+    vec3 rotR = vec3(R.x * skyC - R.y * skyS, R.x * skyS + R.y * skyC, R.z);
 
     const float MAX_REFLECTION_LOD = 4.0;
-
-    // --- LE FIX Z-UP POUR LE MIROIR (+rotR.y) ---
-    vec3 prefilteredColor = textureLod(uPrefilterMap, vec3(rotR.x, rotR.z, rotR.y), roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity;
+    vec3 prefilteredColor = textureLod(uPrefilterMap, rotR, roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity;
 
     vec2 envBRDF = texture(uBRDFLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
 
-    vec3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
+    vec3 F_ambient = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
     vec3 kD_ambient = 1.0 - F_ambient;
     kD_ambient *= 1.0 - metallic;
 

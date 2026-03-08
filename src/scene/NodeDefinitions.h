@@ -30,6 +30,7 @@ struct CubeNode {
         auto& mesh = entity.AddComponent<MeshComponent>();
         mesh.MeshData = PrimitiveFactory::CreateCube();
         mesh.AssetPath = "Primitive::Cube";
+        entity.AddComponent<MaterialComponent>();
     }
 };
 
@@ -40,6 +41,7 @@ struct SphereNode {
         auto& mesh = entity.AddComponent<MeshComponent>();
         mesh.MeshData = PrimitiveFactory::CreateSphere();
         mesh.AssetPath = "Primitive::Sphere";
+        entity.AddComponent<MaterialComponent>();
     }
 };
 
@@ -50,6 +52,7 @@ struct PlaneNode {
         auto& mesh = entity.AddComponent<MeshComponent>();
         mesh.MeshData = PrimitiveFactory::CreatePlane();
         mesh.AssetPath = "Primitive::Plane";
+        entity.AddComponent<MaterialComponent>();
     }
 };
 

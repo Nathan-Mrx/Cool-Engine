@@ -7,8 +7,8 @@ uniform sampler2D uEquirectangularMap;
 const vec2 invAtan = vec2(0.1591, 0.3183);
 
 vec2 SampleSphericalMap(vec3 v) {
-    float safeX = (abs(v.x) < 0.0001 && abs(v.z) < 0.0001) ? 0.0001 : v.x;
-    vec2 uv = vec2(atan(v.z, safeX), asin(clamp(v.y, -0.9999, 0.9999)));
+    float safeX = (abs(v.x) < 0.0001 && abs(v.y) < 0.0001) ? 0.0001 : v.x;
+    vec2 uv = vec2(atan(v.y, safeX), asin(clamp(v.z, -0.9999, 0.9999)));
     uv *= invAtan;
     uv += 0.5;
     return uv;

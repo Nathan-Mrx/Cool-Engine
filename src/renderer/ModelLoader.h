@@ -52,6 +52,17 @@ public:
             else
                 vertex.TexCoords = { 0.0f, 0.0f };
 
+            // Tangentes (même swizzle Y-Z que les normales)
+            if(mesh->mTangents) {
+                vertex.Tangent = {
+                    mesh->mTangents[i].x,
+                    -mesh->mTangents[i].z,
+                    mesh->mTangents[i].y
+                };
+            } else {
+                vertex.Tangent = { 0.0f, 0.0f, 0.0f };
+            }
+
             vertices.push_back(vertex);
         }
 
