@@ -1087,32 +1087,47 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-vec3 getNormalFromMap(vec3 texNormal, vec3 fragPos, vec3 vNormal, vec2 uv) {
-    vec3 tangentNormal = texNormal * 2.0 - 1.0;
+vec3 getNormalFromMap(vec3 normalMapColor, vec3 fragPos, vec3 normal, vec2 uv) {
+    vec3 tangentNormal = normalMapColor * 2.0 - 1.0;
+
     vec3 Q1  = dFdx(fragPos);
     vec3 Q2  = dFdy(fragPos);
     vec2 st1 = dFdx(uv);
     vec2 st2 = dFdy(uv);
-    vec3 N   = normalize(vNormal);
-    vec3 T  = normalize(Q1*st2.t - Q2*st1.t);
-    vec3 B  = -normalize(cross(N, T));
+
+    vec3 N   = normalize(normal);
+
+    float det = (st1.x * st2.y - st2.x * st1.y);
+    vec3 T;
+
+    if (abs(det) < 0.000001) {
+        T = cross(abs(N.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), N);
+    } else {
+        T = (Q1 * st2.y - Q2 * st1.y) / det;
+    }
+
+    // --- LE VRAI FIX ANTI-STRIES JAUNES ---
+    vec3 orthoT = T - dot(T, N) * N;
+    if (length(orthoT) < 0.0001) {
+        orthoT = cross(abs(N.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), N);
+    }
+    T = normalize(orthoT);
+    vec3 B = cross(N, T);
+
     mat3 TBN = mat3(T, B, N);
     return normalize(TBN * tangentNormal);
 }
 
 // ========================================================
-// --- SYSTEME D'OMBRE CSM (Nouveau) ---
+// --- SYSTEME D'OMBRE PCSS (Nouveau) ---
 // ========================================================
-const vec2 poissonDisk[16] = vec2[](
-    vec2( -0.94201624, -0.39906216 ), vec2( 0.94558609, -0.76890725 ),
-    vec2( -0.094184101, -0.92938870 ), vec2( 0.34495938, 0.29387760 ),
-    vec2( -0.91588581, 0.45771432 ), vec2( -0.81544232, -0.87912464 ),
-    vec2( -0.38277543, 0.27676845 ), vec2( 0.97484398, 0.75648379 ),
-    vec2( 0.44323325, -0.97511554 ), vec2( 0.53742981, -0.47373420 ),
-    vec2( -0.26496911, -0.41893023 ), vec2( 0.79197514, 0.19090188 ),
-    vec2( -0.24188840, 0.99706507 ), vec2( -0.81409955, 0.91437590 ),
-    vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100467 )
-);
+const float GOLDEN_ANGLE = 2.39996323;
+
+vec2 VogelDiskSample(int i, int numSamples, float noiseAngle) {
+    float r = sqrt(float(i) + 0.5) / sqrt(float(numSamples));
+    float theta = float(i) * GOLDEN_ANGLE + noiseAngle;
+    return vec2(r * cos(theta), r * sin(theta));
+}
 
 float InterleavedGradientNoise(vec2 position_screen) {
     vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
@@ -1143,20 +1158,48 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
 
     float noise = InterleavedGradientNoise(gl_FragCoord.xy);
     float angle = noise * 6.28318530718;
-    float s = sin(angle);
-    float c = cos(angle);
-    mat2 rotationMat = mat2(c, -s, s, c);
-
-    float shadow = 0.0;
     vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
-    float spread = 1.5;
 
-    for(int i = 0; i < 16; i++) {
-        vec2 rotatedOffset = rotationMat * poissonDisk[i];
-        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + rotatedOffset * texelSize * spread, float(layer))).r;
+    // PCSS - ÉTAPE 1 : Blocker Search
+    int blockers = 0;
+    float avgBlockerDepth = 0.0;
+    float searchRadius = 4.0;
+    if (layer == 1) searchRadius = 2.0;
+    if (layer == 2) searchRadius = 1.0;
+
+    int blockerSamples = 16;
+    for(int i = 0; i < blockerSamples; i++) {
+        vec2 offset = VogelDiskSample(i, blockerSamples, angle) * searchRadius * texelSize;
+        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
+        if (pcfDepth < currentDepth - bias) {
+            blockers++;
+            avgBlockerDepth += pcfDepth;
+        }
+    }
+
+    if (blockers == 0) return vec2(0.0, layer);
+    avgBlockerDepth /= float(blockers);
+
+    // PCSS - ÉTAPE 2 : Penumbra Estimation
+    float distanceToBlocker = currentDepth - avgBlockerDepth;
+    float sunSize = 150.0;
+    float penumbraRadius = distanceToBlocker * sunSize;
+
+    float maxBlur = 6.0;
+    if (layer == 1) maxBlur = 4.0;
+    if (layer == 2) maxBlur = 2.0;
+    float filterRadiusUV = clamp(penumbraRadius, 1.0, maxBlur);
+
+    // PCSS - ÉTAPE 3 : Variable PCF
+    float shadow = 0.0;
+    int pcfSamples = 32;
+    for(int i = 0; i < pcfSamples; i++) {
+        vec2 offset = VogelDiskSample(i, pcfSamples, angle) * filterRadiusUV * texelSize;
+        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
         shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
     }
-    shadow /= 16.0;
+    shadow /= float(pcfSamples);
+
     return vec2(shadow, layer);
 }
 )";
@@ -1186,31 +1229,36 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
 
     shaderCode << bodyBuilder.str();
 
-    shaderCode << "    vec3 albedo = pow(vec3(" << v_baseColor << "), vec3(2.2)); // Gamma to Linear\n";
+    shaderCode << "    vec3 albedo = vec3(" << v_baseColor << ");\n";
     shaderCode << "    float metallic = float(" << v_metallic << ");\n";
     shaderCode << "    float roughness = clamp(float(" << v_roughness << "), 0.05, 1.0);\n";
     shaderCode << "    float ao = float(" << v_ao << ");\n\n";
 
-    if (v_normal.empty() || v_normal.find("vec3(0") != std::string::npos) {
-        shaderCode << "    vec3 N = normalize(vNormal);\n";
-    } else {
-        shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
-    }
-
+    shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
     shaderCode << "    if (uRenderMode == 1 || uRenderMode == 2) {\n";
     shaderCode << "        FragColor = vec4(albedo, 1.0);\n";
     shaderCode << "        EntityID = uEntityID;\n";
     shaderCode << "        return;\n";
-    shaderCode << "    }\n\n";
+    shaderCode << "    }\n";
+
+    shaderCode << "    // --- LE BOUCLIER ANTI-DIVISION PAR ZÉRO ---\n";
+    shaderCode << "    roughness = clamp(roughness, 0.05, 1.0);\n";
+    shaderCode << "    ao = clamp(ao, 0.05, 1.0);\n\n";
 
     // --- LE CÂBLAGE FINAL OMBRE + PBR ---
     shaderCode << R"(
+    // --- LE BOUCLIER ANTI-DIVISION PAR ZÉRO ---
+    roughness = clamp(roughness, 0.05, 1.0); // Le GGX explose si roughness = 0.0 !
+    ao = clamp(ao, 0.01, 1.0);
+
     vec3 V = normalize(uViewPos - vFragPos);
+    vec3 L = normalize(-uLightDir);
+
+    // On ajoute un micro-vecteur à H pour éviter que (V + L) vaille exactement 0
+    vec3 H = normalize(V + L + vec3(0.000001));
+
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
-
-    vec3 L = normalize(-uLightDir); // La direction de la lumière !
-    vec3 H = normalize(V + L);
     vec3 radiance = uLightColor;
 
     float NDF = DistributionGGX(N, H, roughness);
@@ -1222,9 +1270,9 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     vec3 specular = numerator / denominator;
 
     // --- LE VACCIN ANTI-FIREFLIES ---
-    // On empêche un rebond de lumière d'être plus de 10 fois plus intense que la source
-    // Cela détruit les mathématiques absurdes générées par des Normal Maps très bruyantes (comme le rotin)
+    // Détruit les mathématiques absurdes générées par des Normal Maps très bruyantes
     specular = clamp(specular, vec3(0.0), vec3(10.0));
+
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
     kD *= 1.0 - metallic;
@@ -1241,13 +1289,11 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     #endif
 
     // --- APPLICATION RÉALISTE DU CIEL (IBL) ---
-    // On pivote la normale selon la rotation de la Skybox
     float skyC = cos(u_SkyboxRotation);
     float skyS = sin(u_SkyboxRotation);
     vec3 rotN = N;
     rotN.xy = vec2(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC);
 
-    // On applique l'intensité choisie par l'utilisateur
     vec3 irradiance = texture(uIrradianceMap, vec3(rotN.x, rotN.z, -rotN.y)).rgb * u_SkyboxIntensity;
 
     vec3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
@@ -1257,8 +1303,6 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     vec3 ambient = (kD_ambient * irradiance) * albedo * ao;
 
     // ========================================================
-
-    // On additionne la lumière ambiante du ciel + (Le soleil en direct bloqué par l'ombre)
     vec3 color = ambient + (1.0 - shadow) * Lo;
 
     // Tonemapping et Gamma Correction
