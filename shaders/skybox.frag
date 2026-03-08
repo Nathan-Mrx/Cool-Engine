@@ -4,7 +4,6 @@ out vec4 FragColor;
 in vec3 vWorldPos;
 uniform sampler2D uEquirectangularMap;
 
-// --- NOUVELLES VARIABLES ---
 uniform float uIntensity;
 uniform float uRotation;
 
@@ -15,6 +14,12 @@ vec2 SampleSphericalMap(vec3 v) {
     uv *= invAtan;
     uv += 0.5;
     return uv;
+}
+
+// --- LE MÊME TONEMAPPER QUE TES MATÉRIAUX ---
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
 
 void main() {
@@ -28,13 +33,13 @@ void main() {
     vec2 uv = SampleSphericalMap(pos);
     vec3 color = texture(uEquirectangularMap, uv).rgb;
 
-    if (isnan(color.r) || isinf(color.r)) color = vec3(50000.0);
-    color = clamp(color, 0.0, 50000.0);
+    if (isnan(color.r) || isinf(color.r)) color = vec3(0.0);
 
     // --- INTENSITÉ ---
     color *= uIntensity;
 
-    color = color / (color + vec3(1.0));
+    // --- TONEMAPPING AAA ---
+    color = ACESFilm(color);
     color = pow(color, vec3(1.0/2.2));
 
     FragColor = vec4(color, 1.0);
