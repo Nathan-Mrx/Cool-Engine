@@ -80,6 +80,8 @@ set(SOURCES
         src/scene/NodeDefinitions.h
         src/scene/NodeRegistry.generated.h
         src/editor/UITheme.h
+        src/renderer/DDGIVolume.cpp
+        src/renderer/DDGIVolume.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---

@@ -1039,7 +1039,12 @@ std::string MaterialEditorPanel::CompileMaterial() {
     shaderCode << "uniform float uCascadeDistances[3];\n\n";
 
     // --- UNIFORMS IBL ---
-    shaderCode << "uniform samplerCube uIrradianceMap;\n\n";
+    shaderCode << "uniform sampler2D uDDGIIrradiance;\n";
+    shaderCode << "uniform int uDDGIProbeCount[3];\n"; // Transféré via SetInt3
+
+    shaderCode << "uniform float uDDGIStartX, uDDGIStartY, uDDGIStartZ;\n";
+    shaderCode << "uniform float uDDGISpaceX, uDDGISpaceY, uDDGISpaceZ;\n";
+
     shaderCode << "uniform float u_SkyboxIntensity = 0.5;\n";
     shaderCode << "uniform float u_SkyboxRotation = 0.0;\n\n";
 
@@ -1080,6 +1085,55 @@ const float PI = 3.14159265359;
 vec3 ACESFilm(vec3 x) {
     float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
     return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
+// --- MATHÉMATIQUES DDGI ---
+vec2 OctEncode(vec3 v) {
+    float l = abs(v.x) + abs(v.y) + abs(v.z);
+    vec2 oct = v.xy / l;
+    if (v.z < 0.0) {
+        vec2 signOct = vec2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
+        oct = (1.0 - abs(oct.yx)) * signOct;
+    }
+    return oct * 0.5 + 0.5;
+}
+
+vec3 SampleDDGIIrradiance(vec3 worldPos, vec3 normal) {
+    vec3 startPos = vec3(uDDGIStartX, uDDGIStartY, uDDGIStartZ);
+    vec3 spacing = vec3(uDDGISpaceX, uDDGISpaceY, uDDGISpaceZ);
+    ivec3 probeCount = ivec3(uDDGIProbeCount[0], uDDGIProbeCount[1], uDDGIProbeCount[2]);
+
+    // 1. Position exacte dans la grille
+    vec3 gridPos = (worldPos - startPos) / spacing;
+    ivec3 baseProbeCoords = ivec3(floor(gridPos));
+    vec3 alpha = fract(gridPos);
+
+    vec3 sumIrradiance = vec3(0.0);
+    float sumWeight = 0.0;
+    int probesPerRow = probeCount.x * probeCount.y;
+    vec2 texSize = vec2(float(probesPerRow * 8), float(probeCount.z * 8));
+
+    // 2. Interpolation des 8 sondes autour de l'objet
+    for (int i = 0; i < 8; ++i) {
+        ivec3 offset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+        ivec3 probeCoords = clamp(baseProbeCoords + offset, ivec3(0), probeCount - ivec3(1));
+
+        int probeIndex = probeCoords.x + probeCoords.y * probeCount.x + probeCoords.z * probesPerRow;
+        int gridX = probeIndex % probesPerRow;
+        int gridY = probeIndex / probesPerRow;
+
+        vec2 octUV = OctEncode(normal);
+        vec2 pixelPos = vec2(gridX * 8.0, gridY * 8.0) + (octUV * 8.0);
+
+        vec3 probeIrradiance = texture(uDDGIIrradiance, pixelPos / texSize).rgb;
+
+        vec3 trilinear = mix(1.0 - alpha, alpha, vec3(offset));
+        float weight = trilinear.x * trilinear.y * trilinear.z;
+
+        sumIrradiance += probeIrradiance * weight;
+        sumWeight += weight;
+    }
+    return sumIrradiance / max(sumWeight, 0.0001);
 }
 
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
@@ -1333,10 +1387,8 @@ vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
     // comme une ombre douce de jeu vidéo, sans éclipser le Soleil !
     float iblExposure = 0.02;
 
-    // 1. DIFFUSE IBL
-    vec3 rotN = vec3(N.x * skyC - N.y * skyS, N.x * skyS + N.y * skyC, N.z);
-    vec3 iblNormal = vec3(rotN.x, rotN.z, -rotN.y);
-    vec3 irradiance = texture(uIrradianceMap, iblNormal).rgb * u_SkyboxIntensity * iblExposure;
+    // 1. DIFFUSE DDGI
+    vec3 irradiance = SampleDDGIIrradiance(vFragPos, N) * iblExposure;
 
     // 2. SPECULAR IBL (Les reflets dynamiques !)
     vec3 R = reflect(-V, N);

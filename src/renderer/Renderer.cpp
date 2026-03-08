@@ -19,6 +19,8 @@ void Renderer::Init() {
 
     s_Data->SkyboxShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox.frag");
 
+    s_Data->DDGIUpdateShader = std::make_unique<Shader>("shaders/ddgi_update.comp");
+
     float skyboxVertices[] = {
         // Face Arrière
         -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
@@ -136,6 +138,15 @@ void Renderer::Init() {
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &captureFBO); glDeleteRenderbuffers(1, &captureRBO);
+
+    // --- INITIALISATION DE LA DDGI ---
+    // On crée une grille de 16x8x16 = 2048 sondes !
+    // Elles sont espacées de 2 mètres (200 cm) les unes des autres
+    s_Data->GlobalDDGIVolume = std::make_unique<DDGIVolume>(
+        glm::vec3(-1600.0f, 100.0f, -1600.0f), // Point de départ (coin bas-gauche)
+        glm::ivec3(16, 8, 16),                 // Nombre de sondes
+        glm::vec3(200.0f, 200.0f, 200.0f)      // Espacement Z-UP centimétrique !
+    );
 }
 
 
@@ -326,10 +337,30 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
             glBindTexture(GL_TEXTURE_2D_ARRAY, s_Data->ShadowFramebuffer->GetDepthAttachmentRendererID());
             activeShader->SetInt("uShadowMap", 15);
 
-            // --- INJECTION DE L'IRRADIANCE MAP (IBL) ---
+            // ==========================================================
+            // --- INJECTION DE LA DDGI (LUMIÈRE GLOBALE DYNAMIQUE) ---
+            // ==========================================================
             glActiveTexture(GL_TEXTURE14);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->IrradianceMap);
-            activeShader->SetInt("uIrradianceMap", 14);
+            if (s_Data->GlobalDDGIVolume) {
+                // On attache notre Atlas 2D géant au port 14
+                glBindTexture(GL_TEXTURE_2D, s_Data->GlobalDDGIVolume->GetIrradianceTexture());
+                activeShader->SetInt("uDDGIIrradiance", 14);
+
+                // On envoie les coordonnées de la grille pour que le shader puisse se repérer
+                glm::vec3 startPos = s_Data->GlobalDDGIVolume->GetStartPosition();
+                glm::vec3 spacing  = s_Data->GlobalDDGIVolume->GetProbeSpacing();
+                glm::ivec3 counts  = s_Data->GlobalDDGIVolume->GetProbeCount();
+
+                activeShader->SetFloat("uDDGIStartX", startPos.x);
+                activeShader->SetFloat("uDDGIStartY", startPos.y);
+                activeShader->SetFloat("uDDGIStartZ", startPos.z);
+
+                activeShader->SetFloat("uDDGISpaceX", spacing.x);
+                activeShader->SetFloat("uDDGISpaceY", spacing.y);
+                activeShader->SetFloat("uDDGISpaceZ", spacing.z);
+
+                activeShader->SetInt3("uDDGIProbeCount", counts.x, counts.y, counts.z);
+            }
 
             // --- INJECTION DES REFLETS SPÉCULAIRES (IBL COMPLET) ---
             glActiveTexture(GL_TEXTURE12);
@@ -738,5 +769,34 @@ void Renderer::UpdateSkybox(const std::string& hdrPath) {
         glDrawArrays(GL_TRIANGLES, 0, 36);
         glBindVertexArray(0);
     }
+
+    // =========================================================================
+    // --- MISE À JOUR DU VOLUME DDGI (LANCEMENT DU COMPUTE SHADER) ---
+    // =========================================================================
+    if (s_Data->GlobalDDGIVolume && s_Data->DDGIUpdateShader) {
+        s_Data->DDGIUpdateShader->Use();
+
+        // On envoie la Skybox fraîchement générée pour l'échantillonnage
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->EnvCubemap);
+        s_Data->DDGIUpdateShader->SetInt("uEnvironmentMap", 0);
+
+        glm::ivec3 probeCount = s_Data->GlobalDDGIVolume->GetProbeCount();
+        s_Data->DDGIUpdateShader->SetInt3("uProbeCount", probeCount.x, probeCount.y, probeCount.z);
+
+        // On connecte la texture de notre volume en mode "Ecriture Pure" (Image Load/Store)
+        // Format GL_RGBA16F, Unité d'image 0
+        glBindImageTexture(0, s_Data->GlobalDDGIVolume->GetIrradianceTexture(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+
+        // BOUM ! On lance 2048 groupes de travail en parallèle !
+        // (La carte graphique va traiter plus de 130 000 pixels quasi-instantanément)
+        s_Data->DDGIUpdateShader->Dispatch(probeCount.x, probeCount.y, probeCount.z);
+
+        // On oblige le GPU à attendre que tous les threads aient fini d'écrire
+        // avant d'autoriser le reste du moteur à lire cette texture.
+        Shader::IssueMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    }
+
+    // Nettoyage classique
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

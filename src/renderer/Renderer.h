@@ -5,6 +5,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#include "DDGIVolume.h"
 #include "editor/EditorLayer.h"
 
 class Renderer {
@@ -67,6 +68,9 @@ private:
         std::unique_ptr<Shader> BRDFShader;
         uint32_t PrefilterMap = 0;
         uint32_t BRDFLUTTexture = 0;
+
+        std::unique_ptr<DDGIVolume> GlobalDDGIVolume; // Ajoute ceci !
+        std::unique_ptr<Shader> DDGIUpdateShader; // Le cerveau de notre GI
     };
     static RendererData* s_Data;
 
