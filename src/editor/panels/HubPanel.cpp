@@ -2,6 +2,8 @@
 #include "../../project/Project.h"
 #include <imgui.h>
 #include <nfd.hpp>
+
+#include "renderer/RendererAPI.h"
 #include "renderer/TextureLoader.h"
 
 // =========================================================================================
@@ -111,7 +113,6 @@ void HubPanel::DrawRightColumn() {
 void HubPanel::DrawRecentProjectItem(const std::filesystem::path& projectPath, float thumbnailSize) {
     ImGui::PushID(projectPath.string().c_str());
 
-    // Utilisation d'un bouton invisible pour capturer les clics sur toute la ligne
     ImVec2 rowSize = ImVec2(ImGui::GetContentRegionAvail().x, thumbnailSize + 10);
     ImGui::InvisibleButton("##RowBtn", rowSize);
 
@@ -123,15 +124,14 @@ void HubPanel::DrawRecentProjectItem(const std::filesystem::path& projectPath, f
         draw_list->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImColor(50, 50, 50, 255));
     }
 
-    // --- On remonte le curseur pour dessiner PAR DESSUS le bouton invisible ---
     ImGui::SetCursorPos(ImVec2(ImGui::GetItemRectMin().x - ImGui::GetWindowPos().x + ImGui::GetScrollX(), ImGui::GetItemRectMin().y - ImGui::GetWindowPos().y + ImGui::GetScrollY() + 5));
 
     // Thumbnail
-    uint32_t texID = GetThumbnailTexture(projectPath);
-    if (texID != 0) {
-        ImGui::Image((ImTextureID)(uintptr_t)texID, ImVec2(thumbnailSize, thumbnailSize), ImVec2(0, 1), ImVec2(1, 0));
+    void* texID = GetThumbnailTexture(projectPath);
+    if (texID != nullptr && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        ImGui::Image((ImTextureID)texID, ImVec2(thumbnailSize, thumbnailSize), ImVec2(0, 1), ImVec2(1, 0));
     } else {
-        ImGui::Button("NO\\nIMG", ImVec2(thumbnailSize, thumbnailSize));
+        ImGui::Button("NO\nIMG", ImVec2(thumbnailSize, thumbnailSize));
     }
 
     // Textes
@@ -142,7 +142,6 @@ void HubPanel::DrawRecentProjectItem(const std::filesystem::path& projectPath, f
     ImGui::TextDisabled("%s", projectPath.string().c_str());
     ImGui::EndGroup();
 
-    // Action d'ouverture
     if (isClicked) {
         Project::Load(projectPath);
     }
@@ -182,7 +181,9 @@ void HubPanel::DrawNewProjectModal(bool& triggerNewProject) {
     }
 }
 
-uint32_t HubPanel::GetThumbnailTexture(const std::filesystem::path& path) {
+void* HubPanel::GetThumbnailTexture(const std::filesystem::path& path) {
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return nullptr;
+
     if (m_ThumbnailCache.find(path) != m_ThumbnailCache.end()) {
         return m_ThumbnailCache[path];
     }
@@ -190,9 +191,8 @@ uint32_t HubPanel::GetThumbnailTexture(const std::filesystem::path& path) {
     std::filesystem::path thumbPath = path.parent_path() / ".ce_cache/thumbnail.png";
 
     if (std::filesystem::exists(thumbPath)) {
-        // On utilise notre nouvel utilitaire
-        uint32_t textureID = TextureLoader::LoadTexture(thumbPath.string().c_str());
-        if (textureID != 0) {
+        void* textureID = TextureLoader::LoadTexture(thumbPath.string().c_str());
+        if (textureID != nullptr) {
             m_ThumbnailCache[path] = textureID;
             return textureID;
         }

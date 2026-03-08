@@ -213,11 +213,11 @@ struct MaterialComponent {
 
     // --- VARIABLES D'EXÉCUTION DU SHADER (Non sérialisées ici) ---
     std::shared_ptr<Shader> ShaderInstance = nullptr;
-    std::map<int, unsigned int> Textures;
+    std::map<int, void*> Textures;
     std::map<std::string, float> FloatOverrides;
     std::map<std::string, glm::vec4> ColorOverrides;
     std::map<std::string, bool> SwitchOverrides;
-    std::map<std::string, unsigned int> TextureOverrides;
+    std::map<std::string, void*> TextureOverrides;
 
     MaterialComponent() = default;
     MaterialComponent(const MaterialComponent&) = default;

@@ -20,7 +20,7 @@ struct MIParameter {
     bool BoolVal = false;
     glm::vec4 ColorVal = {1.0f, 1.0f, 1.0f, 1.0f};
     std::string TexturePath = "";
-    uint32_t TextureID = 0;
+    void* TextureID = nullptr;
 
     bool IsOverridden = false;
     bool IsVisible = false;
@@ -28,7 +28,7 @@ struct MIParameter {
 
 struct MIStaticTexture {
     std::string UniformName;
-    uint32_t TextureID = 0;
+    void* TextureID = nullptr;
 };
 
 class MaterialInstanceEditorPanel : public IAssetEditor {

@@ -44,7 +44,7 @@ struct MaterialNode {
     bool BoolValue = false;
 
     std::string TexturePath = "";
-    uint32_t TextureID = 0;
+    void* TextureID = nullptr;
 
     // --- NOUVEAU : PARAMÈTRES D'INSTANCE ---
     bool IsParameter = false;

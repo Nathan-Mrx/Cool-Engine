@@ -14,6 +14,7 @@
 
 #include "editor/EditorCommands.h"
 #include "editor/UndoManager.h"
+#include "renderer/RendererAPI.h"
 
 // =========================================================================================
 // COMMANDE D'UNDO POUR LE SYSTEME DE FICHIERS (Renommer & Déplacer)
@@ -61,8 +62,11 @@ void ContentBrowserPanel::OnImGuiRender() {
 
     if (m_CurrentDirectory.empty()) m_CurrentDirectory = Project::GetContentDirectory();
 
-    if (m_DirectoryIcon == 0 && std::filesystem::exists("icons/folder.png")) {
-        m_DirectoryIcon = TextureLoader::LoadTexture("icons/folder.png");
+    // SÉCURITÉ : Vérification de l'API et pointeur nul
+    if (m_DirectoryIcon == nullptr && std::filesystem::exists("icons/folder.png")) {
+        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+            m_DirectoryIcon = TextureLoader::LoadTexture("icons/folder.png");
+        }
     }
 
     if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2) && !m_SelectedPath.empty()) {
@@ -289,15 +293,17 @@ void ContentBrowserPanel::DrawDirectoryEntry(const std::filesystem::directory_en
 
     if (isSelected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
 
-    if (m_DirectoryIcon != 0) ImGui::ImageButton("##Dir", (ImTextureID)(uintptr_t)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
-    else ImGui::Button("DIR", { thumbnailSize, thumbnailSize });
+    if (m_DirectoryIcon != nullptr && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        ImGui::ImageButton("##Dir", (ImTextureID)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
+    } else {
+        ImGui::Button("DIR", { thumbnailSize, thumbnailSize });
+    }
 
     if (isSelected) ImGui::PopStyleColor();
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) { m_SelectedPath = path; m_IsRenaming = false; }
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { m_CurrentDirectory /= path.filename(); m_SelectedPath = ""; }
 
-    // Rendre le dossier lui-même "Déplaçable"
     if (ImGui::BeginDragDropSource()) {
         std::string itemPath = path.string();
         ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath.c_str(), itemPath.size() + 1);
@@ -305,7 +311,6 @@ void ContentBrowserPanel::DrawDirectoryEntry(const std::filesystem::directory_en
         ImGui::EndDragDropSource();
     }
 
-    // Permet de glisser un objet SUR ce dossier dans la grille
     HandleDragDropOnDirectory(path);
 }
 
@@ -324,8 +329,11 @@ void ContentBrowserPanel::DrawFileEntry(const std::filesystem::directory_entry& 
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(bgCol.x * 1.5f, bgCol.y * 1.5f, bgCol.z * 1.5f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(bgCol.x * 0.8f, bgCol.y * 0.8f, bgCol.z * 0.8f, 1.0f));
 
-    if (isKnownAsset && info.IconID != 0) ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
-    else ImGui::Button(path.extension().string().c_str(), { thumbnailSize, thumbnailSize });
+    if (isKnownAsset && info.IconID != 0 && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
+    } else {
+        ImGui::Button(path.extension().string().c_str(), { thumbnailSize, thumbnailSize });
+    }
 
     ImGui::PopStyleColor(3);
 

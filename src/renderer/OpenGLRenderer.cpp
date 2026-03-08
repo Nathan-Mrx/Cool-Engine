@@ -317,7 +317,7 @@ void OpenGLRenderer::RenderScene(Scene* scene, int renderMode) {
                     int slot = 0;
                     for (auto const& [name, texID] : mat.TextureOverrides) {
                         glActiveTexture(GL_TEXTURE0 + slot);
-                        glBindTexture(GL_TEXTURE_2D, texID);
+                        glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)texID);
                         activeShader->SetInt("u_" + name, slot); // <-- LE FIX EST ICI
                         slot++;
                     }
@@ -325,7 +325,7 @@ void OpenGLRenderer::RenderScene(Scene* scene, int renderMode) {
                     // (Les textures de base utilisent déjà "u_Tex_" donc ne change pas cette boucle :)
                     for (auto const& [nodeID, texID] : mat.Textures) {
                         glActiveTexture(GL_TEXTURE0 + slot);
-                        glBindTexture(GL_TEXTURE_2D, texID);
+                        glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)texID);
                         activeShader->SetInt("u_Tex_" + std::to_string(nodeID), slot);
                         slot++;
                     }
@@ -623,7 +623,7 @@ void OpenGLRenderer::UpdateSkybox(const std::string& hdrPath) {
 
     if (hdrPath.empty()) return;
 
-    uint32_t newEnvMap = TextureLoader::LoadHDR(hdrPath.c_str());
+    uint32_t newEnvMap = (uint32_t)(uintptr_t)TextureLoader::LoadHDR(hdrPath.c_str());
     if (newEnvMap == 0) return;
 
     // Sauvegarde du FBO de l'éditeur pour ne pas casser l'affichage

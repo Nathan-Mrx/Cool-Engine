@@ -62,7 +62,11 @@ void MaterialInstanceEditorPanel::Load(const std::filesystem::path& path) {
         FramebufferSpecification spec;
         spec.Width = 800; spec.Height = 600;
         m_PreviewFramebuffer = Framebuffer::Create(spec);
-        m_PreviewMesh = PrimitiveFactory::CreateSphere();
+
+        // --- SÉCURITÉ : Pas de création de Mesh OpenGL en Vulkan ! ---
+        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+            m_PreviewMesh = PrimitiveFactory::CreateSphere();
+        }
     }
 
     std::ifstream file(path);
@@ -221,6 +225,8 @@ void MaterialInstanceEditorPanel::EvaluateParameterVisibility() {
 }
 
 void MaterialInstanceEditorPanel::CompilePreviewShader() {
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return;
+
     if (m_ParentMaterialPath.empty()) return;
     std::ifstream file(Project::GetProjectDirectory() / m_ParentMaterialPath);
     if (!file.is_open()) return;
@@ -262,27 +268,9 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
     ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.65f);
     DrawPreviewColumn();
     ImGui::NextColumn();
-    DrawDetailsColumn();
+    DrawParameters();
     ImGui::Columns(1);
     ImGui::End();
-}
-
-void MaterialInstanceEditorPanel::DrawPreviewColumn() {
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
-    ImGui::SliderFloat("Speed", &m_RotationSpeed, -180.0f, 180.0f, "%.1f deg/s");
-    ImGui::SameLine();
-    ImGui::SliderFloat("Zoom", &m_CameraDistance, 50.0f, 500.0f, "%.0f cm");
-    ImGui::PopItemWidth();
-    ImGui::Separator();
-
-    ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-    if (m_PreviewFramebuffer && viewportSize.x > 0 && viewportSize.y > 0) {
-        if (viewportSize.x != m_PreviewFramebuffer->GetSpecification().Width || viewportSize.y != m_PreviewFramebuffer->GetSpecification().Height) {
-            m_PreviewFramebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
-        }
-        RenderPreview3D(viewportSize);
-        ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), viewportSize, ImVec2(0, 1), ImVec2(1, 0));
-    }
 }
 
 void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
@@ -333,14 +321,14 @@ void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
             else if (param.Type == "Color") m_PreviewShader->SetVec4("u_" + key, param.ColorVal);
             else if (param.Type == "Texture2D" && param.TextureID != 0) {
                 glActiveTexture(GL_TEXTURE0 + texSlot);
-                glBindTexture(GL_TEXTURE_2D, param.TextureID);
+                glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)param.TextureID);
                 m_PreviewShader->SetInt("u_" + key, texSlot++);
             }
         }
         for (auto& st : m_StaticTextures) {
             if (st.TextureID != 0) {
                 glActiveTexture(GL_TEXTURE0 + texSlot);
-                glBindTexture(GL_TEXTURE_2D, st.TextureID);
+                glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)st.TextureID);
                 m_PreviewShader->SetInt(st.UniformName, texSlot++);
             }
         }
@@ -349,18 +337,37 @@ void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
     m_PreviewFramebuffer->Unbind();
 }
 
-void MaterialInstanceEditorPanel::DrawDetailsColumn() {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-    ImGui::BeginChild("DetailsPanel");
-
-    ImGui::TextDisabled("GENERAL");
+void MaterialInstanceEditorPanel::DrawPreviewColumn() {
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+    ImGui::SliderFloat("Speed", &m_RotationSpeed, -180.0f, 180.0f, "%.1f deg/s");
+    ImGui::SameLine();
+    ImGui::SliderFloat("Zoom", &m_CameraDistance, 50.0f, 500.0f, "%.0f cm");
+    ImGui::PopItemWidth();
     ImGui::Separator();
 
-    HandleDragAndDropParent();
-    DrawParameters();
+    ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+    if (m_PreviewFramebuffer && viewportSize.x > 0 && viewportSize.y > 0) {
+        if (viewportSize.x != m_PreviewFramebuffer->GetSpecification().Width || viewportSize.y != m_PreviewFramebuffer->GetSpecification().Height) {
+            m_PreviewFramebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
+        }
 
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
+        // --- SÉCURITÉ VULKAN : On isole le rendu OpenGL pur ---
+        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+            RenderPreview3D(viewportSize);
+            uint32_t texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+            if (texID != 0) {
+                ImGui::Image((ImTextureID)(uintptr_t)texID, viewportSize, ImVec2(0, 1), ImVec2(1, 0));
+            }
+        } else {
+            // Un fond gris élégant pour Vulkan en attendant !
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImGui::GetCursorScreenPos(),
+                ImVec2(ImGui::GetCursorScreenPos().x + viewportSize.x, ImGui::GetCursorScreenPos().y + viewportSize.y),
+                IM_COL32(40, 40, 40, 255)
+            );
+            ImGui::Dummy(viewportSize);
+        }
+    }
 }
 
 void MaterialInstanceEditorPanel::HandleDragAndDropParent() {

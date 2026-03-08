@@ -23,9 +23,15 @@ static std::vector<char> ReadFile(const std::string& filename) {
     return buffer;
 }
 
+static VulkanRenderer* s_VkInstance = nullptr;
 
+VulkanRenderer* VulkanRenderer::Get() {
+    return s_VkInstance;
+}
 
 void VulkanRenderer::Init() {
+    s_VkInstance = this;
+
     std::cout << "\n=========================================\n";
     std::cout << "[VulkanRenderer] Initialisation en cours...\n";
     std::cout << "=========================================\n\n";

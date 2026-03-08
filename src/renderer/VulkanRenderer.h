@@ -66,6 +66,22 @@ private:
 
     VkShaderModule CreateShaderModule(const std::vector<char>& code);
 
+    // --- NOUVEAU : OUTILS POUR LES TEXTURES VULKAN ---
+    static VulkanRenderer* Get();
+
+    VkDevice GetDevice() const { return m_Device; }
+    VkPhysicalDevice GetPhysicalDevice() const { return m_PhysicalDevice; }
+    VkQueue GetGraphicsQueue() const { return m_GraphicsQueue; }
+    VkCommandPool GetCommandPool() const { return m_CommandPool; }
+
+    // Fonctions d'allocation mémoire et de commandes
+    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    VkCommandBuffer BeginSingleTimeCommands();
+    void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
+    void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
     VkSurfaceKHR m_Surface = VK_NULL_HANDLE;

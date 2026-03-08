@@ -97,7 +97,11 @@ MaterialEditorPanel::MaterialEditorPanel() {
     fbSpec.Width = 512;
     fbSpec.Height = 512;
     m_PreviewFramebuffer = Framebuffer::Create(fbSpec);
-    m_PreviewMesh = PrimitiveFactory::CreateSphere();
+
+    // --- SÉCURITÉ : Pas de création de Mesh OpenGL en Vulkan ! ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        m_PreviewMesh = PrimitiveFactory::CreateSphere();
+    }
 
     CompilePreviewShader();
 
@@ -144,7 +148,11 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     // Mise à jour du temps global pour les shaders
     m_TotalTime += ImGui::GetIO().DeltaTime;
 
-    RenderPreview3D();
+    // --- SÉCURITÉ : Bloquer le rendu de la preview 3D ! ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        RenderPreview3D();
+    }
+
     DrawPreviewWindow();
     DrawNodeEditorWindow(isOpen);
 }
@@ -207,7 +215,7 @@ void MaterialEditorPanel::RenderPreview3D() {
         for (auto& node : m_Nodes) {
             if (node.Name == "Texture2D" && node.TextureID != 0) {
                 glActiveTexture(GL_TEXTURE0 + slot);
-                glBindTexture(GL_TEXTURE_2D, node.TextureID);
+                glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)node.TextureID);
                 if (node.IsParameter) m_PreviewShader->SetInt("u_" + node.ParameterName, slot);
                 else m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
                 slot++;
@@ -251,8 +259,22 @@ void MaterialEditorPanel::DrawPreviewWindow() {
         if (previewAvail.x > 0 && previewAvail.y > 0 &&
            (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
             m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
+           }
+
+        // --- SÉCURITÉ VULKAN ---
+        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+            uint32_t texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+            if (texID != 0) {
+                ImGui::Image((ImTextureID)(uintptr_t)texID, previewAvail, ImVec2(0, 1), ImVec2(1, 0));
+            }
+        } else {
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImGui::GetCursorScreenPos(),
+                ImVec2(ImGui::GetCursorScreenPos().x + previewAvail.x, ImGui::GetCursorScreenPos().y + previewAvail.y),
+                IM_COL32(40, 40, 40, 255)
+            );
+            ImGui::Dummy(previewAvail);
         }
-        ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
     }
     ImGui::End();
 }
@@ -1519,6 +1541,9 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
 }
 
 void MaterialEditorPanel::CompilePreviewShader() {
+    // --- SÉCURITÉ : On ne compile pas de Shader OpenGL en Vulkan ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return;
+
     std::string fragCode = CompileMaterial();
     if (fragCode.empty()) return;
 

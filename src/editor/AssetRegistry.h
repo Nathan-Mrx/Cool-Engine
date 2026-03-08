@@ -32,7 +32,7 @@ struct AssetTypeInfo {
     std::string Extension;
     ImVec4 Color;
     std::string IconPath;
-    uint32_t IconID = 0;
+    void* IconID = nullptr;
 
     // --- NOUVEAU : On garde une trace de l'instance pour exécuter la création ---
     std::shared_ptr<IAssetType> Instance;

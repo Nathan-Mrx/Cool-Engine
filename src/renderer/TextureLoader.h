@@ -4,10 +4,18 @@
 #include <string>
 #include <iostream>
 
+#include "RendererAPI.h"
+
 class TextureLoader {
 public:
-    static unsigned int LoadTexture(const char* path) {
-        unsigned int textureID;
+    static void* LoadTexture(const char* path) {
+        unsigned int textureID = 0;
+
+        // --- SÉCURITÉ : Ne rien charger si ce n'est pas OpenGL ---
+        if (RendererAPI::GetAPI() != RendererAPI::API::OpenGL) {
+            return nullptr;
+        }
+
         glGenTextures(1, &textureID);
 
         int width, height, nrComponents;
@@ -30,8 +38,6 @@ public:
             // 3. ON CONFIGURE LE REPEAT ICI (Tant que la texture est "bind")
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); // Répète sur X (S)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT); // Répète sur Y (T)
-
-            // Lissage de la texture
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
@@ -41,10 +47,13 @@ public:
             stbi_image_free(data);
         }
 
-        return textureID;
+        // On le convertit proprement en pointeur générique
+        return (void*)(uintptr_t)textureID;
     }
 
-    static unsigned int LoadHDR(const char* path) {
+    static void* LoadHDR(const char* path) {
+        if (RendererAPI::GetAPI() != RendererAPI::API::OpenGL) return nullptr;
+
         stbi_set_flip_vertically_on_load(true);
         int width, height, nrComponents;
 
@@ -69,6 +78,6 @@ public:
             std::cout << "[TextureLoader] Echec du chargement HDR : " << path << std::endl;
         }
 
-        return hdrTexture;
+        return (void*)(uintptr_t)hdrTexture;
     }
 };

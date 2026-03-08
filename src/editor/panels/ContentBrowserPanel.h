@@ -35,7 +35,7 @@ private:
 
     float m_ThumbnailSize = 90.0f;
     float m_Padding = 16.0f;
-    unsigned int m_DirectoryIcon = 0;
+    void* m_DirectoryIcon = nullptr;
 
     bool m_IsRenaming = false;
     std::filesystem::path m_RenamingPath;

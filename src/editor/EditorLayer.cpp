@@ -355,7 +355,7 @@ void EditorLayer::DrawTabs() {
             if (isKnownAsset && info.IconID != 0 && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
                 // On ajoute les UVs inversés : ImVec2(0, 1) et ImVec2(1, 0) pour remettre l'image à l'endroit !
                 ImGui::GetWindowDrawList()->AddImage(
-                    (ImTextureID)static_cast<uintptr_t>(info.IconID),
+                    (ImTextureID)info.IconID,
                     iconPos,
                     ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
                     ImVec2(0, 1), // uv_min
