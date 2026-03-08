@@ -337,10 +337,30 @@ void Renderer::RenderScene(Scene* scene, int renderMode) {
             glBindTexture(GL_TEXTURE_2D_ARRAY, s_Data->ShadowFramebuffer->GetDepthAttachmentRendererID());
             activeShader->SetInt("uShadowMap", 15);
 
-            // --- INJECTION DE L'IRRADIANCE MAP (IBL) ---
+            // ==========================================================
+            // --- INJECTION DE LA DDGI (LUMIÈRE GLOBALE DYNAMIQUE) ---
+            // ==========================================================
             glActiveTexture(GL_TEXTURE14);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, s_Data->IrradianceMap);
-            activeShader->SetInt("uIrradianceMap", 14);
+            if (s_Data->GlobalDDGIVolume) {
+                // On attache notre Atlas 2D géant au port 14
+                glBindTexture(GL_TEXTURE_2D, s_Data->GlobalDDGIVolume->GetIrradianceTexture());
+                activeShader->SetInt("uDDGIIrradiance", 14);
+
+                // On envoie les coordonnées de la grille pour que le shader puisse se repérer
+                glm::vec3 startPos = s_Data->GlobalDDGIVolume->GetStartPosition();
+                glm::vec3 spacing  = s_Data->GlobalDDGIVolume->GetProbeSpacing();
+                glm::ivec3 counts  = s_Data->GlobalDDGIVolume->GetProbeCount();
+
+                activeShader->SetFloat("uDDGIStartX", startPos.x);
+                activeShader->SetFloat("uDDGIStartY", startPos.y);
+                activeShader->SetFloat("uDDGIStartZ", startPos.z);
+
+                activeShader->SetFloat("uDDGISpaceX", spacing.x);
+                activeShader->SetFloat("uDDGISpaceY", spacing.y);
+                activeShader->SetFloat("uDDGISpaceZ", spacing.z);
+
+                activeShader->SetInt3("uDDGIProbeCount", counts.x, counts.y, counts.z);
+            }
 
             // --- INJECTION DES REFLETS SPÉCULAIRES (IBL COMPLET) ---
             glActiveTexture(GL_TEXTURE12);
