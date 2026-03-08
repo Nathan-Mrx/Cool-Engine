@@ -58,10 +58,13 @@ private:
     VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
     void CreateRenderPass();
+    void CreateGraphicsPipeline();
     void CreateFramebuffers();
     void CreateCommandPool();
     void CreateCommandBuffer();
     void CreateSyncObjects();
+
+    VkShaderModule CreateShaderModule(const std::vector<char>& code);
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -102,6 +105,10 @@ private:
     uint32_t m_CurrentFrame = 0;      // La frame logique en cours de calcul (0 ou 1)
 
     VkDescriptorPool m_ImGuiPool = VK_NULL_HANDLE;
+
+    // --- LE PIPELINE ---
+    VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE; // Pour envoyer des variables globales plus tard
+    VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;     // L'état complet de la carte graphique
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

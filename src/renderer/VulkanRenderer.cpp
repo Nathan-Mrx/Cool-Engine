@@ -3,10 +3,26 @@
 
 #include <stdexcept>
 #include <cstring>
+#include <fstream>
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
+
+static std::vector<char> ReadFile(const std::string& filename) {
+    // On lit à la fin (ate) et en binaire (binary) pour avoir la taille exacte direct
+    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+    if (!file.is_open()) throw std::runtime_error("Erreur fatale: Impossible d'ouvrir le shader " + filename);
+
+    size_t fileSize = (size_t)file.tellg();
+    std::vector<char> buffer(fileSize);
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+    file.close();
+
+    return buffer;
+}
+
 
 
 void VulkanRenderer::Init() {
@@ -21,6 +37,7 @@ void VulkanRenderer::Init() {
     CreateSwapChain();
     CreateImageViews();
     CreateRenderPass();
+    CreateGraphicsPipeline();
     CreateFramebuffers();
     CreateCommandPool();
     CreateCommandBuffer();
@@ -56,6 +73,10 @@ void VulkanRenderer::Shutdown() {
     for (auto framebuffer : m_SwapChainFramebuffers) {
         vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
     }
+
+    // Destruction du Pipeline
+    if (m_GraphicsPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_GraphicsPipeline, nullptr);
+    if (m_PipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
 
     // Destruction du Render Pass
     if (m_RenderPass != VK_NULL_HANDLE) {
@@ -702,6 +723,38 @@ void VulkanRenderer::Clear() {
     renderPassInfo.pClearValues = &clearColor;
 
     vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    // On dit au GPU : "Prépare-toi à dessiner"
+    vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    // ==========================================================
+    // --- NOUVEAU : LE DESSIN DU TRIANGLE ---
+    // ==========================================================
+
+    // 1. On branche notre Pipeline (La configuration matérielle + nos Shaders)
+    vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+
+    // 2. Les États Dynamiques !
+    // Lors de la création du Pipeline, on a dit que le Viewport et le Scissor étaient "Dynamiques".
+    // Il FAUT donc les configurer à chaque frame avant de dessiner, sinon Vulkan crashera.
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(m_SwapChainExtent.width);
+    viewport.height = static_cast<float>(m_SwapChainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(m_CommandBuffers[m_CurrentFrame], 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = m_SwapChainExtent;
+    vkCmdSetScissor(m_CommandBuffers[m_CurrentFrame], 0, 1, &scissor);
+
+    // 3. Le coup de pinceau final !
+    // (Le carnet de commande, 3 sommets, 1 instance, on commence au sommet 0, instance 0)
+    vkCmdDraw(m_CommandBuffers[m_CurrentFrame], 3, 1, 0, 0);
 }
 
 void VulkanRenderer::EndScene() {
@@ -839,4 +892,133 @@ void VulkanRenderer::ShutdownImGui() {
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     vkDestroyDescriptorPool(m_Device, m_ImGuiPool, nullptr);
+}
+
+VkShaderModule VulkanRenderer::CreateShaderModule(const std::vector<char>& code) {
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = code.size();
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data()); // Vulkan veut des pointeurs sur 32 bits !
+
+    VkShaderModule shaderModule;
+    if (vkCreateShaderModule(m_Device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le module de shader !");
+    }
+    return shaderModule;
+}
+
+// ==============================================================================
+// --- ÉTAPE 12 : LE PIPELINE GRAPHIQUE (La configuration matérielle) ---
+// ==============================================================================
+void VulkanRenderer::CreateGraphicsPipeline() {
+    // 1. Chargement des Shaders SPIR-V
+    auto vertShaderCode = ReadFile("shaders/triangle_vert.spv");
+    auto fragShaderCode = ReadFile("shaders/triangle_frag.spv");
+
+    VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
+    VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
+
+    // Configuration de l'étape "Vertex"
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main"; // Le point d'entrée du shader
+
+    // Configuration de l'étape "Fragment" (Pixels)
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+    // 2. Les états dynamiques (Ce qu'on s'autorise à changer sans recréer tout le pipeline)
+    std::vector<VkDynamicState> dynamicStates = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    // 3. Entrée des sommets (Vide pour l'instant car nos points sont hardcodés dans le shader !)
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 0;
+    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+    // 4. Assemblage (On veut dessiner des triangles complets)
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    // 5. Fenêtre d'affichage (Viewport)
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1; // Un seul écran dynamique
+    viewportState.scissorCount = 1;
+
+    // 6. Rastériseur (Cull face, mode plein, etc.)
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; // On ne dessine pas l'arrière des faces
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    // 7. Multi-échantillonnage (Antialiasing - Désactivé pour l'instant)
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // 8. Mélange des couleurs (Alpha Blending - Opaque classique)
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE; // On remplace la couleur, on ne la mélange pas
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    // 9. Layout du Pipeline (Pour les Uniforms et Push Constants plus tard)
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+    if (vkCreatePipelineLayout(m_Device, &pipelineLayoutInfo, nullptr, &m_PipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le Pipeline Layout !");
+    }
+
+    // --- LE GRAND FINAL ---
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = nullptr; // Pas de Z-Buffer pour l'instant
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = m_PipelineLayout;
+    pipelineInfo.renderPass = m_RenderPass; // On doit lui dire avec quel type de passe de rendu on travaille
+    pipelineInfo.subpass = 0;
+
+    if (vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_GraphicsPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le Graphics Pipeline !");
+    }
+
+    std::cout << "[Vulkan] Graphics Pipeline cree avec succes.\n";
+
+    // On détruit les modules de shaders, la carte graphique a déjà ingéré leur code !
+    vkDestroyShaderModule(m_Device, fragShaderModule, nullptr);
+    vkDestroyShaderModule(m_Device, vertShaderModule, nullptr);
 }
