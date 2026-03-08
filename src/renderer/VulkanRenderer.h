@@ -56,6 +56,7 @@ private:
     void CreateFramebuffers();
     void CreateCommandPool();
     void CreateCommandBuffer();
+    void CreateSyncObjects();
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -82,6 +83,11 @@ private:
     // --- COMMANDES ---
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
     VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
+
+    // --- SYNCHRONISATION ---
+    VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE; // Signal: L'image est prête à être peinte
+    VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE; // Signal: Le dessin est fini, on peut afficher
+    VkFence m_InFlightFence = VK_NULL_HANDLE;               // Signal: Le CPU peut préparer la prochaine frame
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

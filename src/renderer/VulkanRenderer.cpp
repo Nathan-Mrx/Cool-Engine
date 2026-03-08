@@ -20,10 +20,22 @@ void VulkanRenderer::Init() {
     CreateFramebuffers();
     CreateCommandPool();
     CreateCommandBuffer();
+    CreateSyncObjects();
 }
 
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
+
+    // Destruction de la Synchronisation
+    if (m_ImageAvailableSemaphore != VK_NULL_HANDLE) {
+        vkDestroySemaphore(m_Device, m_ImageAvailableSemaphore, nullptr);
+    }
+    if (m_RenderFinishedSemaphore != VK_NULL_HANDLE) {
+        vkDestroySemaphore(m_Device, m_RenderFinishedSemaphore, nullptr);
+    }
+    if (m_InFlightFence != VK_NULL_HANDLE) {
+        vkDestroyFence(m_Device, m_InFlightFence, nullptr);
+    }
 
     // Destruction du Command Pool
     if (m_CommandPool != VK_NULL_HANDLE) {
@@ -595,6 +607,31 @@ void VulkanRenderer::CreateCommandBuffer() {
         throw std::runtime_error("Erreur fatale: Impossible d'allouer le Command Buffer !");
     }
     std::cout << "[Vulkan] Command Buffer alloue avec succes.\n";
+}
+
+// ==============================================================================
+// --- ÉTAPE 9 : SYNCHRONISATION (Les feux tricolores CPU/GPU) ---
+// ==============================================================================
+void VulkanRenderer::CreateSyncObjects() {
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    // ASTUCE CRUCIALE : On crée la Fence dans l'état "Signalée" (Ouverte).
+    // Sinon, à la toute première frame, le CPU va attendre indéfiniment un signal
+    // d'une frame précédente qui n'a jamais existé !
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    if (vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_ImageAvailableSemaphore) != VK_SUCCESS ||
+        vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_RenderFinishedSemaphore) != VK_SUCCESS ||
+        vkCreateFence(m_Device, &fenceInfo, nullptr, &m_InFlightFence) != VK_SUCCESS) {
+
+        throw std::runtime_error("Erreur fatale: Impossible de creer les objets de synchronisation !");
+        }
+
+    std::cout << "[Vulkan] Objets de synchronisation (Semaphores & Fence) crees avec succes.\n";
+    std::cout << "\n[Vulkan] === INITIALISATION TERMINEE ===\n";
 }
 
 // --------------------------------------------------------------
