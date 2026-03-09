@@ -98,10 +98,7 @@ MaterialEditorPanel::MaterialEditorPanel() {
     fbSpec.Height = 512;
     m_PreviewFramebuffer = Framebuffer::Create(fbSpec);
 
-    // --- SÉCURITÉ : Pas de création de Mesh OpenGL en Vulkan ! ---
-    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-        m_PreviewMesh = PrimitiveFactory::CreateSphere();
-    }
+    m_PreviewMesh = PrimitiveFactory::CreateSphere();
 
     CompilePreviewShader();
 
@@ -232,8 +229,17 @@ void MaterialEditorPanel::RenderPreview3D() {
             glUseProgram(0);
         }
     } else {
-        // En Vulkan, on ordonne simplement à la carte de vider l'image hors-écran !
+        // Mode Vulkan
         Renderer::Clear();
+
+        // 1. On active le Shader (Pipeline)
+        Renderer::BeginScene(glm::mat4(1.0f), glm::mat4(1.0f), glm::vec3(0.0f));
+
+        // 2. On dessine les Buffers !
+        if (m_PreviewMesh) {
+            m_PreviewMesh->Draw();
+        }
+
         Renderer::EndScene();
     }
 

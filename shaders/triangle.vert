@@ -1,21 +1,16 @@
 #version 450
 
-// On code les 3 points du triangle directement dans le GPU !
-vec2 positions[3] = vec2[](
-vec2(0.0, -0.5),
-vec2(0.5, 0.5),
-vec2(-0.5, 0.5)
-);
+// On récupère EXACTEMENT ce qu'on a configuré dans le vertexInputInfo !
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec2 inTexCoord;
+layout(location = 3) in vec3 inTangent;
 
-vec3 colors[3] = vec3[](
-vec3(1.0, 0.0, 0.0), // Rouge
-vec3(0.0, 1.0, 0.0), // Vert
-vec3(0.0, 0.0, 1.0)  // Bleu
-);
-
-layout(location = 0) out vec3 fragColor;
+layout(location = 0) out vec3 fragNormal;
 
 void main() {
-    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-    fragColor = colors[gl_VertexIndex];
+    // On rétrécit un peu l'objet (0.5) car on n'a pas encore codé la caméra (Matrice de Projection) !
+    gl_Position = vec4(inPosition * 0.5, 1.0);
+
+    fragNormal = inNormal;
 }

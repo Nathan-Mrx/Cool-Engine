@@ -63,10 +63,8 @@ void MaterialInstanceEditorPanel::Load(const std::filesystem::path& path) {
         spec.Width = 800; spec.Height = 600;
         m_PreviewFramebuffer = Framebuffer::Create(spec);
 
-        // --- SÉCURITÉ : Pas de création de Mesh OpenGL en Vulkan ! ---
-        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-            m_PreviewMesh = PrimitiveFactory::CreateSphere();
-        }
+        m_PreviewMesh = PrimitiveFactory::CreateSphere();
+
     }
 
     std::ifstream file(path);
@@ -336,6 +334,12 @@ void MaterialInstanceEditorPanel::RenderPreview3D() {
     } else {
         // Mode Vulkan
         Renderer::Clear();
+        Renderer::BeginScene(glm::mat4(1.0f), glm::mat4(1.0f), glm::vec3(0.0f));
+
+        if (m_PreviewMesh) {
+            m_PreviewMesh->Draw();
+        }
+
         Renderer::EndScene();
     }
 

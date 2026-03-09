@@ -809,7 +809,10 @@ void VulkanRenderer::EndScene() {
 }
 
 void VulkanRenderer::BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
-    // Préparation des buffers de commandes pour la frame
+    if (m_IsFrameStarted) {
+        // On lie le pipeline global (notre configuration de shaders) au stylo !
+        vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+    }
 }
 
 void VulkanRenderer::DrawGrid(bool enable) {
