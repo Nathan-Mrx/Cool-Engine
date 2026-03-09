@@ -9,6 +9,7 @@
 #include <iostream>
 #include <vector>
 #include <set>
+#include <glm/glm.hpp>
 
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -141,6 +142,8 @@ private:
     void CreateSceneRenderPass();
     VkRenderPass m_SceneRenderPass = VK_NULL_HANDLE;
 
+    glm::mat4 m_SceneViewMatrix = glm::mat4(1.0f);
+    glm::mat4 m_SceneProjectionMatrix = glm::mat4(1.0f);
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

@@ -11,6 +11,7 @@
 
 #include "Mesh.h"
 #include "VulkanFramebuffer.h"
+#include "ecs/Components.h"
 
 static std::vector<char> ReadFile(const std::string& filename) {
     // On lit à la fin (ate) et en binaire (binary) pour avoir la taille exacte direct
@@ -815,19 +816,50 @@ void VulkanRenderer::EndScene() {
 }
 
 void VulkanRenderer::BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
-    if (m_IsFrameStarted) {
-        // On lie le pipeline global (notre configuration de shaders) au stylo !
-        vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
-    }
+    if (!m_IsFrameStarted) return;
+
+    // --- SAUVEGARDE ET CORRECTION VULKAN ---
+    m_SceneViewMatrix = view;
+    m_SceneProjectionMatrix = projection;
+    m_SceneProjectionMatrix[1][1] *= -1.0f; // On inverse l'axe Y de la projection pour correspondre à Vulkan !
+
+    VkRenderPassBeginInfo renderPassInfo{};
+
+    // On lie le pipeline global (notre configuration de shaders) au stylo !
+    vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+
 }
 
 void VulkanRenderer::DrawGrid(bool enable) {
     // Rendu de la grille
 }
 
-void VulkanRenderer::RenderScene(Scene* scene, int renderMode)
-{
+void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
+    if (!m_IsFrameStarted || !scene) return;
 
+    // On demande à EnTT de nous donner toutes les entités avec un Transform ET un Mesh
+    auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
+
+    for (auto entityID : view) {
+        Entity entity{ entityID, scene };
+        auto& meshComp = entity.GetComponent<MeshComponent>();
+
+        // On vérifie que les données 3D sont bien chargées
+        if (meshComp.MeshData) {
+
+            // 1. Matrice de l'entité (Taille réelle centimétrique intacte !)
+            glm::mat4 modelMatrix = scene->GetWorldTransform(entity);
+
+            // 2. Calcul de la matrice finale (La caméra gère l'échelle toute seule)
+            glm::mat4 mvp = m_SceneProjectionMatrix * m_SceneViewMatrix * modelMatrix;
+
+            // 4. On envoie la matrice au Shader via le Push Constant
+            SubmitPushConstant(mvp);
+
+            // 5. Ordre de dessin Vulkan !
+            meshComp.MeshData->Draw();
+        }
+    }
 }
 
 void VulkanRenderer::SetShadowResolution(uint32_t resolution) {
@@ -1008,7 +1040,7 @@ void VulkanRenderer::CreateGraphicsPipeline() {
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; // On ne dessine pas l'arrière des faces
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     // 7. Multi-échantillonnage (Antialiasing - Désactivé pour l'instant)

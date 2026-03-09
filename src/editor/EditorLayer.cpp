@@ -183,9 +183,22 @@ void EditorLayer::OnUpdate(float deltaTime) {
 
         Renderer::EndScene();
     } else {
-        // --- SÉCURITÉ VULKAN ---
-        // On ordonne juste à la carte graphique de vider l'image et de la préparer
-        Renderer::Clear();
+        // --- VULKAN RENDERING ---
+        Renderer::Clear(); // Démarre le carnet de commandes du Framebuffer
+
+        // Calcul de la caméra de l'éditeur
+        glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+        float aspect = m_ViewportSize.x / m_ViewportSize.y;
+        if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+
+        // On lance la scène !
+        Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+        Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+
+        // (On désactive la grille pour l'instant car elle utilise des shaders OpenGL)
+        // if (m_ShowGrid) Renderer::DrawGrid(true);
+
         Renderer::EndScene();
     }
 
