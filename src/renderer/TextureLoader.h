@@ -169,9 +169,106 @@ public:
     }
 
     static void* LoadHDR(const char* path) {
-        // La gestion des HDR viendra plus tard, lors de la création de la Skybox !
-        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return nullptr;
+        // =======================================================
+        // --- VULKAN : CHARGEMENT D'IMAGE FLOTTANTE (HDR) ---
+        // =======================================================
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+            stbi_set_flip_vertically_on_load(true);
+            int width, height, nrComponents;
 
+            // On force 4 canaux (RGBA) en FLOAT pour Vulkan !
+            float* data = stbi_loadf(path, &width, &height, &nrComponents, 4);
+
+            if (!data) {
+                std::cout << "[TextureLoader] Echec du chargement HDR Vulkan : " << path << std::endl;
+                return nullptr;
+            }
+
+            VulkanRenderer* vkRenderer = VulkanRenderer::Get();
+            VkDevice device = vkRenderer->GetDevice();
+
+            // 1. CRÉATION DU SAS (4 floats par pixel, soit 16 octets/pixel !)
+            VkDeviceSize imageSize = width * height * 4 * sizeof(float);
+            VkBuffer stagingBuffer;
+            VkDeviceMemory stagingBufferMemory;
+            vkRenderer->CreateBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+            void* mappedData;
+            vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &mappedData);
+            memcpy(mappedData, data, static_cast<size_t>(imageSize));
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            stbi_image_free(data); // On libère la RAM CPU
+
+            // 2. CRÉATION DE L'IMAGE VULKAN (Format R32G32B32A32_SFLOAT)
+            VulkanTexture* tex = new VulkanTexture();
+
+            VkImageCreateInfo imageInfo{};
+            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.extent.width = width;
+            imageInfo.extent.height = height;
+            imageInfo.extent.depth = 1;
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT; // <--- LE FORMAT MAGIQUE HDR
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+            vkCreateImage(device, &imageInfo, nullptr, &tex->Image);
+
+            VkMemoryRequirements memRequirements;
+            vkGetImageMemoryRequirements(device, tex->Image, &memRequirements);
+            VkMemoryAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocInfo.allocationSize = memRequirements.size;
+            allocInfo.memoryTypeIndex = vkRenderer->FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vkAllocateMemory(device, &allocInfo, nullptr, &tex->Memory);
+            vkBindImageMemory(device, tex->Image, tex->Memory, 0);
+
+            // 3. TRANSFERT ET TRANSITIONS
+            vkRenderer->TransitionImageLayout(tex->Image, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            vkRenderer->CopyBufferToImage(stagingBuffer, tex->Image, width, height);
+            vkRenderer->TransitionImageLayout(tex->Image, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+            // 4. IMAGE VIEW ET SAMPLER
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = tex->Image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+            vkCreateImageView(device, &viewInfo, nullptr, &tex->View);
+
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            vkCreateSampler(device, &samplerInfo, nullptr, &tex->Sampler);
+
+            // 5. PONT IMGUI POUR LE CONTENT BROWSER
+            tex->ImGuiDescriptor = (void*)ImGui_ImplVulkan_AddTexture(tex->Sampler, tex->View, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            return (void*)tex;
+        }
+
+        // =======================================================
+        // --- OPENGL : L'ANCIENNE MÉTHODE ---
+        // =======================================================
         stbi_set_flip_vertically_on_load(true);
         int width, height, nrComponents;
         float *data = stbi_loadf(path, &width, &height, &nrComponents, 3);
@@ -186,6 +283,8 @@ public:
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             stbi_image_free(data);
+        } else {
+            std::cout << "[TextureLoader] Echec du chargement HDR OpenGL : " << path << std::endl;
         }
         return (void*)(uintptr_t)hdrTexture;
     }
