@@ -36,9 +36,9 @@ VulkanRenderer* VulkanRenderer::Get() {
 void VulkanRenderer::Init() {
     s_VkInstance = this;
 
-    std::cout << "\n=========================================\n";
+    std::cout << "\n===========================================\n";
     std::cout << "[VulkanRenderer] Initialisation en cours...\n";
-    std::cout << "=========================================\n\n";
+    std::cout << "===========================================\n\n";
 
     CreateInstance();
     CreateSurface();
