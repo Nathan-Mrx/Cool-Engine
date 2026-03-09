@@ -1,83 +1,185 @@
 #pragma once
-#include <glad/glad.h>
-#include <stb_image.h>
-#include <string>
-#include <iostream>
 
 #include "RendererAPI.h"
+#include "VulkanRenderer.h"
+#include <glad/glad.h>
+#include <stb_image.h>
+#include <imgui_impl_vulkan.h>
+#include <string>
+#include <iostream>
 
 class TextureLoader {
 public:
     static void* LoadTexture(const char* path) {
-        unsigned int textureID = 0;
-
-        // --- SÉCURITÉ : Ne rien charger si ce n'est pas OpenGL ---
-        if (RendererAPI::GetAPI() != RendererAPI::API::OpenGL) {
-            return nullptr;
-        }
-
-        glGenTextures(1, &textureID);
-
         int width, height, nrComponents;
-        stbi_set_flip_vertically_on_load(true); // Indispensable pour l'orientation OpenGL
-        unsigned char *data = stbi_load(path, &width, &height, &nrComponents, 0);
 
-        if (data) {
-            GLenum format = GL_RGB;
-            if (nrComponents == 1) format = GL_RED;
-            else if (nrComponents == 3) format = GL_RGB;
-            else if (nrComponents == 4) format = GL_RGBA;
+        // =======================================================
+        // --- VULKAN : L'ENVOI MANUEL EN VRAM ---
+        // =======================================================
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
 
-            // 1. On "sélectionne" la texture
-            glBindTexture(GL_TEXTURE_2D, textureID);
+            // Vulkan lit les images à l'endroit (contrairement à OpenGL)
+            stbi_set_flip_vertically_on_load(false);
 
-            // 2. On envoie les pixels à la carte graphique
-            glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-            glGenerateMipmap(GL_TEXTURE_2D);
+            // On force 4 canaux (RGBA) car le format RGB (3 canaux) n'est pas
+            // garanti d'être supporté par toutes les cartes graphiques en Vulkan.
+            unsigned char* data = stbi_load(path, &width, &height, &nrComponents, 4);
 
-            // 3. ON CONFIGURE LE REPEAT ICI (Tant que la texture est "bind")
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); // Répète sur X (S)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT); // Répète sur Y (T)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            if (!data) {
+                std::cout << "[TextureLoader] Echec du chargement Vulkan : " << path << std::endl;
+                return nullptr;
+            }
 
+            VulkanRenderer* vkRenderer = VulkanRenderer::Get();
+            VkDevice device = vkRenderer->GetDevice();
+
+            // 1. CRÉATION DU SAS (Staging Buffer CPU)
+            VkDeviceSize imageSize = width * height * 4;
+            VkBuffer stagingBuffer;
+            VkDeviceMemory stagingBufferMemory;
+            vkRenderer->CreateBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                     stagingBuffer, stagingBufferMemory);
+
+            // 2. COPIE DES PIXELS DANS LE SAS
+            void* mappedData;
+            vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &mappedData);
+            memcpy(mappedData, data, static_cast<size_t>(imageSize));
+            vkUnmapMemory(device, stagingBufferMemory);
             stbi_image_free(data);
-        } else {
-            std::cout << "[TextureLoader] Echec du chargement : " << path << std::endl;
-            stbi_image_free(data);
+
+            // 3. CRÉATION DE L'IMAGE DANS LA VRAM (VkImage)
+            VkImage textureImage;
+            VkDeviceMemory textureImageMemory;
+
+            VkImageCreateInfo imageInfo{};
+            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.extent.width = width;
+            imageInfo.extent.height = height;
+            imageInfo.extent.depth = 1;
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM; // Format de couleur standard
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+            vkCreateImage(device, &imageInfo, nullptr, &textureImage);
+
+            VkMemoryRequirements memRequirements;
+            vkGetImageMemoryRequirements(device, textureImage, &memRequirements);
+
+            VkMemoryAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocInfo.allocationSize = memRequirements.size;
+            allocInfo.memoryTypeIndex = vkRenderer->FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vkAllocateMemory(device, &allocInfo, nullptr, &textureImageMemory);
+            vkBindImageMemory(device, textureImage, textureImageMemory, 0);
+
+            // 4. ORDRES AU GPU : TRANSFERT ET CHANGEMENT DE LAYOUT
+            // On prépare l'image à recevoir les données
+            vkRenderer->TransitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            // On copie depuis le sas
+            vkRenderer->CopyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+            // On prépare l'image à être lue par les Shaders (ImGui)
+            vkRenderer->TransitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            // On détruit le sas qui ne sert plus à rien !
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+            // 5. CRÉATION DES "LUNETTES" POUR LIRE L'IMAGE (ImageView)
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = textureImage;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+
+            VkImageView textureImageView;
+            vkCreateImageView(device, &viewInfo, nullptr, &textureImageView);
+
+            // 6. CRÉATION DE LA FAÇON DE DESSINER L'IMAGE (Sampler)
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+            VkSampler textureSampler;
+            vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler);
+
+            // 7. LE PONT MAGIQUE AVEC IMGUI !
+            // On renvoie le Descriptor Set généré directement à l'interface
+            return (void*)ImGui_ImplVulkan_AddTexture(textureSampler, textureImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
-        // On le convertit proprement en pointeur générique
-        return (void*)(uintptr_t)textureID;
+        // =======================================================
+        // --- OPENGL : L'ANCIENNE MÉTHODE ---
+        // =======================================================
+        else if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+            unsigned int textureID = 0;
+            glGenTextures(1, &textureID);
+
+            stbi_set_flip_vertically_on_load(true); // OpenGL aime bien les images inversées
+            unsigned char *data = stbi_load(path, &width, &height, &nrComponents, 0);
+
+            if (data) {
+                GLenum format = GL_RGB;
+                if (nrComponents == 1) format = GL_RED;
+                else if (nrComponents == 3) format = GL_RGB;
+                else if (nrComponents == 4) format = GL_RGBA;
+
+                glBindTexture(GL_TEXTURE_2D, textureID);
+                glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+                glGenerateMipmap(GL_TEXTURE_2D);
+
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+                stbi_image_free(data);
+            } else {
+                std::cout << "[TextureLoader] Echec du chargement OpenGL : " << path << std::endl;
+                stbi_image_free(data);
+            }
+
+            return (void*)(uintptr_t)textureID;
+        }
+
+        return nullptr;
     }
 
     static void* LoadHDR(const char* path) {
-        if (RendererAPI::GetAPI() != RendererAPI::API::OpenGL) return nullptr;
+        // La gestion des HDR viendra plus tard, lors de la création de la Skybox !
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return nullptr;
 
         stbi_set_flip_vertically_on_load(true);
         int width, height, nrComponents;
-
-        // --- FIX 1 : On force 3 canaux (RGB) au lieu de 0 pour éviter les décalages mémoire ---
         float *data = stbi_loadf(path, &width, &height, &nrComponents, 3);
 
         unsigned int hdrTexture = 0;
         if (data) {
             glGenTextures(1, &hdrTexture);
             glBindTexture(GL_TEXTURE_2D, hdrTexture);
-
-            // --- FIX 2 : GL_RGB32F au lieu de 16F pour encaisser la chaleur du soleil ! ---
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, width, height, 0, GL_RGB, GL_FLOAT, data);
-
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
             stbi_image_free(data);
-        } else {
-            std::cout << "[TextureLoader] Echec du chargement HDR : " << path << std::endl;
         }
-
         return (void*)(uintptr_t)hdrTexture;
     }
 };
