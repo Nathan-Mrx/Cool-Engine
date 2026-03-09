@@ -186,6 +186,23 @@ add_custom_command(TARGET CoolEngine POST_BUILD
         COMMENT "Copie des assets vers le dossier de build..."
 )
 
+# =====================================================================
+# --- AUTO-COMPILATION DES SHADERS (PRE-BUILD) ---
+# =====================================================================
+
+# 1. On trouve Python sur le système
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+# 2. On crée une cible qui lance le script Python
+add_custom_target(CompileShaders
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/CompileShaders.py ${CMAKE_SOURCE_DIR}/shaders
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Verification et compilation des shaders Vulkan..."
+)
+
+# 3. On oblige CoolEngine à attendre que les shaders soient prêts avant de compiler le C++ !
+add_dependencies(CoolEngine CompileShaders)
+
 # Jolt nécessite quelques définitions de préprocesseur pour fonctionner correctement
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         #JPH_DEBUG_RENDERER         # Pour pouvoir afficher les boîtes de collision plus tard
