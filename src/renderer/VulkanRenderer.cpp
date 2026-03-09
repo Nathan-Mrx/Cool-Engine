@@ -851,6 +851,8 @@ void VulkanRenderer::BeginScene(const glm::mat4& view, const glm::mat4& projecti
     m_SceneProjectionMatrix = projection;
     m_SceneProjectionMatrix[1][1] *= -1.0f; // On inverse l'axe Y de la projection pour correspondre à Vulkan !
 
+    m_CameraPos = cameraPos;
+
     VkRenderPassBeginInfo renderPassInfo{};
 
     // On lie le pipeline global (notre configuration de shaders) au stylo !
@@ -912,8 +914,19 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
             if (entity.HasComponent<ColorComponent>()) {
                 ubo.baseColor = glm::vec4(entity.GetComponent<ColorComponent>().Color, 1.0f);
             } else {
-                ubo.baseColor = glm::vec4(0.8f, 0.2f, 0.3f, 1.0f); // Rouge par défaut
+                ubo.baseColor = glm::vec4(0.8f, 0.2f, 0.3f, 1.0f);
             }
+
+            // --- ON ENVOIE LA CAMÉRA ---
+            ubo.cameraPos = glm::vec4(m_CameraPos, 1.0f);
+
+            // Paramètres PBR
+            ubo.metallic = 0.5f;
+            ubo.roughness = 0.2f;
+            ubo.ao = 1.0f;
+
+            // On copie la couleur dans le Buffer privé du matériau
+            memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));
 
             // On copie la couleur dans le Buffer privé du matériau
             memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));

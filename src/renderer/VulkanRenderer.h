@@ -19,10 +19,14 @@ struct SwapChainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;
 };
 
-// --- LA STRUCTURE DU MATÉRIAU (Doit correspondre exactement au Shader !) ---
+// --- LA STRUCTURE DU MATÉRIAU PBR ---
 struct MaterialUBO {
     glm::vec4 baseColor = glm::vec4(1.0f);
-    // On pourra ajouter roughness, metallic, etc. ici plus tard !
+    glm::vec4 cameraPos = glm::vec4(0.0f); // <--- NOUVEAU
+    float metallic = 0.0f;
+    float roughness = 1.0f;
+    float ao = 1.0f;
+    float padding = 0.0f;
 };
 
 struct VulkanMaterial {
@@ -181,6 +185,7 @@ private:
 
     glm::mat4 m_SceneViewMatrix = glm::mat4(1.0f);
     glm::mat4 m_SceneProjectionMatrix = glm::mat4(1.0f);
+    glm::vec3 m_CameraPos = glm::vec3(0.0f);
 
     VkDescriptorSetLayout m_DescriptorSetLayout = VK_NULL_HANDLE;
 

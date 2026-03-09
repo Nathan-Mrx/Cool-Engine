@@ -121,13 +121,15 @@ std::shared_ptr<Mesh> PrimitiveFactory::CreateSphere(unsigned int xSegments, uns
 
     for (unsigned int y = 0; y < ySegments; ++y) {
         for (unsigned int x = 0; x < xSegments; ++x) {
+            // Triangle 1 (Sens inverse des aiguilles d'une montre !)
             indices.push_back((y + 1) * (xSegments + 1) + x);
+            indices.push_back(y * (xSegments + 1) + x + 1);
             indices.push_back(y * (xSegments + 1) + x);
-            indices.push_back(y * (xSegments + 1) + x + 1);
 
+            // Triangle 2 (Sens inverse des aiguilles d'une montre !)
             indices.push_back((y + 1) * (xSegments + 1) + x);
-            indices.push_back(y * (xSegments + 1) + x + 1);
             indices.push_back((y + 1) * (xSegments + 1) + x + 1);
+            indices.push_back(y * (xSegments + 1) + x + 1);
         }
     }
 
