@@ -36,6 +36,7 @@ Makefile
 *.dll
 *.exe
 *.out
+*.spv
 
 # Generated files
 *.ninja
