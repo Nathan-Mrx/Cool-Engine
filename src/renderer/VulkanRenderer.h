@@ -32,6 +32,14 @@ struct VulkanMaterial {
     std::vector<VkDescriptorSet> DescriptorSets;
 };
 
+struct VulkanTexture {
+    VkImage Image = VK_NULL_HANDLE;
+    VkDeviceMemory Memory = VK_NULL_HANDLE;
+    VkImageView View = VK_NULL_HANDLE;
+    VkSampler Sampler = VK_NULL_HANDLE;
+    void* ImGuiDescriptor = nullptr;
+};
+
 class VulkanFramebuffer;
 
 class VulkanRenderer : public RendererAPI {
@@ -83,6 +91,8 @@ public:
 
     [[nodiscard]] VkDescriptorSetLayout GetDescriptorSetLayout() const { return m_DescriptorSetLayout; }
 
+    VulkanTexture* GetDefaultTexture() const { return m_DefaultTexture; }
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
@@ -101,6 +111,8 @@ private:
     VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
     void CreateRenderPass();
+    void CreateSceneRenderPass();
+
     void CreateGraphicsPipeline();
     void CreateFramebuffers();
     void CreateCommandPool();
@@ -113,8 +125,10 @@ private:
 
     void CreateDescriptorPool();
 
-    VulkanMaterial CreateVulkanMaterial();
+    VulkanMaterial CreateVulkanMaterial(VulkanTexture* texture = nullptr);
     void DestroyVulkanMaterial(VulkanMaterial& mat);
+
+    void CreateDefaultTexture();
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -163,7 +177,6 @@ private:
     bool m_IsFrameStarted = false;
     VulkanFramebuffer* m_TargetFramebuffer = nullptr;
 
-    void CreateSceneRenderPass();
     VkRenderPass m_SceneRenderPass = VK_NULL_HANDLE;
 
     glm::mat4 m_SceneViewMatrix = glm::mat4(1.0f);
@@ -174,6 +187,8 @@ private:
     VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
 
     std::unordered_map<entt::entity, VulkanMaterial> m_EntityMaterials;
+
+    VulkanTexture* m_DefaultTexture = nullptr;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

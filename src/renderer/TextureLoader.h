@@ -119,9 +119,16 @@ public:
             VkSampler textureSampler;
             vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler);
 
-            // 7. LE PONT MAGIQUE AVEC IMGUI !
-            // On renvoie le Descriptor Set généré directement à l'interface
-            return (void*)ImGui_ImplVulkan_AddTexture(textureSampler, textureImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            // 7. LE PONT MAGIQUE AVEC IMGUI ET LE MOTEUR 3D !
+            VulkanTexture* tex = new VulkanTexture();
+            tex->Image = textureImage;
+            tex->Memory = textureImageMemory;
+            tex->View = textureImageView;
+            tex->Sampler = textureSampler;
+            tex->ImGuiDescriptor = (void*)ImGui_ImplVulkan_AddTexture(textureSampler, textureImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            // On le déguise en void* pour respecter l'architecture ECS de base !
+            return (void*)tex;
         }
 
         // =======================================================
@@ -182,4 +189,18 @@ public:
         }
         return (void*)(uintptr_t)hdrTexture;
     }
+
+    // --- NOUVEAU : DÉCODEUR POUR IMGUI ---
+    static void* GetImGuiTextureID(void* texturePtr) {
+        if (!texturePtr) return nullptr;
+
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+            // En Vulkan, on déballe la structure pour donner le vrai pointeur ImGui
+            return static_cast<VulkanTexture*>(texturePtr)->ImGuiDescriptor;
+        }
+
+        // En OpenGL, le pointeur est DÉJÀ l'ID de la texture
+        return texturePtr;
+    }
 };
+

@@ -131,7 +131,7 @@ void HubPanel::DrawRecentProjectItem(const std::filesystem::path& projectPath, f
     if (texID != nullptr) {
         ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
         ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
-        ImGui::Image((ImTextureID)texID, ImVec2(thumbnailSize, thumbnailSize), uv0, uv1);
+        ImGui::Image((ImTextureID)TextureLoader::GetImGuiTextureID(texID), ImVec2(thumbnailSize, thumbnailSize), uv0, uv1);
     } else {
         ImGui::Button("NO\nIMG", ImVec2(thumbnailSize, thumbnailSize));
     }

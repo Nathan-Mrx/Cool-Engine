@@ -295,7 +295,7 @@ void ContentBrowserPanel::DrawDirectoryEntry(const std::filesystem::directory_en
     if (isSelected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
 
     if (m_DirectoryIcon != nullptr) {
-        ImGui::ImageButton("##Dir", (ImTextureID)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, uv0, uv1, ImVec4(0,0,0,0));
+        ImGui::ImageButton("##Dir", (ImTextureID)TextureLoader::GetImGuiTextureID(m_DirectoryIcon), { thumbnailSize, thumbnailSize }, uv0, uv1, ImVec4(0,0,0,0));
     } else {
         ImGui::Button("DIR", { thumbnailSize, thumbnailSize });
     }
@@ -334,7 +334,7 @@ void ContentBrowserPanel::DrawFileEntry(const std::filesystem::directory_entry& 
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(bgCol.x * 0.8f, bgCol.y * 0.8f, bgCol.z * 0.8f, 1.0f));
 
     if (isKnownAsset && info.IconID != nullptr) {
-        ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, uv0, uv1, bgCol);
+        ImGui::ImageButton("##Asset", (ImTextureID)TextureLoader::GetImGuiTextureID(info.IconID), { thumbnailSize, thumbnailSize }, uv0, uv1, bgCol);
     } else {
         ImGui::Button(path.extension().string().c_str(), { thumbnailSize, thumbnailSize });
     }

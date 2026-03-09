@@ -374,7 +374,7 @@ void EditorLayer::DrawTabs() {
 
             if (isKnownAsset && info.IconID != nullptr) {
                 ImGui::GetWindowDrawList()->AddImage(
-                    (ImTextureID)info.IconID,
+                    (ImTextureID)TextureLoader::GetImGuiTextureID(info.IconID),
                     iconPos,
                     ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
                     uv0, // uv_min

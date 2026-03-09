@@ -53,6 +53,7 @@ void VulkanRenderer::Init() {
     CreateFramebuffers();
     CreateDescriptorPool();
     CreateCommandPool();
+    CreateDefaultTexture();
     CreateCommandBuffer();
     CreateSyncObjects();
 }
@@ -92,6 +93,14 @@ void VulkanRenderer::Shutdown() {
         DestroyVulkanMaterial(mat);
     }
     m_EntityMaterials.clear();
+
+    if (m_DefaultTexture) {
+        vkDestroySampler(m_Device, m_DefaultTexture->Sampler, nullptr);
+        vkDestroyImageView(m_Device, m_DefaultTexture->View, nullptr);
+        vkDestroyImage(m_Device, m_DefaultTexture->Image, nullptr);
+        vkFreeMemory(m_Device, m_DefaultTexture->Memory, nullptr);
+        delete m_DefaultTexture;
+    }
 
     // Destruction des Framebuffers
     for (auto framebuffer : m_SwapChainFramebuffers) {
@@ -872,8 +881,19 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
 
             // --- NOUVEAU : GESTION DU MATÉRIAU INDIVIDUEL ---
             // Si l'entité n'a pas encore de Descriptor Set Vulkan, on lui en fabrique un !
+            // Si l'entité n'a pas encore de Matériau Vulkan, on lui en fabrique un !
             if (m_EntityMaterials.find(entityID) == m_EntityMaterials.end()) {
-                m_EntityMaterials[entityID] = CreateVulkanMaterial();
+                VulkanTexture* entityTexture = m_DefaultTexture;
+
+                // On vérifie si ton MaterialComponent a une texture chargée !
+                if (entity.HasComponent<MaterialComponent>()) {
+                    auto& matComp = entity.GetComponent<MaterialComponent>();
+                    if (!matComp.Textures.empty()) {
+                        entityTexture = static_cast<VulkanTexture*>(matComp.Textures.begin()->second);
+                    }
+                }
+
+                m_EntityMaterials[entityID] = CreateVulkanMaterial(entityTexture);
             }
 
             // On récupère le matériau de CE mesh
@@ -1345,12 +1365,11 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     // 3. On assemble le plan
-    //std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
-    std::array<VkDescriptorSetLayoutBinding, 1> bindings = {uboLayoutBinding};
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding}; // <--- ON REMET LE SAMPLER !
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size()); // <--- PASSÉ À 2 BINDINGS
     layoutInfo.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_DescriptorSetLayout) != VK_SUCCESS) {
@@ -1361,13 +1380,17 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
 }
 
 void VulkanRenderer::CreateDescriptorPool() {
-    std::array<VkDescriptorPoolSize, 1> poolSizes{};
+    // L'usine a maintenant 2 rayons : un pour les Buffers, un pour les Textures
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 1000; // Assez pour 500 objets dans la scène !
+    poolSizes[0].descriptorCount = 1000;
+
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // <--- NOUVEAU
+    poolSizes[1].descriptorCount = 1000;                           // <--- NOUVEAU
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // <--- On passe bien la taille du tableau (2)
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = 1000;
 
@@ -1376,7 +1399,7 @@ void VulkanRenderer::CreateDescriptorPool() {
     }
 }
 
-VulkanMaterial VulkanRenderer::CreateVulkanMaterial() {
+VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* texture) {
     VulkanMaterial mat;
     mat.UniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     mat.UniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
@@ -1405,23 +1428,42 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial() {
         throw std::runtime_error("Erreur: Impossible d'allouer les Descriptor Sets du Materiau !");
     }
 
-    // 3. On lie le Buffer au Descriptor Set
+    // Sécurité : si aucune texture n'est fournie, on met le pixel blanc par défaut !
+    if (texture == nullptr) texture = m_DefaultTexture;
+
+    // 3. On lie le Buffer ET la Texture au Descriptor Set
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         VkDescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = mat.UniformBuffers[i];
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MaterialUBO);
 
-        VkWriteDescriptorSet descriptorWrite{};
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = mat.DescriptorSets[i];
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.pBufferInfo = &bufferInfo;
+        // --- NOUVEAU : Info de la texture ---
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = texture->View;
+        imageInfo.sampler = texture->Sampler;
 
-        vkUpdateDescriptorSets(m_Device, 1, &descriptorWrite, 0, nullptr);
+        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[0].dstSet = mat.DescriptorSets[i];
+        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstArrayElement = 0;
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+        // --- NOUVEAU : On écrit la texture au binding 1 ---
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].dstSet = mat.DescriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pImageInfo = &imageInfo;
+
+        vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 
     return mat;
@@ -1434,4 +1476,72 @@ void VulkanRenderer::DestroyVulkanMaterial(VulkanMaterial& mat) {
         vkFreeMemory(m_Device, mat.UniformBuffersMemory[i], nullptr);
     }
     // Pas besoin de détruire les Descriptor Sets, détruire le Pool global suffit !
+}
+
+void VulkanRenderer::CreateDefaultTexture() {
+    m_DefaultTexture = new VulkanTexture();
+    unsigned char whitePixel[] = { 255, 255, 255, 255 }; // 1 pixel blanc RGBA !
+    VkDeviceSize imageSize = 4;
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    CreateBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(m_Device, stagingBufferMemory, 0, imageSize, 0, &data);
+    memcpy(data, whitePixel, static_cast<size_t>(imageSize));
+    vkUnmapMemory(m_Device, stagingBufferMemory);
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = 1;
+    imageInfo.extent.height = 1;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    vkCreateImage(m_Device, &imageInfo, nullptr, &m_DefaultTexture->Image);
+
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(m_Device, m_DefaultTexture->Image, &memRequirements);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_DefaultTexture->Memory);
+    vkBindImageMemory(m_Device, m_DefaultTexture->Image, m_DefaultTexture->Memory, 0);
+
+    TransitionImageLayout(m_DefaultTexture->Image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    CopyBufferToImage(stagingBuffer, m_DefaultTexture->Image, 1, 1);
+    TransitionImageLayout(m_DefaultTexture->Image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    vkDestroyBuffer(m_Device, stagingBuffer, nullptr);
+    vkFreeMemory(m_Device, stagingBufferMemory, nullptr);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = m_DefaultTexture->Image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+    vkCreateImageView(m_Device, &viewInfo, nullptr, &m_DefaultTexture->View);
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_DefaultTexture->Sampler);
 }
