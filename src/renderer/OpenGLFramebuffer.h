@@ -16,8 +16,9 @@ public:
     int ReadPixel(uint32_t attachmentIndex, int x, int y) override;
     void ClearAttachment(uint32_t attachmentIndex, int value) override;
 
-    uint32_t GetColorAttachmentRendererID() const override { return m_ColorAttachment; }
-    uint32_t GetDepthAttachmentRendererID() const override { return m_DepthAttachment; }
+    // On re-cast l'ID OpenGL en pointeur
+    void* GetColorAttachmentRendererID() const override { return (void*)(uintptr_t)m_ColorAttachment; }
+    void* GetDepthAttachmentRendererID() const override { return (void*)(uintptr_t)m_DepthAttachment; }
     const FramebufferSpecification& GetSpecification() const override { return m_Specification; }
 
 private:

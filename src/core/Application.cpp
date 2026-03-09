@@ -184,20 +184,23 @@ void Application::Run() {
         // ==========================================
         else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
 
-            Renderer::Clear();
+            // 1. MISE À JOUR ET RENDU HORS-ÉCRAN (Scènes 3D)
+            // C'est ici que les Framebuffers s'activent de manière isolée
+            if (m_EditorLayer) {
+                m_EditorLayer->OnUpdate(m_DeltaTime);
+            }
 
+            // 2. RENDU PRINCIPAL (Swapchain & ImGui)
+            Renderer::Clear(); // Commence le carnet de la fenêtre
             Renderer::BeginImGuiFrame();
 
             if (m_EditorLayer) {
-                m_EditorLayer->OnUpdate(m_DeltaTime);
-                m_EditorLayer->OnImGuiRender();
+                m_EditorLayer->OnImGuiRender(); // Dessine l'interface par-dessus
             }
 
             Renderer::EndImGuiFrame();
+            Renderer::EndScene(); // Soumet le carnet complet au GPU
 
-            Renderer::EndScene();
-
-            // Support des Viewports ImGui sans crasher Wayland
             if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
                 ImGui::UpdatePlatformWindows();
                 ImGui::RenderPlatformWindowsDefault();

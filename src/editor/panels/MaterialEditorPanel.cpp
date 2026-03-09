@@ -149,9 +149,8 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     m_TotalTime += ImGui::GetIO().DeltaTime;
 
     // --- SÉCURITÉ : Bloquer le rendu de la preview 3D ! ---
-    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-        RenderPreview3D();
-    }
+    RenderPreview3D();
+
 
     DrawPreviewWindow();
     DrawNodeEditorWindow(isOpen);
@@ -262,12 +261,11 @@ void MaterialEditorPanel::DrawPreviewWindow() {
            }
 
         // --- SÉCURITÉ VULKAN ---
-        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-            uint32_t texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
-            if (texID != 0) {
-                ImGui::Image((ImTextureID)(uintptr_t)texID, previewAvail, ImVec2(0, 1), ImVec2(1, 0));
-            }
-        } else {
+        void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+        if (texID != nullptr) {
+            ImGui::Image((ImTextureID)texID, previewAvail, ImVec2(0, 1), ImVec2(1, 0));
+        }
+        else {
             ImGui::GetWindowDrawList()->AddRectFilled(
                 ImGui::GetCursorScreenPos(),
                 ImVec2(ImGui::GetCursorScreenPos().x + previewAvail.x, ImGui::GetCursorScreenPos().y + previewAvail.y),

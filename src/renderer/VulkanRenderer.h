@@ -16,6 +16,8 @@ struct SwapChainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;
 };
 
+class VulkanFramebuffer;
+
 class VulkanRenderer : public RendererAPI {
 public:
     VulkanRenderer() = default;
@@ -39,6 +41,24 @@ public:
     void BeginImGuiFrame() override;
     void EndImGuiFrame() override;
     void ShutdownImGui() override;
+
+    void SetTargetFramebuffer(VulkanFramebuffer* fb) { m_TargetFramebuffer = fb; }
+    void BeginFrameIfNeeded();
+
+    static VulkanRenderer* Get();
+
+    [[nodiscard]] VkDevice GetDevice() const { return m_Device; }
+    [[nodiscard]] VkPhysicalDevice GetPhysicalDevice() const { return m_PhysicalDevice; }
+    [[nodiscard]] VkQueue GetGraphicsQueue() const { return m_GraphicsQueue; }
+    [[nodiscard]] VkCommandPool GetCommandPool() const { return m_CommandPool; }
+
+    // Fonctions d'allocation mémoire et de commandes
+    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    VkCommandBuffer BeginSingleTimeCommands();
+    void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
+    void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
@@ -65,22 +85,6 @@ private:
     void CreateSyncObjects();
 
     VkShaderModule CreateShaderModule(const std::vector<char>& code);
-
-    // --- NOUVEAU : OUTILS POUR LES TEXTURES VULKAN ---
-    static VulkanRenderer* Get();
-
-    VkDevice GetDevice() const { return m_Device; }
-    VkPhysicalDevice GetPhysicalDevice() const { return m_PhysicalDevice; }
-    VkQueue GetGraphicsQueue() const { return m_GraphicsQueue; }
-    VkCommandPool GetCommandPool() const { return m_CommandPool; }
-
-    // Fonctions d'allocation mémoire et de commandes
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-    void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-    VkCommandBuffer BeginSingleTimeCommands();
-    void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
-    void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
-    void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -125,6 +129,10 @@ private:
     // --- LE PIPELINE ---
     VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE; // Pour envoyer des variables globales plus tard
     VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;     // L'état complet de la carte graphique
+
+    bool m_IsFrameStarted = false;
+    VulkanFramebuffer* m_TargetFramebuffer = nullptr;
+
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

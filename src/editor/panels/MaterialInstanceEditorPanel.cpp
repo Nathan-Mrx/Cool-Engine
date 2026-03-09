@@ -351,21 +351,11 @@ void MaterialInstanceEditorPanel::DrawPreviewColumn() {
             m_PreviewFramebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
         }
 
-        // --- SÉCURITÉ VULKAN : On isole le rendu OpenGL pur ---
-        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-            RenderPreview3D(viewportSize);
-            uint32_t texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
-            if (texID != 0) {
-                ImGui::Image((ImTextureID)(uintptr_t)texID, viewportSize, ImVec2(0, 1), ImVec2(1, 0));
-            }
-        } else {
-            // Un fond gris élégant pour Vulkan en attendant !
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImGui::GetCursorScreenPos(),
-                ImVec2(ImGui::GetCursorScreenPos().x + viewportSize.x, ImGui::GetCursorScreenPos().y + viewportSize.y),
-                IM_COL32(40, 40, 40, 255)
-            );
-            ImGui::Dummy(viewportSize);
+    // --- SÉCURITÉ VULKAN : On isole le rendu OpenGL pur ---
+        RenderPreview3D(viewportSize);
+        void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+        if (texID != nullptr) {
+            ImGui::Image((ImTextureID)texID, viewportSize, ImVec2(0, 1), ImVec2(1, 0));
         }
     }
 }

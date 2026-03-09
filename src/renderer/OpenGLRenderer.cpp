@@ -335,7 +335,7 @@ void OpenGLRenderer::RenderScene(Scene* scene, int renderMode) {
             // --- INJECTION DU CSM (CASCADED SHADOW MAPS) ---
             glActiveTexture(GL_TEXTURE15);
             // ATTENTION : C'est un GL_TEXTURE_2D_ARRAY maintenant !
-            glBindTexture(GL_TEXTURE_2D_ARRAY, m_Data->ShadowFramebuffer->GetDepthAttachmentRendererID());
+            glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)(uintptr_t)m_Data->ShadowFramebuffer->GetDepthAttachmentRendererID());
             activeShader->SetInt("uShadowMap", 15);
 
             // ==========================================================
