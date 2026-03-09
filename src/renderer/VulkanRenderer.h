@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <entt/entt.hpp>
 
+#include "Mesh.h"
+
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
     std::vector<VkSurfaceFormatKHR> formats;
@@ -97,6 +99,8 @@ public:
 
     VulkanTexture* GetDefaultTexture() const { return m_DefaultTexture; }
 
+    bool IsImGuiInitialized() const { return m_ImGuiPool != VK_NULL_HANDLE; }
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
@@ -133,6 +137,9 @@ private:
     void DestroyVulkanMaterial(VulkanMaterial& mat);
 
     VulkanTexture* CreateSolidColorTexture(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+
+    void CreateSkyboxPipeline();
+
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -197,6 +204,14 @@ private:
     VulkanTexture* m_DefaultWhiteTexture = nullptr;
     VulkanTexture* m_DefaultBlackTexture = nullptr;
     VulkanTexture* m_DefaultNormalTexture = nullptr;
+
+    VkDescriptorSetLayout m_SkyboxDescriptorSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout m_SkyboxPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_SkyboxPipeline = VK_NULL_HANDLE;
+    VkDescriptorSet m_SkyboxDescriptorSet = VK_NULL_HANDLE;
+
+    std::shared_ptr<Mesh> m_SkyboxCube;
+    VulkanTexture* m_SkyboxTexture = nullptr;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

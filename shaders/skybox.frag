@@ -1,11 +1,11 @@
-#version 460 core
-out vec4 FragColor;
+#version 450
 
-in vec3 vWorldPos;
-uniform sampler2D uEquirectangularMap;
+layout(location = 0) in vec3 fragWorldPos;
 
-uniform float uIntensity;
-uniform float uRotation;
+layout(location = 0) out vec4 outColor;
+
+// Notre image HDR envoyée par Vulkan
+layout(binding = 0) uniform sampler2D hdrMap;
 
 const vec2 invAtan = vec2(0.1591, 0.3183);
 
@@ -16,31 +16,26 @@ vec2 SampleSphericalMap(vec3 v) {
     return uv;
 }
 
-// --- LE MÊME TONEMAPPER QUE TES MATÉRIAUX ---
+// Le même tonemapper que tes matériaux
 vec3 ACESFilm(vec3 x) {
-    float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
+    float a = 2.51f;
+    float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
     return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
 
 void main() {
-    vec3 pos = normalize(vWorldPos);
+    vec3 pos = normalize(fragWorldPos);
 
-    // --- ROTATION SUR L'AXE Z (Z-Up) ---
-    float c = cos(uRotation);
-    float s = sin(uRotation);
-    pos.xy = vec2(pos.x * c - pos.y * s, pos.x * s + pos.y * c);
-
+    // Lecture de l'image HDR (on triche pour l'intensité et la rotation pour l'instant)
     vec2 uv = SampleSphericalMap(pos);
-    vec3 color = texture(uEquirectangularMap, uv).rgb;
+    vec3 color = texture(hdrMap, uv).rgb;
 
-    if (isnan(color.r) || isinf(color.r)) color = vec3(0.0);
+    // Intensité basique
+    color *= 1.0;
 
-    // --- INTENSITÉ ---
-    color *= uIntensity;
-
-    // --- TONEMAPPING AAA ---
+    // Tonemapping AAA
     color = ACESFilm(color);
     color = pow(color, vec3(1.0/2.2));
 
-    FragColor = vec4(color, 1.0);
+    outColor = vec4(color, 1.0);
 }

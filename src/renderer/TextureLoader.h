@@ -125,7 +125,13 @@ public:
             tex->Memory = textureImageMemory;
             tex->View = textureImageView;
             tex->Sampler = textureSampler;
-            tex->ImGuiDescriptor = (void*)ImGui_ImplVulkan_AddTexture(textureSampler, textureImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            // On n'envoie la texture à ImGui QUE si l'interface a déjà démarré !
+            if (vkRenderer->IsImGuiInitialized()) {
+                tex->ImGuiDescriptor = (void*)ImGui_ImplVulkan_AddTexture(tex->Sampler, tex->View, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            } else {
+                tex->ImGuiDescriptor = nullptr;
+            }
 
             // On le déguise en void* pour respecter l'architecture ECS de base !
             return (void*)tex;
@@ -261,8 +267,12 @@ public:
             vkCreateSampler(device, &samplerInfo, nullptr, &tex->Sampler);
 
             // 5. PONT IMGUI POUR LE CONTENT BROWSER
-            tex->ImGuiDescriptor = (void*)ImGui_ImplVulkan_AddTexture(tex->Sampler, tex->View, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
+            // On n'envoie la texture à ImGui QUE si l'interface a déjà démarré !
+            if (vkRenderer->IsImGuiInitialized()) {
+                tex->ImGuiDescriptor = (void*)ImGui_ImplVulkan_AddTexture(tex->Sampler, tex->View, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            } else {
+                tex->ImGuiDescriptor = nullptr;
+            }
             return (void*)tex;
         }
 
