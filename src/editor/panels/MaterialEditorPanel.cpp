@@ -148,10 +148,6 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     // Mise à jour du temps global pour les shaders
     m_TotalTime += ImGui::GetIO().DeltaTime;
 
-    // --- SÉCURITÉ : Bloquer le rendu de la preview 3D ! ---
-    RenderPreview3D();
-
-
     DrawPreviewWindow();
     DrawNodeEditorWindow(isOpen);
 }
@@ -163,80 +159,84 @@ void MaterialEditorPanel::RenderPreview3D() {
     if (!m_PreviewFramebuffer) return;
 
     m_PreviewFramebuffer->Bind();
-    glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    if (m_PreviewShader && m_PreviewMesh) {
-        m_PreviewShader->Use();
+    // --- SÉCURITÉ VULKAN : On enferme TOUT OpenGL ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
-        float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
-        float aspect = (height > 0.0f) ? (width / height) : 1.0f;
+        if (m_PreviewShader && m_PreviewMesh) {
+            m_PreviewShader->Use();
 
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
-        glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
-        glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
+            float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
+            float aspect = (height > 0.0f) ? (width / height) : 1.0f;
 
-        m_PreviewShader->SetMat4("uProjection", proj);
-        m_PreviewShader->SetMat4("uView", view);
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
+            glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
+            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
-        m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::rotate(model, glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
-        model = glm::scale(model, glm::vec3(0.8f));
-        m_PreviewShader->SetMat4("uModel", model);
+            m_PreviewShader->SetMat4("uProjection", proj);
+            m_PreviewShader->SetMat4("uView", view);
 
-        // --- FIX : On utilise uLightDir pour matcher le monde réel ! ---
-        m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
-        m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
-        m_PreviewShader->SetVec3("uViewPos", camPos);
-        m_PreviewShader->SetFloat("uTime", m_TotalTime);
+            m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::rotate(model, glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::scale(model, glm::vec3(0.8f));
+            m_PreviewShader->SetMat4("uModel", model);
 
-        // =========================================================
-        // --- NOUVEAU : INJECTION DE L'IRRADIANCE MAP (IBL) ---
-        // =========================================================
-        glActiveTexture(GL_TEXTURE14);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
-        m_PreviewShader->SetInt("uIrradianceMap", 14);
+            m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
+            m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
+            m_PreviewShader->SetVec3("uViewPos", camPos);
+            m_PreviewShader->SetFloat("uTime", m_TotalTime);
 
-        glActiveTexture(GL_TEXTURE12);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
-        m_PreviewShader->SetInt("uPrefilterMap", 12);
+            glActiveTexture(GL_TEXTURE14);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
+            m_PreviewShader->SetInt("uIrradianceMap", 14);
 
-        glActiveTexture(GL_TEXTURE13);
-        glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
-        m_PreviewShader->SetInt("uBRDFLUT", 13);
+            glActiveTexture(GL_TEXTURE12);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
+            m_PreviewShader->SetInt("uPrefilterMap", 12);
 
-        // Injection des valeurs interactives
-        int slot = 0;
-        for (auto& node : m_Nodes) {
-            if (node.Name == "Texture2D" && node.TextureID != 0) {
-                glActiveTexture(GL_TEXTURE0 + slot);
-                glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)node.TextureID);
-                if (node.IsParameter) m_PreviewShader->SetInt("u_" + node.ParameterName, slot);
-                else m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
-                slot++;
+            glActiveTexture(GL_TEXTURE13);
+            glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
+            m_PreviewShader->SetInt("uBRDFLUT", 13);
+
+            int slot = 0;
+            for (auto& node : m_Nodes) {
+                if (node.Name == "Texture2D" && node.TextureID != 0) {
+                    glActiveTexture(GL_TEXTURE0 + slot);
+                    glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)node.TextureID);
+                    if (node.IsParameter) m_PreviewShader->SetInt("u_" + node.ParameterName, slot);
+                    else m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
+                    slot++;
+                }
+
+                if (node.IsParameter) {
+                    if (node.Name == "Float") m_PreviewShader->SetFloat("u_" + node.ParameterName, node.FloatValue);
+                    if (node.Name == "Color") m_PreviewShader->SetVec4("u_" + node.ParameterName, node.ColorValue);
+                }
             }
 
-            if (node.IsParameter) {
-                if (node.Name == "Float") m_PreviewShader->SetFloat("u_" + node.ParameterName, node.FloatValue);
-                if (node.Name == "Color") m_PreviewShader->SetVec4("u_" + node.ParameterName, node.ColorValue);
+            glBindVertexArray(m_PreviewMesh->GetVAO());
+            glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+
+            for (int i = 0; i < 8; i++) {
+                glActiveTexture(GL_TEXTURE0 + i);
+                glBindTexture(GL_TEXTURE_2D, 0);
             }
+            glActiveTexture(GL_TEXTURE0);
+            glUseProgram(0);
         }
-
-        glBindVertexArray(m_PreviewMesh->GetVAO());
-        glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-
-        for (int i = 0; i < 8; i++) {
-            glActiveTexture(GL_TEXTURE0 + i);
-            glBindTexture(GL_TEXTURE_2D, 0);
-        }
-        glActiveTexture(GL_TEXTURE0);
-        glUseProgram(0);
+    } else {
+        // En Vulkan, on ordonne simplement à la carte de vider l'image hors-écran !
+        Renderer::Clear();
+        Renderer::EndScene();
     }
+
     m_PreviewFramebuffer->Unbind();
 }
 
@@ -254,24 +254,22 @@ void MaterialEditorPanel::DrawPreviewWindow() {
     ImGui::Separator();
 
     ImVec2 previewAvail = ImGui::GetContentRegionAvail();
-    if (m_PreviewFramebuffer) {
-        if (previewAvail.x > 0 && previewAvail.y > 0 &&
-           (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
-            m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
-           }
+    if (previewAvail.x > 0 && previewAvail.y > 0) {
+        // On mémorise la taille demandée par ImGui pour la Frame SUIVANTE
+        m_ViewportSize = glm::vec2(previewAvail.x, previewAvail.y);
 
-        // --- SÉCURITÉ VULKAN ---
-        void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
-        if (texID != nullptr) {
-            ImGui::Image((ImTextureID)texID, previewAvail, ImVec2(0, 1), ImVec2(1, 0));
-        }
-        else {
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImGui::GetCursorScreenPos(),
-                ImVec2(ImGui::GetCursorScreenPos().x + previewAvail.x, ImGui::GetCursorScreenPos().y + previewAvail.y),
-                IM_COL32(40, 40, 40, 255)
-            );
-            ImGui::Dummy(previewAvail);
+        if (m_PreviewFramebuffer) {
+            void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+            if (texID != nullptr) {
+                ImGui::Image((ImTextureID)texID, previewAvail, ImVec2(0, 1), ImVec2(1, 0));
+            } else {
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImGui::GetCursorScreenPos(),
+                    ImVec2(ImGui::GetCursorScreenPos().x + previewAvail.x, ImGui::GetCursorScreenPos().y + previewAvail.y),
+                    IM_COL32(40, 40, 40, 255)
+                );
+                ImGui::Dummy(previewAvail);
+            }
         }
     }
     ImGui::End();
@@ -1643,5 +1641,18 @@ void MaterialEditorPanel::SaveAs() {
         Save(m_CurrentPath);
 
         NFD::FreePath(outPath);
+    }
+}
+
+void MaterialEditorPanel::OnUpdate(float deltaTime) {
+    // C'est ici, en toute sécurité HORS d'ImGui, qu'on redimensionne et qu'on dessine la 3D !
+    if (m_ViewportSize.x > 0 && m_ViewportSize.y > 0) {
+        uint32_t width = (uint32_t)m_ViewportSize.x;
+        uint32_t height = (uint32_t)m_ViewportSize.y;
+
+        if (width != m_PreviewFramebuffer->GetSpecification().Width || height != m_PreviewFramebuffer->GetSpecification().Height) {
+            m_PreviewFramebuffer->Resize(width, height);
+        }
+        RenderPreview3D();
     }
 }

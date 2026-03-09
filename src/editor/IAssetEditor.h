@@ -21,5 +21,7 @@ public:
     virtual void Save() {}
     virtual void SaveAs() {}
 
+    virtual void OnUpdate(float deltaTime) {}
+
     std::function<void(const std::filesystem::path&)> OnPathChangedCallback;
 };

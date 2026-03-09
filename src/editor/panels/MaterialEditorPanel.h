@@ -38,6 +38,8 @@ public:
 
     std::function<void(const std::filesystem::path&)> OnMaterialSavedCallback;
 
+    void OnUpdate(float deltaTime);
+
 private:
     void BuildDefaultNodes();
 
@@ -127,4 +129,6 @@ private:
     void DrawLinks();
     void HandleInteraction();
     void DrawContextMenus();
+
+    glm::vec2 m_ViewportSize = {512.0f, 512.0f};
 };

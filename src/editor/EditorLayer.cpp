@@ -151,40 +151,56 @@ void EditorLayer::OnUpdate(float deltaTime) {
 
     // 1. LOGIQUE D'UPDATE (Indépendant de l'API Graphique)
     switch (m_SceneState) {
-    case SceneState::Edit:
-        UpdateEditor(deltaTime);
-        break;
-    case SceneState::Play:
-        UpdateRuntime(deltaTime);
-        break;
-    case SceneState::Pause:
-        UpdateEditor(deltaTime); // On permet le mouvement de caméra en pause
-        break;
+        case SceneState::Edit:
+            UpdateEditor(deltaTime);
+            break;
+        case SceneState::Play:
+            UpdateRuntime(deltaTime);
+            break;
+        case SceneState::Pause:
+            UpdateEditor(deltaTime); // On permet le mouvement de caméra en pause
+            break;
     }
 
     // =========================================================
-    // --- SÉCURITÉ VULKAN ---
-    // On ignore temporairement le dessin de la scène 3D en Vulkan,
-    // tant que Renderer::BeginScene n'est pas implémenté !
+    // --- 2. MISE A JOUR DES PANNEAUX 3D HORS-ECRAN ---
+    // =========================================================
+    // On boucle sur tous les onglets. S'ils ont un éditeur custom, on le met à jour !
+    for (auto& tab : m_Tabs) {
+        if (tab.CustomEditor) {
+            tab.CustomEditor->OnUpdate(deltaTime);
+        }
+    }
+
+    // =========================================================
+    // --- 3. RENDU DE LA VUE SCENE PRINCIPALE ---
     // =========================================================
     m_ViewportFramebuffer->Bind();
-    Renderer::Clear();
 
-    glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
-    float aspect = m_ViewportSize.x / m_ViewportSize.y;
-    if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
-    glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        Renderer::Clear();
 
-    Renderer::BeginScene(view, projection, m_EditorCamera.Position);
-    Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+        glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+        float aspect = m_ViewportSize.x / m_ViewportSize.y;
+        if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
 
-    if (m_ShowGrid) {
-        Renderer::DrawGrid(true);
+        Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+        Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+
+        if (m_ShowGrid) {
+            Renderer::DrawGrid(true);
+        }
+
+        Renderer::EndScene();
+    } else {
+        // --- SÉCURITÉ VULKAN ---
+        // On ordonne juste à la carte graphique de vider l'image et de la préparer
+        Renderer::Clear();
+        Renderer::EndScene();
     }
 
-    Renderer::EndScene();
     m_ViewportFramebuffer->Unbind();
-
 }
 
 void EditorLayer::UpdateEditor(float deltaTime) {

@@ -61,6 +61,8 @@ public:
         Save(); // Auto-save lors de l'Undo !
     }
 
+    void OnUpdate(float deltaTime);
+
 private:
     void LoadParentParameters();
     void CompilePreviewShader();
@@ -70,7 +72,7 @@ private:
 
     // --- SOUS-FONCTIONS DE RENDU (Refactoring) ---
     void DrawPreviewColumn();
-    void RenderPreview3D(ImVec2 viewportSize);
+    void RenderPreview3D();
     void DrawDetailsColumn();
     void HandleDragAndDropParent();
     void DrawParameters();
@@ -92,4 +94,6 @@ private:
     float m_RotationSpeed = 30.0f;
     float m_CameraDistance = 250.0f;
     float m_PreviewRotation = 0.0f;
+
+    glm::vec2 m_ViewportSize = {800.0f, 600.0f};
 };
