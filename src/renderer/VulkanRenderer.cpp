@@ -60,6 +60,8 @@ void VulkanRenderer::Init() {
     m_DefaultBlackTexture = CreateSolidColorTexture(0, 0, 0, 255);
     m_DefaultNormalTexture = CreateSolidColorTexture(128, 128, 255, 255);
 
+    GenerateBRDFLUT();
+
     m_SkyboxCube = PrimitiveFactory::CreateCube();
     m_SkyboxTexture = static_cast<VulkanTexture*>(TextureLoader::LoadHDR("assets/textures/sky.hdr"));
     CreateSkyboxPipeline();
@@ -71,78 +73,119 @@ void VulkanRenderer::Init() {
 void VulkanRenderer::Shutdown() {
     std::cout << "[VulkanRenderer] Arrêt du moteur.\n";
 
-    // --- SÉCURITÉ CRUCIALE ---
-    // On oblige le CPU à attendre que le GPU ait fini de dessiner sa dernière frame !
+    // ==========================================================
+    // 1. ARRÊT D'URGENCE (On attend que le GPU ait fini son travail)
+    // ==========================================================
     if (m_Device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(m_Device);
     }
 
-    // Destruction de la Synchronisation
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vkDestroySemaphore(m_Device, m_ImageAvailableSemaphores[i], nullptr);
-        vkDestroyFence(m_Device, m_InFlightFences[i], nullptr);
-    }
+    // ==========================================================
+    // 2. NETTOYAGE DES RESSOURCES DU JEU (Objets, Matériaux, Textures)
+    // ==========================================================
 
-    // --- LE FIX (Nettoyage) ---
-    for (size_t i = 0; i < m_RenderFinishedSemaphores.size(); i++) {
-        vkDestroySemaphore(m_Device, m_RenderFinishedSemaphores[i], nullptr);
-    }
+    // On force la destruction de notre primitive Skybox
+    m_SkyboxCube.reset();
 
-    // Destruction du Command Pool
-    if (m_CommandPool != VK_NULL_HANDLE) {
-        vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
-    }
-
-    // Le Pool détruit automatiquement tous les Descriptor Sets qu'il a créés !
-    if (m_DescriptorPool != VK_NULL_HANDLE) {
-        vkDestroyDescriptorPool(m_Device, m_DescriptorPool, nullptr);
-    }
-
-    vkDestroyPipeline(m_Device, m_SkyboxPipeline, nullptr);
-    vkDestroyPipelineLayout(m_Device, m_SkyboxPipelineLayout, nullptr);
-    vkDestroyDescriptorSetLayout(m_Device, m_SkyboxDescriptorSetLayout, nullptr);
-
-    // Nettoyage des matériaux (Buffers VRAM)
+    // On vide les buffers VRAM de tous nos matériaux
     for (auto& [id, mat] : m_EntityMaterials) {
         DestroyVulkanMaterial(mat);
     }
     m_EntityMaterials.clear();
 
-    if (m_DefaultTexture) {
-        vkDestroySampler(m_Device, m_DefaultTexture->Sampler, nullptr);
-        vkDestroyImageView(m_Device, m_DefaultTexture->View, nullptr);
-        vkDestroyImage(m_Device, m_DefaultTexture->Image, nullptr);
-        vkFreeMemory(m_Device, m_DefaultTexture->Memory, nullptr);
-        delete m_DefaultTexture;
-    }
+    // L'éboueur automatique pour TOUTES nos textures
+    auto DestroyTex = [&](VulkanTexture* tex) {
+        if (tex) {
+            vkDestroySampler(m_Device, tex->Sampler, nullptr);
+            vkDestroyImageView(m_Device, tex->View, nullptr);
+            vkDestroyImage(m_Device, tex->Image, nullptr);
+            vkFreeMemory(m_Device, tex->Memory, nullptr);
+            delete tex;
+        }
+    };
 
-    // Destruction des Framebuffers
+    for (auto tex : m_TrackedTextures) {
+        DestroyTex(tex);
+    }
+    m_TrackedTextures.clear();
+
+    // On remet les pointeurs à 0 par sécurité
+    m_DefaultWhiteTexture = nullptr;
+    m_DefaultBlackTexture = nullptr;
+    m_DefaultNormalTexture = nullptr;
+    m_SkyboxTexture = nullptr;
+    m_BrdfLutTexture = nullptr;
+
+    // ==========================================================
+    // 3. NETTOYAGE DES RENDER PASSES ET FRAMEBUFFERS
+    // ==========================================================
+
     for (auto framebuffer : m_SwapChainFramebuffers) {
         vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
     }
+    m_SwapChainFramebuffers.clear();
 
-    // Destruction du Pipeline
-    if (m_GraphicsPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_GraphicsPipeline, nullptr);
-    if (m_PipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
+    if (m_SceneRenderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(m_Device, m_SceneRenderPass, nullptr);
+    }
 
-    if (m_DescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_Device, m_DescriptorSetLayout, nullptr);
-
-    // Destruction du Render Pass
+    // LE CORRECTIF EST ICI : On détruit aussi le Render Pass principal !
     if (m_RenderPass != VK_NULL_HANDLE) {
         vkDestroyRenderPass(m_Device, m_RenderPass, nullptr);
     }
 
-    // Destruction des Image Views
+    // ==========================================================
+    // 4. NETTOYAGE DES PIPELINES
+    // ==========================================================
+
+    vkDestroyPipeline(m_Device, m_SkyboxPipeline, nullptr);
+    vkDestroyPipelineLayout(m_Device, m_SkyboxPipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(m_Device, m_SkyboxDescriptorSetLayout, nullptr);
+
+    vkDestroyPipeline(m_Device, m_GraphicsPipeline, nullptr);
+    vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
+
+    // ==========================================================
+    // 5. NETTOYAGE DES MÉMOIRES ET COMMANDES VULKAN
+    // ==========================================================
+
+    // LE CORRECTIF EST ICI : Une seule destruction propre pour l'usine à colis !
+    if (m_DescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_Device, m_DescriptorPool, nullptr);
+    }
+    if (m_DescriptorSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(m_Device, m_DescriptorSetLayout, nullptr);
+    }
+
+    if (m_CommandPool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
+    }
+
+    // ==========================================================
+    // 6. NETTOYAGE DE LA SYNCHRONISATION (Feux tricolores)
+    // ==========================================================
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(m_Device, m_ImageAvailableSemaphores[i], nullptr);
+        vkDestroyFence(m_Device, m_InFlightFences[i], nullptr);
+    }
+    for (size_t i = 0; i < m_RenderFinishedSemaphores.size(); i++) {
+        vkDestroySemaphore(m_Device, m_RenderFinishedSemaphores[i], nullptr);
+    }
+
+    // ==========================================================
+    // 7. NETTOYAGE DES FONDATIONS (Swapchain, Fenêtre, OS)
+    // ==========================================================
+
     for (auto imageView : m_SwapChainImageViews) {
         vkDestroyImageView(m_Device, imageView, nullptr);
     }
+    m_SwapChainImageViews.clear();
 
-    // Destruction de la Swapchain
     if (m_SwapChain != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(m_Device, m_SwapChain, nullptr);
     }
 
-    // Destruction du Device Logique
     if (m_Device != VK_NULL_HANDLE) {
         vkDestroyDevice(m_Device, nullptr);
     }
@@ -151,7 +194,6 @@ void VulkanRenderer::Shutdown() {
         vkDestroySurfaceKHR(m_Instance, m_Surface, nullptr);
     }
 
-    // Vulkan détruit les objets dans le sens inverse de leur création
     if (m_Instance != VK_NULL_HANDLE) {
         vkDestroyInstance(m_Instance, nullptr);
     }
@@ -716,8 +758,8 @@ void VulkanRenderer::CreateSyncObjects() {
     m_ImageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_InFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
-    // --- LE FIX EST ICI : On utilise MAX_FRAMES_IN_FLIGHT ---
-    m_RenderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    // --- LE FIX : Autant de sémaphores que d'images d'écran (4) ! ---
+    m_RenderFinishedSemaphores.resize(m_SwapChainImages.size());
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -726,13 +768,18 @@ void VulkanRenderer::CreateSyncObjects() {
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    // UNE SEULE BOUCLE pour tout le monde :
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         if (vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_ImageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_RenderFinishedSemaphores[i]) != VK_SUCCESS ||
             vkCreateFence(m_Device, &fenceInfo, nullptr, &m_InFlightFences[i]) != VK_SUCCESS) {
             throw std::runtime_error("Erreur fatale: Impossible de creer les objets de synchronisation CPU !");
             }
+    }
+
+    // Boucle séparée pour les sémaphores de présentation
+    for (size_t i = 0; i < m_SwapChainImages.size(); i++) {
+        if (vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_RenderFinishedSemaphores[i]) != VK_SUCCESS) {
+            throw std::runtime_error("Erreur fatale: Impossible de creer les semaphores de presentation !");
+        }
     }
 
     std::cout << "[Vulkan] Objets de synchronisation crees avec succes.\n";
@@ -831,7 +878,8 @@ void VulkanRenderer::EndScene() {
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &m_CommandBuffers[m_CurrentFrame];
 
-        VkSemaphore signalSemaphores[] = {m_RenderFinishedSemaphores[m_CurrentFrame]};
+        // --- LE FIX : On utilise l'Index de l'Image Swapchain ! ---
+        VkSemaphore signalSemaphores[] = {m_RenderFinishedSemaphores[m_CurrentImageIndex]};
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -1414,11 +1462,11 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     // 3. On assemble le plan PBR
-    std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 8> bindings{};
     bindings[0] = uboLayoutBinding; // UBO
 
-    // Albedo, Normal, Metallic, Roughness, AO (Bindings 1 à 5)
-    for (int i = 1; i <= 5; i++) {
+    // Albedo, Normal, Metallic, Roughness, AO, Skybox HDR, BRDF LUT (Bindings 1 à 7)
+    for (int i = 1; i <= 7; i++) { // <--- LE FIX EST ICI (i <= 7 au lieu de 5)
         bindings[i].binding = i;
         bindings[i].descriptorCount = 1;
         bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1493,17 +1541,17 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MaterialUBO);
 
-        // On prépare les 5 infos d'images
-        std::array<VkDescriptorImageInfo, 5> imageInfos{};
-        VulkanTexture* textures[] = { albedo, normal, metallic, roughness, ao };
+        // On prépare les 7 infos d'images (Les 5 du PBR + Skybox + BRDF)
+        std::array<VkDescriptorImageInfo, 7> imageInfos{};
+        VulkanTexture* textures[] = { albedo, normal, metallic, roughness, ao, m_SkyboxTexture, m_BrdfLutTexture };
 
-        for(int t = 0; t < 5; t++) {
+        for(int t = 0; t < 7; t++) { // <--- BOUCLE DE 0 A 6 (soit 7 textures)
             imageInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             imageInfos[t].imageView = textures[t] ? textures[t]->View : m_DefaultWhiteTexture->View;
             imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : m_DefaultWhiteTexture->Sampler;
         }
 
-        std::array<VkWriteDescriptorSet, 6> descriptorWrites{};
+        std::array<VkWriteDescriptorSet, 8> descriptorWrites{}; // <--- 8 EMPLACEMENTS EN TOUT
 
         // UBO (Binding 0)
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1514,11 +1562,11 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        // Textures (Bindings 1 à 5)
-        for(int t = 0; t < 5; t++) {
+        // Textures (Bindings 1 à 7)
+        for(int t = 0; t < 7; t++) { // <--- BOUCLE DE 0 A 6
             descriptorWrites[t + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[t + 1].dstSet = mat.DescriptorSets[i];
-            descriptorWrites[t + 1].dstBinding = t + 1;
+            descriptorWrites[t + 1].dstBinding = t + 1; // <--- Bindings 1 à 7
             descriptorWrites[t + 1].dstArrayElement = 0;
             descriptorWrites[t + 1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[t + 1].descriptorCount = 1;
@@ -1527,7 +1575,6 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
 
         vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
-
     return mat;
 }
 
@@ -1609,6 +1656,8 @@ VulkanTexture* VulkanRenderer::CreateSolidColorTexture(uint8_t r, uint8_t g, uin
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 
     vkCreateSampler(m_Device, &samplerInfo, nullptr, &tex->Sampler);
+
+    m_TrackedTextures.push_back(tex);
 
     return tex;
 }
@@ -1780,4 +1829,203 @@ void VulkanRenderer::CreateSkyboxPipeline() {
 
     vkDestroyShaderModule(m_Device, fragModule, nullptr);
     vkDestroyShaderModule(m_Device, vertModule, nullptr);
+}
+
+void VulkanRenderer::GenerateBRDFLUT() {
+    std::cout << "[Vulkan] Generation de la BRDF LUT en cours...\n";
+
+    const uint32_t dim = 512;
+    VkFormat format = VK_FORMAT_R16G16_SFLOAT;
+
+    // 1. L'Image de destination (Elle va servir d'Attachment puis de Texture)
+    m_BrdfLutTexture = new VulkanTexture();
+    m_TrackedTextures.push_back(m_BrdfLutTexture);
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = format;
+    imageInfo.extent.width = dim;
+    imageInfo.extent.height = dim;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    vkCreateImage(m_Device, &imageInfo, nullptr, &m_BrdfLutTexture->Image);
+
+    VkMemoryRequirements memReqs;
+    vkGetImageMemoryRequirements(m_Device, m_BrdfLutTexture->Image, &memReqs);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_BrdfLutTexture->Memory);
+    vkBindImageMemory(m_Device, m_BrdfLutTexture->Image, m_BrdfLutTexture->Memory, 0);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
+    viewInfo.image = m_BrdfLutTexture->Image;
+    vkCreateImageView(m_Device, &viewInfo, nullptr, &m_BrdfLutTexture->View);
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_BrdfLutTexture->Sampler);
+
+    // 2. Le Render Pass Offscreen
+    VkAttachmentDescription attachment{};
+    attachment.format = format;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // Directement prêt pour la lecture !
+
+    VkAttachmentReference colorReference = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorReference;
+
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &attachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    VkRenderPass renderPass;
+    vkCreateRenderPass(m_Device, &renderPassInfo, nullptr, &renderPass);
+
+    // 3. Framebuffer
+    VkFramebufferCreateInfo fbInfo{};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = renderPass;
+    fbInfo.attachmentCount = 1;
+    fbInfo.pAttachments = &m_BrdfLutTexture->View;
+    fbInfo.width = dim;
+    fbInfo.height = dim;
+    fbInfo.layers = 1;
+    VkFramebuffer framebuffer;
+    vkCreateFramebuffer(m_Device, &fbInfo, nullptr, &framebuffer);
+
+    // 4. Pipeline Minimaliste (Zéro géométrie en entrée)
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    VkPipelineLayout pipelineLayout;
+    vkCreatePipelineLayout(m_Device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+
+    auto vertCode = ReadFile("shaders/brdf_vert.spv");
+    auto fragCode = ReadFile("shaders/brdf_frag.spv");
+    VkShaderModule vertModule = CreateShaderModule(vertCode);
+    VkShaderModule fragModule = CreateShaderModule(fragCode);
+
+    VkPipelineShaderStageCreateInfo shaderStages[2] = {};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertModule;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragModule;
+    shaderStages[1].pName = "main";
+
+    VkPipelineVertexInputStateCreateInfo emptyInputState{};
+    emptyInputState.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE; // On dessine tout !
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = 0xF;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    std::vector<VkDynamicState> dynamicStates = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &emptyInputState;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+
+    VkPipeline pipeline;
+    vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+
+    // 5. Exécution de l'enregistrement !
+    VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
+
+    VkRenderPassBeginInfo rpBegin{};
+    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpBegin.renderPass = renderPass;
+    rpBegin.framebuffer = framebuffer;
+    rpBegin.renderArea.extent = {dim, dim};
+    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    rpBegin.clearValueCount = 1;
+    rpBegin.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    VkViewport viewport{0.0f, 0.0f, (float)dim, (float)dim, 0.0f, 1.0f};
+    vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+    VkRect2D scissor{{0,0}, {dim, dim}};
+    vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
+
+    vkCmdDraw(cmdBuf, 3, 1, 0, 0); // Le fameux triangle magique plein écran !
+
+    vkCmdEndRenderPass(cmdBuf);
+    EndSingleTimeCommands(cmdBuf);
+
+    // 6. Nettoyage de l'usine éphémère (On garde juste l'image générée)
+    vkDestroyPipeline(m_Device, pipeline, nullptr);
+    vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
+    vkDestroyShaderModule(m_Device, fragModule, nullptr);
+    vkDestroyShaderModule(m_Device, vertModule, nullptr);
+    vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
+    vkDestroyRenderPass(m_Device, renderPass, nullptr);
+
+    std::cout << "[Vulkan] BRDF LUT generee avec succes !\n";
 }

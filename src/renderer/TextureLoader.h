@@ -133,6 +133,8 @@ public:
                 tex->ImGuiDescriptor = nullptr;
             }
 
+            vkRenderer->TrackTexture(tex);
+
             // On le déguise en void* pour respecter l'architecture ECS de base !
             return (void*)tex;
         }
@@ -273,6 +275,9 @@ public:
             } else {
                 tex->ImGuiDescriptor = nullptr;
             }
+
+            vkRenderer->TrackTexture(tex);
+
             return (void*)tex;
         }
 

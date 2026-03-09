@@ -101,6 +101,9 @@ public:
 
     bool IsImGuiInitialized() const { return m_ImGuiPool != VK_NULL_HANDLE; }
 
+    void TrackTexture(VulkanTexture* tex) { m_TrackedTextures.push_back(tex); }
+
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
@@ -140,6 +143,7 @@ private:
 
     void CreateSkyboxPipeline();
 
+    void GenerateBRDFLUT();
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -212,6 +216,10 @@ private:
 
     std::shared_ptr<Mesh> m_SkyboxCube;
     VulkanTexture* m_SkyboxTexture = nullptr;
+
+    VulkanTexture* m_BrdfLutTexture = nullptr;
+
+    std::vector<VulkanTexture*> m_TrackedTextures;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {
