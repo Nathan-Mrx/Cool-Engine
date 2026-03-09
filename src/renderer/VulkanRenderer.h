@@ -63,6 +63,8 @@ public:
     [[nodiscard]] VkCommandBuffer GetCurrentCommandBuffer() const { return m_CommandBuffers[m_CurrentFrame]; }
     [[nodiscard]] VkRenderPass GetSceneRenderPass() const { return m_SceneRenderPass; }
 
+    void SubmitPushConstant(const glm::mat4& matrix) override;
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();

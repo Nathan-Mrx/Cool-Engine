@@ -46,6 +46,8 @@ public:
     virtual void EndImGuiFrame() = 0;
     virtual void ShutdownImGui() = 0;
 
+    virtual void SubmitPushConstant(const glm::mat4& matrix) {} // Vide par défaut
+
 private:
     static API s_API;
 };

@@ -231,12 +231,28 @@ void MaterialEditorPanel::RenderPreview3D() {
     } else {
         // Mode Vulkan
         Renderer::Clear();
-
-        // 1. On active le Shader (Pipeline)
         Renderer::BeginScene(glm::mat4(1.0f), glm::mat4(1.0f), glm::vec3(0.0f));
 
-        // 2. On dessine les Buffers !
         if (m_PreviewMesh) {
+            float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
+            float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
+            float aspect = (height > 0.0f) ? (width / height) : 1.0f;
+
+            // 1. PROJECTION (Avec le fix d'inversion Vulkan !)
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
+            proj[1][1] *= -1.0f; // Crucial : Vulkan a l'axe Y inversé par rapport à OpenGL !
+
+            // 2. VUE Z-UP CENTIMÉTRIQUE (On recule sur l'axe X, le Z pointe en haut)
+            glm::vec3 camPos = glm::vec3(m_CameraDistance, 0.0f, 0.0f);
+            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+            // 3. MODÈLE (Rotation)
+            m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+            glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+
+            // On envoie le paquet final au GPU !
+            Renderer::SubmitPushConstant(proj * view * model);
+
             m_PreviewMesh->Draw();
         }
 

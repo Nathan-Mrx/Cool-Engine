@@ -47,6 +47,8 @@ public:
     static void EndImGuiFrame() { s_Instance->EndImGuiFrame(); }
     static void ShutdownImGui() { s_Instance->ShutdownImGui(); }
 
+    static void SubmitPushConstant(const glm::mat4& matrix) { s_Instance->SubmitPushConstant(matrix); }
+
 private:
     static std::unique_ptr<RendererAPI> s_Instance;
 };

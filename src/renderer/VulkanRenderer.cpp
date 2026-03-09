@@ -118,6 +118,11 @@ void VulkanRenderer::Shutdown() {
     }
 }
 
+void VulkanRenderer::SubmitPushConstant(const glm::mat4& matrix) {
+    if (m_IsFrameStarted && m_PipelineLayout != VK_NULL_HANDLE) {
+        vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &matrix);
+    }
+}
 // ==============================================================================
 // --- ÉTAPE 1 : L'INSTANCE VULKAN ---
 // ==============================================================================
@@ -1023,9 +1028,16 @@ void VulkanRenderer::CreateGraphicsPipeline() {
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
-    // 9. Layout du Pipeline (Pour les Uniforms et Push Constants plus tard)
+    // 9. Layout du Pipeline (Pour les Push Constants)
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(glm::mat4); // On prévient Vulkan qu'on va envoyer 64 octets
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     if (vkCreatePipelineLayout(m_Device, &pipelineLayoutInfo, nullptr, &m_PipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("Erreur fatale: Impossible de creer le Pipeline Layout !");
