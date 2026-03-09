@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(GameEngine)
+project(CoolEngine)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -134,13 +134,13 @@ add_custom_command(
 )
 
 # Créer l'exécutable avec les sources
-add_executable(GameEngine ${SOURCES} ${ASSET_REGISTRY_OUT})
+add_executable(CoolEngine ${SOURCES} ${ASSET_REGISTRY_OUT})
 
 # Permettre d'inclure les headers depuis le dossier src/ facilement
-target_include_directories(GameEngine PRIVATE src)
+target_include_directories(CoolEngine PRIVATE src)
 
 # Lier les bibliothèques
-target_link_libraries(GameEngine PRIVATE
+target_link_libraries(CoolEngine PRIVATE
         glfw
         glad::glad
         glm::glm
@@ -155,34 +155,34 @@ target_link_libraries(GameEngine PRIVATE
         Vulkan::Vulkan)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/shaders
-        $<TARGET_FILE_DIR:GameEngine>/shaders
+        $<TARGET_FILE_DIR:CoolEngine>/shaders
         COMMENT "Copie des shaders vers le dossier de build..."
 )
 
 # On copie l'icône à côté de l'exécutable
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
         ${CMAKE_SOURCE_DIR}/splash.png
-        $<TARGET_FILE_DIR:GameEngine>/splash.png
+        $<TARGET_FILE_DIR:CoolEngine>/splash.png
         COMMENT "Copie de l'icône vers le dossier de build..."
 )
 
 # Copier automatiquement le dossier d'icônes à côté de l'exécutable après la compilation
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/icons
-        $<TARGET_FILE_DIR:GameEngine>/icons
+        $<TARGET_FILE_DIR:CoolEngine>/icons
         COMMENT "Copie des icones vers le dossier de build..."
 )
 
 # Copier le dossier des assets à côté de l'exécutable après la compilation
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:GameEngine>/assets
+        $<TARGET_FILE_DIR:CoolEngine>/assets
         COMMENT "Copie des assets vers le dossier de build..."
 )
 
@@ -195,8 +195,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 # --- MODULES DYNAMIQUES ---
 # 1. On force l'exécutable à exporter ses symboles pour le .so
-set_target_properties(GameEngine PROPERTIES ENABLE_EXPORTS TRUE)
-target_link_options(GameEngine PRIVATE "-rdynamic")
+set_target_properties(CoolEngine PROPERTIES ENABLE_EXPORTS TRUE)
+target_link_options(CoolEngine PRIVATE "-rdynamic")
 
 # 2. On lie la librairie standard Linux pour dlopen/dlclose
-target_link_libraries(GameEngine PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(CoolEngine PRIVATE ${CMAKE_DL_LIBS})
