@@ -3,21 +3,28 @@
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord;
-layout(location = 3) in vec3 inTangent;
 
-layout(location = 0) out vec3 fragNormal;
-layout(location = 1) out vec2 fragTexCoord; // <--- NOUVEAU : La sortie vers le Fragment Shader !
+layout(location = 0) out vec3 fragWorldPos;
+layout(location = 1) out vec3 fragNormal;
+layout(location = 2) out vec2 fragTexCoord;
 
-// On récupère la matrice du CPU !
+// Le nouveau Push Constant avec les DEUX matrices !
 layout(push_constant) uniform PushConstants {
-    mat4 mvp;
+    mat4 model;
+    mat4 viewProj;
 } push;
 
 void main() {
-    // La matrice de projection s'occupe de la taille, de la caméra et de l'étirement !
-    gl_Position = push.mvp * vec4(inPosition, 1.0);
+    // Calcul de la position exacte de l'objet dans le monde 3D
+    vec4 worldPos = push.model * vec4(inPosition, 1.0);
+    gl_Position = push.viewProj * worldPos;
 
-    // On transmet les données au Fragment Shader (triangle.frag)
-    fragNormal = inNormal;
-    fragTexCoord = inTexCoord; // <--- NOUVEAU : On fait passer les UVs !
+    // Transmission des données au Fragment Shader
+    fragWorldPos = worldPos.xyz;
+
+    // On corrige la normale selon la rotation de l'objet (Matrice inverse transposée)
+    mat3 normalMatrix = transpose(inverse(mat3(push.model)));
+    fragNormal = normalize(normalMatrix * inNormal);
+
+    fragTexCoord = inTexCoord;
 }

@@ -125,10 +125,10 @@ private:
 
     void CreateDescriptorPool();
 
-    VulkanMaterial CreateVulkanMaterial(VulkanTexture* texture = nullptr);
+    VulkanMaterial CreateVulkanMaterial(VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao);
     void DestroyVulkanMaterial(VulkanMaterial& mat);
 
-    void CreateDefaultTexture();
+    VulkanTexture* CreateSolidColorTexture(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -189,6 +189,9 @@ private:
     std::unordered_map<entt::entity, VulkanMaterial> m_EntityMaterials;
 
     VulkanTexture* m_DefaultTexture = nullptr;
+    VulkanTexture* m_DefaultWhiteTexture = nullptr;
+    VulkanTexture* m_DefaultBlackTexture = nullptr;
+    VulkanTexture* m_DefaultNormalTexture = nullptr;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

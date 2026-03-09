@@ -53,7 +53,11 @@ void VulkanRenderer::Init() {
     CreateFramebuffers();
     CreateDescriptorPool();
     CreateCommandPool();
-    CreateDefaultTexture();
+
+    m_DefaultWhiteTexture = CreateSolidColorTexture(255, 255, 255, 255);
+    m_DefaultBlackTexture = CreateSolidColorTexture(0, 0, 0, 255);
+    m_DefaultNormalTexture = CreateSolidColorTexture(128, 128, 255, 255);
+
     CreateCommandBuffer();
     CreateSyncObjects();
 }
@@ -871,29 +875,34 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
         // On vérifie que les données 3D sont bien chargées
         if (meshComp.MeshData) {
 
-            // 1. Matrice de l'entité (Taille réelle centimétrique intacte !)
+            // 1. On récupère la Matrice de l'entité et la Matrice de la Caméra
             glm::mat4 modelMatrix = scene->GetWorldTransform(entity);
+            glm::mat4 viewProjMatrix = m_SceneProjectionMatrix * m_SceneViewMatrix;
 
-            // 2. Calcul de la matrice finale (La caméra gère l'échelle toute seule)
-            glm::mat4 mvp = m_SceneProjectionMatrix * m_SceneViewMatrix * modelMatrix;
+            // 2. On les emballe dans une structure temporaire (exactement comme dans le shader .vert)
+            struct PushConstants {
+                glm::mat4 model;
+                glm::mat4 viewProj;
+            } push{};
 
-            SubmitPushConstant(mvp);
+            push.model = modelMatrix;
+            push.viewProj = viewProjMatrix;
+
+            // 3. On envoie nos 128 octets directement dans le carnet de commandes !
+            vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
 
             // --- NOUVEAU : GESTION DU MATÉRIAU INDIVIDUEL ---
-            // Si l'entité n'a pas encore de Descriptor Set Vulkan, on lui en fabrique un !
-            // Si l'entité n'a pas encore de Matériau Vulkan, on lui en fabrique un !
             if (m_EntityMaterials.find(entityID) == m_EntityMaterials.end()) {
-                VulkanTexture* entityTexture = m_DefaultTexture;
+                VulkanTexture* t_albedo = m_DefaultWhiteTexture;
 
-                // On vérifie si ton MaterialComponent a une texture chargée !
                 if (entity.HasComponent<MaterialComponent>()) {
                     auto& matComp = entity.GetComponent<MaterialComponent>();
                     if (!matComp.Textures.empty()) {
-                        entityTexture = static_cast<VulkanTexture*>(matComp.Textures.begin()->second);
+                        t_albedo = static_cast<VulkanTexture*>(matComp.Textures.begin()->second);
                     }
                 }
 
-                m_EntityMaterials[entityID] = CreateVulkanMaterial(entityTexture);
+                m_EntityMaterials[entityID] = CreateVulkanMaterial(t_albedo, m_DefaultNormalTexture, m_DefaultWhiteTexture, m_DefaultWhiteTexture, m_DefaultWhiteTexture);
             }
 
             // On récupère le matériau de CE mesh
@@ -1121,7 +1130,7 @@ void VulkanRenderer::CreateGraphicsPipeline() {
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(glm::mat4);
+    pushConstantRange.size = sizeof(glm::mat4) * 2;
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1364,12 +1373,22 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
     samplerLayoutBinding.pImmutableSamplers = nullptr;
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // 3. On assemble le plan
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding}; // <--- ON REMET LE SAMPLER !
+    // 3. On assemble le plan PBR
+    std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
+    bindings[0] = uboLayoutBinding; // UBO
+
+    // Albedo, Normal, Metallic, Roughness, AO (Bindings 1 à 5)
+    for (int i = 1; i <= 5; i++) {
+        bindings[i].binding = i;
+        bindings[i].descriptorCount = 1;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[i].pImmutableSamplers = nullptr;
+        bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size()); // <--- PASSÉ À 2 BINDINGS
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_DescriptorSetLayout) != VK_SUCCESS) {
@@ -1385,8 +1404,8 @@ void VulkanRenderer::CreateDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = 1000;
 
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // <--- NOUVEAU
-    poolSizes[1].descriptorCount = 1000;                           // <--- NOUVEAU
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = 5000; // 5 textures par set * 1000 sets !
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1399,7 +1418,7 @@ void VulkanRenderer::CreateDescriptorPool() {
     }
 }
 
-VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* texture) {
+VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao) {
     VulkanMaterial mat;
     mat.UniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     mat.UniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
@@ -1428,24 +1447,25 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* texture) {
         throw std::runtime_error("Erreur: Impossible d'allouer les Descriptor Sets du Materiau !");
     }
 
-    // Sécurité : si aucune texture n'est fournie, on met le pixel blanc par défaut !
-    if (texture == nullptr) texture = m_DefaultTexture;
-
-    // 3. On lie le Buffer ET la Texture au Descriptor Set
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         VkDescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = mat.UniformBuffers[i];
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MaterialUBO);
 
-        // --- NOUVEAU : Info de la texture ---
-        VkDescriptorImageInfo imageInfo{};
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfo.imageView = texture->View;
-        imageInfo.sampler = texture->Sampler;
+        // On prépare les 5 infos d'images
+        std::array<VkDescriptorImageInfo, 5> imageInfos{};
+        VulkanTexture* textures[] = { albedo, normal, metallic, roughness, ao };
 
-        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+        for(int t = 0; t < 5; t++) {
+            imageInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfos[t].imageView = textures[t] ? textures[t]->View : m_DefaultWhiteTexture->View;
+            imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : m_DefaultWhiteTexture->Sampler;
+        }
 
+        std::array<VkWriteDescriptorSet, 6> descriptorWrites{};
+
+        // UBO (Binding 0)
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = mat.DescriptorSets[i];
         descriptorWrites[0].dstBinding = 0;
@@ -1454,14 +1474,16 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* texture) {
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        // --- NOUVEAU : On écrit la texture au binding 1 ---
-        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[1].dstSet = mat.DescriptorSets[i];
-        descriptorWrites[1].dstBinding = 1;
-        descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].pImageInfo = &imageInfo;
+        // Textures (Bindings 1 à 5)
+        for(int t = 0; t < 5; t++) {
+            descriptorWrites[t + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[t + 1].dstSet = mat.DescriptorSets[i];
+            descriptorWrites[t + 1].dstBinding = t + 1;
+            descriptorWrites[t + 1].dstArrayElement = 0;
+            descriptorWrites[t + 1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[t + 1].descriptorCount = 1;
+            descriptorWrites[t + 1].pImageInfo = &imageInfos[t];
+        }
 
         vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -1478,9 +1500,9 @@ void VulkanRenderer::DestroyVulkanMaterial(VulkanMaterial& mat) {
     // Pas besoin de détruire les Descriptor Sets, détruire le Pool global suffit !
 }
 
-void VulkanRenderer::CreateDefaultTexture() {
-    m_DefaultTexture = new VulkanTexture();
-    unsigned char whitePixel[] = { 255, 255, 255, 255 }; // 1 pixel blanc RGBA !
+VulkanTexture* VulkanRenderer::CreateSolidColorTexture(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    VulkanTexture* tex = new VulkanTexture();
+    unsigned char pixel[] = { r, g, b, a };
     VkDeviceSize imageSize = 4;
 
     VkBuffer stagingBuffer;
@@ -1489,7 +1511,7 @@ void VulkanRenderer::CreateDefaultTexture() {
 
     void* data;
     vkMapMemory(m_Device, stagingBufferMemory, 0, imageSize, 0, &data);
-    memcpy(data, whitePixel, static_cast<size_t>(imageSize));
+    memcpy(data, pixel, static_cast<size_t>(imageSize));
     vkUnmapMemory(m_Device, stagingBufferMemory);
 
     VkImageCreateInfo imageInfo{};
@@ -1506,27 +1528,29 @@ void VulkanRenderer::CreateDefaultTexture() {
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    vkCreateImage(m_Device, &imageInfo, nullptr, &m_DefaultTexture->Image);
+
+    // CORRECTION : On utilise bien 'tex' partout ici !
+    vkCreateImage(m_Device, &imageInfo, nullptr, &tex->Image);
 
     VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(m_Device, m_DefaultTexture->Image, &memRequirements);
+    vkGetImageMemoryRequirements(m_Device, tex->Image, &memRequirements);
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_DefaultTexture->Memory);
-    vkBindImageMemory(m_Device, m_DefaultTexture->Image, m_DefaultTexture->Memory, 0);
+    vkAllocateMemory(m_Device, &allocInfo, nullptr, &tex->Memory);
+    vkBindImageMemory(m_Device, tex->Image, tex->Memory, 0);
 
-    TransitionImageLayout(m_DefaultTexture->Image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    CopyBufferToImage(stagingBuffer, m_DefaultTexture->Image, 1, 1);
-    TransitionImageLayout(m_DefaultTexture->Image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    TransitionImageLayout(tex->Image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    CopyBufferToImage(stagingBuffer, tex->Image, 1, 1);
+    TransitionImageLayout(tex->Image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     vkDestroyBuffer(m_Device, stagingBuffer, nullptr);
     vkFreeMemory(m_Device, stagingBufferMemory, nullptr);
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = m_DefaultTexture->Image;
+    viewInfo.image = tex->Image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -1534,7 +1558,7 @@ void VulkanRenderer::CreateDefaultTexture() {
     viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
-    vkCreateImageView(m_Device, &viewInfo, nullptr, &m_DefaultTexture->View);
+    vkCreateImageView(m_Device, &viewInfo, nullptr, &tex->View);
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1543,5 +1567,8 @@ void VulkanRenderer::CreateDefaultTexture() {
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_DefaultTexture->Sampler);
+
+    vkCreateSampler(m_Device, &samplerInfo, nullptr, &tex->Sampler);
+
+    return tex;
 }
