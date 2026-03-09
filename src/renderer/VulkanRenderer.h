@@ -10,11 +10,26 @@
 #include <vector>
 #include <set>
 #include <glm/glm.hpp>
+#include <unordered_map>
+#include <entt/entt.hpp>
 
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
+};
+
+// --- LA STRUCTURE DU MATÉRIAU (Doit correspondre exactement au Shader !) ---
+struct MaterialUBO {
+    glm::vec4 baseColor = glm::vec4(1.0f);
+    // On pourra ajouter roughness, metallic, etc. ici plus tard !
+};
+
+struct VulkanMaterial {
+    std::vector<VkBuffer> UniformBuffers;
+    std::vector<VkDeviceMemory> UniformBuffersMemory;
+    std::vector<void*> UniformBuffersMapped;
+    std::vector<VkDescriptorSet> DescriptorSets;
 };
 
 class VulkanFramebuffer;
@@ -66,6 +81,8 @@ public:
 
     void SubmitPushConstant(const glm::mat4& matrix) override;
 
+    [[nodiscard]] VkDescriptorSetLayout GetDescriptorSetLayout() const { return m_DescriptorSetLayout; }
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
@@ -91,6 +108,13 @@ private:
     void CreateSyncObjects();
 
     VkShaderModule CreateShaderModule(const std::vector<char>& code);
+
+    void CreateDescriptorSetLayout();
+
+    void CreateDescriptorPool();
+
+    VulkanMaterial CreateVulkanMaterial();
+    void DestroyVulkanMaterial(VulkanMaterial& mat);
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -144,6 +168,12 @@ private:
 
     glm::mat4 m_SceneViewMatrix = glm::mat4(1.0f);
     glm::mat4 m_SceneProjectionMatrix = glm::mat4(1.0f);
+
+    VkDescriptorSetLayout m_DescriptorSetLayout = VK_NULL_HANDLE;
+
+    VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
+
+    std::unordered_map<entt::entity, VulkanMaterial> m_EntityMaterials;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

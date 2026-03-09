@@ -76,3 +76,14 @@ struct SkyboxNode {
         entity.AddComponent<SkyboxComponent>();
     }
 };
+
+CE_NODE("StaticMesh", "3D Object")
+struct StaticMeshNode
+{
+    static void Setup(Entity entity) {
+        entity.AddComponent<ColorComponent>(glm::vec3(0.8f));
+        auto& mesh = entity.AddComponent<MeshComponent>();
+        mesh.AssetPath = "CustomMesh"; // Placeholder, à remplacer par un dialogue de sélection de fichier
+        entity.AddComponent<MaterialComponent>();
+    }
+};

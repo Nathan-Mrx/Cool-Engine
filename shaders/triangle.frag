@@ -3,7 +3,16 @@
 layout(location = 0) in vec3 fragNormal;
 layout(location = 0) out vec4 outColor;
 
+// --- NOTRE COLIS VULKAN EST LÀ ! ---
+layout(binding = 0) uniform MaterialUBO {
+    vec4 baseColor;
+} ubo;
+
 void main() {
-    // Les normales vont de -1 à 1. On les convertit de 0 à 1 pour faire des couleurs RGB lisibles.
-    outColor = vec4(fragNormal * 0.5 + 0.5, 1.0);
+    // Un petit éclairage basique pour donner du volume
+    vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+    float diff = max(dot(fragNormal, lightDir), 0.2); // 0.2 = lumière ambiante
+
+    // On applique la couleur envoyée par le C++ !
+    outColor = vec4(ubo.baseColor.rgb * diff, ubo.baseColor.a);
 }

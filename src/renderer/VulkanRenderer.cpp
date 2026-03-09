@@ -48,8 +48,10 @@ void VulkanRenderer::Init() {
     CreateImageViews();
     CreateRenderPass();
     CreateSceneRenderPass();
+    CreateDescriptorSetLayout();
     CreateGraphicsPipeline();
     CreateFramebuffers();
+    CreateDescriptorPool();
     CreateCommandPool();
     CreateCommandBuffer();
     CreateSyncObjects();
@@ -80,6 +82,17 @@ void VulkanRenderer::Shutdown() {
         vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
     }
 
+    // Le Pool détruit automatiquement tous les Descriptor Sets qu'il a créés !
+    if (m_DescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_Device, m_DescriptorPool, nullptr);
+    }
+
+    // Nettoyage des matériaux (Buffers VRAM)
+    for (auto& [id, mat] : m_EntityMaterials) {
+        DestroyVulkanMaterial(mat);
+    }
+    m_EntityMaterials.clear();
+
     // Destruction des Framebuffers
     for (auto framebuffer : m_SwapChainFramebuffers) {
         vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
@@ -88,6 +101,8 @@ void VulkanRenderer::Shutdown() {
     // Destruction du Pipeline
     if (m_GraphicsPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_GraphicsPipeline, nullptr);
     if (m_PipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
+
+    if (m_DescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_Device, m_DescriptorSetLayout, nullptr);
 
     // Destruction du Render Pass
     if (m_RenderPass != VK_NULL_HANDLE) {
@@ -853,10 +868,32 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
             // 2. Calcul de la matrice finale (La caméra gère l'échelle toute seule)
             glm::mat4 mvp = m_SceneProjectionMatrix * m_SceneViewMatrix * modelMatrix;
 
-            // 4. On envoie la matrice au Shader via le Push Constant
             SubmitPushConstant(mvp);
 
-            // 5. Ordre de dessin Vulkan !
+            // --- NOUVEAU : GESTION DU MATÉRIAU INDIVIDUEL ---
+            // Si l'entité n'a pas encore de Descriptor Set Vulkan, on lui en fabrique un !
+            if (m_EntityMaterials.find(entityID) == m_EntityMaterials.end()) {
+                m_EntityMaterials[entityID] = CreateVulkanMaterial();
+            }
+
+            // On récupère le matériau de CE mesh
+            VulkanMaterial& mat = m_EntityMaterials[entityID];
+
+            MaterialUBO ubo{};
+            if (entity.HasComponent<ColorComponent>()) {
+                ubo.baseColor = glm::vec4(entity.GetComponent<ColorComponent>().Color, 1.0f);
+            } else {
+                ubo.baseColor = glm::vec4(0.8f, 0.2f, 0.3f, 1.0f); // Rouge par défaut
+            }
+
+            // On copie la couleur dans le Buffer privé du matériau
+            memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));
+
+            // On donne le Descriptor Set exclusif au GPU !
+            vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    m_PipelineLayout, 0, 1, &mat.DescriptorSets[m_CurrentFrame], 0, nullptr);
+
+            // 4. Ordre de dessin Vulkan
             meshComp.MeshData->Draw();
         }
     }
@@ -1060,14 +1097,20 @@ void VulkanRenderer::CreateGraphicsPipeline() {
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
-    // 9. Layout du Pipeline (Pour les Push Constants)
+    // 9. Layout du Pipeline (Push Constants ET Descriptor Sets)
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(glm::mat4); // On prévient Vulkan qu'on va envoyer 64 octets
+    pushConstantRange.size = sizeof(glm::mat4);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+    // On attache notre fameux plan de colis (Descriptor Set Layout)
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &m_DescriptorSetLayout;
+
+    // On attache les Push Constants
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
@@ -1283,4 +1326,112 @@ void VulkanRenderer::CreateSceneRenderPass() {
     if (vkCreateRenderPass(m_Device, &renderPassInfo, nullptr, &m_SceneRenderPass) != VK_SUCCESS) {
         throw std::runtime_error("Echec Scene RenderPass");
     }
+}
+
+void VulkanRenderer::CreateDescriptorSetLayout() {
+    // 1. Le contrat pour nos variables mathématiques (Couleurs, paramètres)
+    VkDescriptorSetLayoutBinding uboLayoutBinding{};
+    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uboLayoutBinding.descriptorCount = 1;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // Utilisé par le shader de pixels
+
+    // 2. Le contrat pour notre Texture Principale
+    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+    samplerLayoutBinding.binding = 1;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    samplerLayoutBinding.pImmutableSamplers = nullptr;
+    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // 3. On assemble le plan
+    //std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+    std::array<VkDescriptorSetLayoutBinding, 1> bindings = {uboLayoutBinding};
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+
+    if (vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_DescriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le Descriptor Set Layout !");
+    }
+
+    std::cout << "[Vulkan] Descriptor Set Layout cree avec succes.\n";
+}
+
+void VulkanRenderer::CreateDescriptorPool() {
+    std::array<VkDescriptorPoolSize, 1> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = 1000; // Assez pour 500 objets dans la scène !
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 1000;
+
+    if (vkCreateDescriptorPool(m_Device, &poolInfo, nullptr, &m_DescriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible de creer le Descriptor Pool !");
+    }
+}
+
+VulkanMaterial VulkanRenderer::CreateVulkanMaterial() {
+    VulkanMaterial mat;
+    mat.UniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    mat.UniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    mat.UniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+    mat.DescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+
+    VkDeviceSize bufferSize = sizeof(MaterialUBO);
+
+    // 1. Allocation des Buffers propres à CE matériau
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     mat.UniformBuffers[i], mat.UniformBuffersMemory[i]);
+        vkMapMemory(m_Device, mat.UniformBuffersMemory[i], 0, bufferSize, 0, &mat.UniformBuffersMapped[i]);
+    }
+
+    // 2. Allocation de ses propres Descriptor Sets
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_DescriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_DescriptorPool; // On tire dans l'usine globale
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    allocInfo.pSetLayouts = layouts.data();
+
+    if (vkAllocateDescriptorSets(m_Device, &allocInfo, mat.DescriptorSets.data()) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur: Impossible d'allouer les Descriptor Sets du Materiau !");
+    }
+
+    // 3. On lie le Buffer au Descriptor Set
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = mat.UniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(MaterialUBO);
+
+        VkWriteDescriptorSet descriptorWrite{};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = mat.DescriptorSets[i];
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+
+        vkUpdateDescriptorSets(m_Device, 1, &descriptorWrite, 0, nullptr);
+    }
+
+    return mat;
+}
+
+void VulkanRenderer::DestroyVulkanMaterial(VulkanMaterial& mat) {
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkUnmapMemory(m_Device, mat.UniformBuffersMemory[i]);
+        vkDestroyBuffer(m_Device, mat.UniformBuffers[i], nullptr);
+        vkFreeMemory(m_Device, mat.UniformBuffersMemory[i], nullptr);
+    }
+    // Pas besoin de détruire les Descriptor Sets, détruire le Pool global suffit !
 }
