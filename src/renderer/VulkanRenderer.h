@@ -61,6 +61,7 @@ public:
     void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
     [[nodiscard]] VkCommandBuffer GetCurrentCommandBuffer() const { return m_CommandBuffers[m_CurrentFrame]; }
+    [[nodiscard]] VkRenderPass GetSceneRenderPass() const { return m_SceneRenderPass; }
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
@@ -134,6 +135,9 @@ private:
 
     bool m_IsFrameStarted = false;
     VulkanFramebuffer* m_TargetFramebuffer = nullptr;
+
+    void CreateSceneRenderPass();
+    VkRenderPass m_SceneRenderPass = VK_NULL_HANDLE;
 
 
     // --- VALIDATION LAYERS ---

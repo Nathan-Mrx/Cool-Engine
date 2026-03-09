@@ -23,8 +23,7 @@ void VulkanFramebuffer::Release() {
     }
     if (m_Sampler) vkDestroySampler(device, m_Sampler, nullptr);
     if (m_Framebuffer) vkDestroyFramebuffer(device, m_Framebuffer, nullptr);
-    if (m_RenderPass) vkDestroyRenderPass(device, m_RenderPass, nullptr);
-    
+
     if (m_ColorImageView) vkDestroyImageView(device, m_ColorImageView, nullptr);
     if (m_ColorImage) vkDestroyImage(device, m_ColorImage, nullptr);
     if (m_ColorImageMemory) vkFreeMemory(device, m_ColorImageMemory, nullptr);
@@ -50,44 +49,8 @@ void VulkanFramebuffer::Invalidate() {
     m_DepthImageView = CreateImageView(m_DepthImage, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     // 2. RENDER PASS HORS ÉCRAN
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = VK_FORMAT_R8G8B8A8_UNORM;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // Obligatoire pour ImGui !
-
-    VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = VK_FORMAT_D32_SFLOAT;
-    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference colorAttachmentRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkAttachmentReference depthAttachmentRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentRef;
-    subpass.pDepthStencilAttachment = &depthAttachmentRef;
-
-    std::array<VkAttachmentDescription, 2> attachments = {colorAttachment, depthAttachment};
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-    renderPassInfo.pAttachments = attachments.data();
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-
-    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &m_RenderPass) != VK_SUCCESS) throw std::runtime_error("Echec RenderPass");
+    // On utilise le RenderPass officiel du moteur pour garantir la compatibilité !
+    m_RenderPass = VulkanRenderer::Get()->GetSceneRenderPass();
 
     // 3. FRAMEBUFFER
     std::array<VkImageView, 2> fbAttachments = {m_ColorImageView, m_DepthImageView};

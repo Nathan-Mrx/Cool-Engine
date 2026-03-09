@@ -17,6 +17,8 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
+#include "renderer/VulkanRenderer.h"
+
 Application* Application::s_Instance = nullptr;
 
 Application::Application(const std::string& name, int width, int height) {
@@ -206,6 +208,10 @@ void Application::Run() {
                 ImGui::RenderPlatformWindowsDefault();
             }
         }
+    }
+
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+        vkDeviceWaitIdle(VulkanRenderer::Get()->GetDevice());
     }
 }
 
