@@ -261,7 +261,9 @@ void MaterialEditorPanel::DrawPreviewWindow() {
         if (m_PreviewFramebuffer) {
             void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
             if (texID != nullptr) {
-                ImGui::Image((ImTextureID)texID, previewAvail, ImVec2(0, 1), ImVec2(1, 0));
+                ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+                ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+                ImGui::Image((ImTextureID)texID, previewAvail, uv0, uv1);
             } else {
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     ImGui::GetCursorScreenPos(),

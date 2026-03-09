@@ -128,8 +128,10 @@ void HubPanel::DrawRecentProjectItem(const std::filesystem::path& projectPath, f
 
     // Thumbnail
     void* texID = GetThumbnailTexture(projectPath);
-    if (texID != nullptr && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-        ImGui::Image((ImTextureID)texID, ImVec2(thumbnailSize, thumbnailSize), ImVec2(0, 1), ImVec2(1, 0));
+    if (texID != nullptr) {
+        ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+        ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+        ImGui::Image((ImTextureID)texID, ImVec2(thumbnailSize, thumbnailSize), uv0, uv1);
     } else {
         ImGui::Button("NO\nIMG", ImVec2(thumbnailSize, thumbnailSize));
     }
@@ -182,8 +184,6 @@ void HubPanel::DrawNewProjectModal(bool& triggerNewProject) {
 }
 
 void* HubPanel::GetThumbnailTexture(const std::filesystem::path& path) {
-    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return nullptr;
-
     if (m_ThumbnailCache.find(path) != m_ThumbnailCache.end()) {
         return m_ThumbnailCache[path];
     }

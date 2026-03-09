@@ -153,7 +153,7 @@ private:
     bool m_ForceTabSelection = false;
 
     void DrawSplashScreen();
-    uint32_t m_SplashTextureID = 0;
+    void* m_SplashTextureID = nullptr;
     std::filesystem::path m_PendingProjectPath;
 
     bool m_ShowMaterialEditor = false;

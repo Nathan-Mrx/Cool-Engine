@@ -356,9 +356,13 @@ void MaterialInstanceEditorPanel::DrawPreviewColumn() {
         m_ViewportSize = glm::vec2(viewportSize.x, viewportSize.y);
 
         if (m_PreviewFramebuffer) {
-            void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
-            if (texID != nullptr) {
-                ImGui::Image((ImTextureID)texID, viewportSize, ImVec2(0, 1), ImVec2(1, 0));
+            if (m_PreviewFramebuffer) {
+                void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+                if (texID != nullptr) {
+                    ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+                    ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+                    ImGui::Image((ImTextureID)texID, viewportSize, uv0, uv1);
+                }
             }
         }
     }

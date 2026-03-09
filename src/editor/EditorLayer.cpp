@@ -28,19 +28,8 @@
 void EditorLayer::OnAttach() {
     LoadEditorPreferences();
 
-    // --- SÉCURITÉ : On ne charge la texture brute qu'en OpenGL ---
-    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-        int width, height, channels;
-        stbi_set_flip_vertically_on_load(false);
-        if (unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4)) {
-            glGenTextures(1, &m_SplashTextureID);
-            glBindTexture(GL_TEXTURE_2D, m_SplashTextureID);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-            stbi_image_free(data);
-        }
-    }
+    // --- On utilise notre chargeur universel ---
+    m_SplashTextureID = TextureLoader::LoadTexture("splash.png");
 
     AssetRegistry::RegisterAllAssets();
 
@@ -320,6 +309,9 @@ void EditorLayer::OnImGuiRender() {
 }
 
 void EditorLayer::DrawTabs() {
+    ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+    ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Documents", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
 
@@ -367,14 +359,13 @@ void EditorLayer::DrawTabs() {
             // On calcule la position de l'icône pour qu'elle soit centrée verticalement à gauche
             ImVec2 iconPos = ImVec2(itemMin.x + ImGui::GetStyle().FramePadding.x, itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f);
 
-            if (isKnownAsset && info.IconID != 0 && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-                // On ajoute les UVs inversés : ImVec2(0, 1) et ImVec2(1, 0) pour remettre l'image à l'endroit !
+            if (isKnownAsset && info.IconID != nullptr) {
                 ImGui::GetWindowDrawList()->AddImage(
                     (ImTextureID)info.IconID,
                     iconPos,
                     ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
-                    ImVec2(0, 1), // uv_min
-                    ImVec2(1, 0)  // uv_max
+                    uv0, // uv_min
+                    uv1  // uv_max
                 );
             }
 
@@ -777,7 +768,7 @@ void EditorLayer::DrawSplashScreen() {
             const float ratio = std::min(windowSize.x / imgWidth, (windowSize.y - 250) / imgHeight);
             const ImVec2 size(imgWidth * ratio, imgHeight * ratio);
             ImGui::SetCursorPos(ImVec2((windowSize.x - size.x) * 0.5f, 20.0f));
-            ImGui::Image((ImTextureID)static_cast<uintptr_t>(m_SplashTextureID), size);
+            ImGui::Image((ImTextureID)m_SplashTextureID, size);
         }
 
         // 2. La console de compilation (En bas)
@@ -867,7 +858,9 @@ void EditorLayer::DrawViewportWindow() {
 
     void* textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
     if (textureID != nullptr) {
-        ImGui::Image((ImTextureID)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+        ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+        ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+        ImGui::Image((ImTextureID)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
     }
 
     // --- L'INCRUSTATION DE LA BARRE D'OUTILS (OVERLAY) ---

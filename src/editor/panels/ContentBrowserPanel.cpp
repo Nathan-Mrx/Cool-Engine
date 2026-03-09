@@ -64,9 +64,7 @@ void ContentBrowserPanel::OnImGuiRender() {
 
     // SÉCURITÉ : Vérification de l'API et pointeur nul
     if (m_DirectoryIcon == nullptr && std::filesystem::exists("icons/folder.png")) {
-        if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-            m_DirectoryIcon = TextureLoader::LoadTexture("icons/folder.png");
-        }
+        m_DirectoryIcon = TextureLoader::LoadTexture("icons/folder.png");
     }
 
     if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2) && !m_SelectedPath.empty()) {
@@ -288,13 +286,16 @@ void ContentBrowserPanel::DrawContentGrid() {
 }
 
 void ContentBrowserPanel::DrawDirectoryEntry(const std::filesystem::directory_entry& entry, float thumbnailSize) {
+    ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+    ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+
     const auto& path = entry.path();
     bool isSelected = (m_SelectedPath == path);
 
     if (isSelected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
 
-    if (m_DirectoryIcon != nullptr && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-        ImGui::ImageButton("##Dir", (ImTextureID)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), ImVec4(0,0,0,0));
+    if (m_DirectoryIcon != nullptr) {
+        ImGui::ImageButton("##Dir", (ImTextureID)m_DirectoryIcon, { thumbnailSize, thumbnailSize }, uv0, uv1, ImVec4(0,0,0,0));
     } else {
         ImGui::Button("DIR", { thumbnailSize, thumbnailSize });
     }
@@ -315,6 +316,9 @@ void ContentBrowserPanel::DrawDirectoryEntry(const std::filesystem::directory_en
 }
 
 void ContentBrowserPanel::DrawFileEntry(const std::filesystem::directory_entry& entry, float thumbnailSize) {
+    ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+    ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+
     const auto& path = entry.path();
     bool isSelected = (m_SelectedPath == path);
     std::string filename = path.filename().string();
@@ -329,8 +333,8 @@ void ContentBrowserPanel::DrawFileEntry(const std::filesystem::directory_entry& 
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(bgCol.x * 1.5f, bgCol.y * 1.5f, bgCol.z * 1.5f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(bgCol.x * 0.8f, bgCol.y * 0.8f, bgCol.z * 0.8f, 1.0f));
 
-    if (isKnownAsset && info.IconID != 0 && RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
-        ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, ImVec2(0, 1), ImVec2(1, 0), bgCol);
+    if (isKnownAsset && info.IconID != nullptr) {
+        ImGui::ImageButton("##Asset", (ImTextureID)(uintptr_t)info.IconID, { thumbnailSize, thumbnailSize }, uv0, uv1, bgCol);
     } else {
         ImGui::Button(path.extension().string().c_str(), { thumbnailSize, thumbnailSize });
     }
