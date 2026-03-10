@@ -3217,7 +3217,7 @@ void VulkanRenderer::CreateShadowPipeline() {
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT; // <-- Anti Peter-Panning
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_TRUE;         // <-- Anti Shadow-Acne
 
@@ -3284,67 +3284,67 @@ void VulkanRenderer::CreateShadowPipeline() {
 std::array<glm::mat4, VulkanRenderer::SHADOW_MAP_CASCADE_COUNT> VulkanRenderer::CalculateCascadeMatrices() {
     std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> matrices;
 
-    // Direction du soleil (Doit correspondre exactement à celle de ton triangle.frag !)
+    // Direction EXACTE du soleil de ton triangle.frag
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.5f, 0.5f, 1.0f));
 
-    // Découpage manuel des cascades (en centimètres). Ajuste selon la taille de ton monde !
-    // Ex: Cascade 0 (0->10m), Cascade 1 (10m->30m), Cascade 2 (30m->70m), Cascade 3 (70m->150m)
+    // Tes paliers de distance (en cm)
     float cascadeSplits[4] = { 1000.0f, 3000.0f, 7000.0f, 15000.0f };
     float lastSplit = 10.0f; // Near plane de ta caméra
-
-    // Récupérer l'aspect ratio (Largeur / Hauteur de ton écran)
     float aspect = (float)m_SwapChainExtent.width / (float)m_SwapChainExtent.height;
 
     for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
-        // 1. Matrice de projection de la caméra pour CETTE tranche spécifique
         glm::mat4 camProj = glm::perspective(glm::radians(45.0f), aspect, lastSplit, cascadeSplits[i]);
         camProj[1][1] *= -1.0f; // Correction Vulkan
 
-        // 2. Inverser la vue de la caméra pour trouver les coins dans l'espace 3D (World Space)
         glm::mat4 invCam = glm::inverse(camProj * m_SceneViewMatrix);
 
+        // On utilise -1.0 et 1.0 partout pour forcer l'extraction du cube de vue complet
         glm::vec3 frustumCorners[8] = {
-            glm::vec3(-1.0f,  1.0f, 0.0f), glm::vec3( 1.0f,  1.0f, 0.0f), glm::vec3( 1.0f, -1.0f, 0.0f), glm::vec3(-1.0f, -1.0f, 0.0f),
-            glm::vec3(-1.0f,  1.0f, 1.0f), glm::vec3( 1.0f,  1.0f, 1.0f), glm::vec3( 1.0f, -1.0f, 1.0f), glm::vec3(-1.0f, -1.0f, 1.0f)
+            glm::vec3(-1.0f,  1.0f, -1.0f), glm::vec3( 1.0f,  1.0f, -1.0f), glm::vec3( 1.0f, -1.0f, -1.0f), glm::vec3(-1.0f, -1.0f, -1.0f),
+            glm::vec3(-1.0f,  1.0f,  1.0f), glm::vec3( 1.0f,  1.0f,  1.0f), glm::vec3( 1.0f, -1.0f,  1.0f), glm::vec3(-1.0f, -1.0f,  1.0f)
         };
 
+        // 1. Trouver le vrai centre géographique de cette tranche de la vue
         glm::vec3 frustumCenter = glm::vec3(0.0f);
         for (int j = 0; j < 8; j++) {
             glm::vec4 pt = invCam * glm::vec4(frustumCorners[j], 1.0f);
-            frustumCorners[j] = glm::vec3(pt) / pt.w; // Perspective divide
+            frustumCorners[j] = glm::vec3(pt) / pt.w;
             frustumCenter += frustumCorners[j];
         }
         frustumCenter /= 8.0f;
 
-        // 3. Créer une caméra Soleil qui regarde le centre de cette tranche
-        glm::mat4 lightView = glm::lookAt(frustumCenter + lightDir * cascadeSplits[i], frustumCenter, glm::vec3(0.0f, 0.0f, 1.0f));
-
-        // 4. Trouver la boîte englobante (Bounding Box) parfaite de ces 8 coins, vue depuis le Soleil
-        float minX = std::numeric_limits<float>::max();
-        float maxX = std::numeric_limits<float>::lowest();
-        float minY = std::numeric_limits<float>::max();
-        float maxY = std::numeric_limits<float>::lowest();
-        float minZ = std::numeric_limits<float>::max();
-        float maxZ = std::numeric_limits<float>::lowest();
-
+        // 2. "Bounding Sphere" : Rayon qui englobe cette vue
+        float radius = 0.0f;
         for (int j = 0; j < 8; j++) {
-            glm::vec4 trf = lightView * glm::vec4(frustumCorners[j], 1.0f);
-            minX = std::min(minX, trf.x);
-            maxX = std::max(maxX, trf.x);
-            minY = std::min(minY, trf.y);
-            maxY = std::max(maxY, trf.y);
-            minZ = std::min(minZ, trf.z);
-            maxZ = std::max(maxZ, trf.z);
+            float distance = glm::length(frustumCorners[j] - frustumCenter);
+            radius = std::max(radius, distance);
         }
+        radius = std::ceil(radius * 16.0f) / 16.0f; // L'arrondi magique pour la stabilité !
 
-        // 5. Z-Multiplier : On recule le plan lointain du soleil pour attraper les objets
-        // qui sont hors-champ de la caméra mais qui projettent une ombre DANS le champ de vision (ex: une tour derrière nous)
-        float zMultiplier = 10.0f;
-        minZ = minZ < 0 ? minZ * zMultiplier : minZ / zMultiplier;
-        maxZ = maxZ < 0 ? maxZ / zMultiplier : maxZ * zMultiplier;
+        glm::vec3 maxExtents = glm::vec3(radius);
+        glm::vec3 minExtents = -maxExtents;
 
-        glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, minZ, maxZ);
-        lightProj[1][1] *= -1.0f; // Correction Vulkan
+        // 3. Placer la caméra du soleil
+        glm::mat4 lightView = glm::lookAt(frustumCenter + lightDir * radius, frustumCenter, glm::vec3(0.0f, 0.0f, 1.0f));
+
+        // 4. "Z-Blocker" : On recule le plan de projection de 150 mètres en arrière !
+        // Ça permet d'attraper les arbres qui sont derrière toi mais dont l'ombre devrait être visible devant toi.
+        float zBlockerDistance = 15000.0f;
+        glm::mat4 lightProj = glm::ortho(minExtents.x, maxExtents.x, minExtents.y, maxExtents.y, minExtents.z - zBlockerDistance, maxExtents.z + zBlockerDistance);
+        lightProj[1][1] *= -1.0f; // Flip Vulkan
+
+        // 5. "Texel Snapping" : Annuler le tremblement des pixels d'ombre
+        glm::mat4 shadowMatrix = lightProj * lightView;
+        glm::vec4 shadowOrigin = shadowMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        shadowOrigin *= (SHADOW_MAP_RESOLUTION / 2.0f);
+
+        glm::vec4 roundedOrigin = glm::round(shadowOrigin);
+        glm::vec4 roundOffset = roundedOrigin - shadowOrigin;
+        roundOffset = roundOffset * (2.0f / SHADOW_MAP_RESOLUTION);
+        roundOffset.z = 0.0f;
+        roundOffset.w = 0.0f;
+
+        lightProj[3] += roundOffset;
 
         matrices[i] = lightProj * lightView;
         lastSplit = cascadeSplits[i];
