@@ -135,6 +135,8 @@ public:
 
     void BuildTLAS(const std::vector<VkAccelerationStructureInstanceKHR>& instances);
 
+    void UpdateTLAS(Scene* scene);
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();

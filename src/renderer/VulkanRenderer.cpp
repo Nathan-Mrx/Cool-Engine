@@ -3826,3 +3826,51 @@ void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstance
     addressInfo.accelerationStructure = m_TLAS.handle;
     m_TLAS.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_Device, &addressInfo);
 }
+
+// ==============================================================================
+// RAY TRACING : MISE À JOUR DU TLAS AVEC LA SCÈNE
+// ==============================================================================
+void VulkanRenderer::UpdateTLAS(Scene* scene) {
+    if (!scene) return;
+
+    std::vector<VkAccelerationStructureInstanceKHR> instances;
+
+    // On parcourt toutes les entités qui ont un Mesh et un Transform
+    auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
+
+    uint32_t instanceId = 0;
+    for (auto entity : view) {
+        auto [transformComp, meshComp] = view.get<TransformComponent, MeshComponent>(entity);
+
+        if (!meshComp.MeshData || !meshComp.MeshData->GetBLAS()) continue;
+
+        // 1. On récupère la matrice 4x4 classique
+        glm::mat4 transform = transformComp.GetTransform();
+
+        // 2. On la convertit au format Vulkan RT (3x4 transposée)
+        VkTransformMatrixKHR transformMatrix;
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                // glm stocke en Column-Major, donc transform[col][row]
+                transformMatrix.matrix[row][col] = transform[col][row];
+            }
+        }
+
+        // 3. On crée l'instance pour cette entité
+        VkAccelerationStructureInstanceKHR instance{};
+        instance.transform = transformMatrix;
+        instance.instanceCustomIndex = instanceId; // Utile plus tard pour retrouver le matériau dans le shader !
+        instance.mask = 0xFF;                      // L'objet est visible par tous les rayons
+        instance.instanceShaderBindingTableRecordOffset = 0;
+        instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR; // On désactive le backface culling pour les rayons par sécurité
+        instance.accelerationStructureReference = meshComp.MeshData->GetBLAS()->deviceAddress;
+
+        instances.push_back(instance);
+        instanceId++;
+    }
+
+    // 4. S'il y a des objets, on demande au GPU de reconstruire la carte !
+    if (!instances.empty()) {
+        BuildTLAS(instances);
+    }
+}

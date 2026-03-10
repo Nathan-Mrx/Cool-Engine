@@ -184,6 +184,11 @@ void EditorLayer::OnUpdate(float deltaTime) {
         Renderer::EndScene();
     } else {
         // --- VULKAN RENDERING ---
+
+        // --- RAY TRACING : On met à jour la position des objets pour les rayons ---
+        VulkanRenderer::Get()->UpdateTLAS(m_ActiveScene.get());
+
+
         VulkanRenderer::Get()->PrepareShadows(m_ActiveScene.get());
         Renderer::Clear(); // Démarre le carnet de commandes du Framebuffer
 
