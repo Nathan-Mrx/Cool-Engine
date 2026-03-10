@@ -1452,7 +1452,7 @@ void VulkanRenderer::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, V
     vkBindBufferMemory(m_Device, buffer, bufferMemory, 0);
 }
 
-void VulkanRenderer::TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+void VulkanRenderer::TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels, uint32_t layerCount) {
     VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
 
     VkImageMemoryBarrier barrier{};
@@ -1464,9 +1464,9 @@ void VulkanRenderer::TransitionImageLayout(VkImage image, VkFormat format, VkIma
     barrier.image = image;
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.levelCount = mipLevels; // Support des Mips
     barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.layerCount = layerCount; // Support des Cubemaps (6)
 
     VkPipelineStageFlags sourceStage;
     VkPipelineStageFlags destinationStage;
@@ -1480,6 +1480,13 @@ void VulkanRenderer::TransitionImageLayout(VkImage image, VkFormat format, VkIma
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    // NOUVEAU : Passage du mode Rendu (Attachment) vers mode Texture (Sampled)
+    else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     } else {
         throw std::invalid_argument("Layout transition non supportee !");
@@ -2136,6 +2143,8 @@ void VulkanRenderer::GenerateBRDFLUT() {
     vkCmdEndRenderPass(cmdBuf);
     EndSingleTimeCommands(cmdBuf);
 
+    TransitionImageLayout(m_BrdfLutTexture->Image, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
+
     // 6. Nettoyage de l'usine éphémère (On garde juste l'image générée)
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -2732,6 +2741,8 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
 
     EndSingleTimeCommands(cmdBuf);
 
+    TransitionImageLayout(m_IrradianceCubemap->Image, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 6);
+
     // 5. NETTOYAGE
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -3052,6 +3063,8 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     }
 
     EndSingleTimeCommands(cmdBuf);
+
+    TransitionImageLayout(m_PrefilterCubemap->Image, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, mipLevels, 6);
 
     // 5. NETTOYAGE
     vkDestroyPipeline(m_Device, pipeline, nullptr);

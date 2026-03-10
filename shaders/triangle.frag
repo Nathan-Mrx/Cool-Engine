@@ -70,12 +70,47 @@ vec3 ACESFilm(vec3 x) {
     return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
 
-// --- CASCADED SHADOW MAPS ---
+// --- CONSTANTES PCSS ---
+const int BLOCKER_SAMPLES = 16;
+const int PCF_SAMPLES = 32;
+const float LIGHT_SIZE = 0.005; // Ajuste cette valeur pour la taille physique du soleil (plus gros = plus de pénombre)
+
+// Bruit haute fréquence pour stabiliser les échantillons (Interleaved Gradient Noise)
+float InterleavedGradientNoise(vec2 position) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(position, magic.xy)));
+}
+
+// Générateur de distribution de Vogel
+vec2 VogelDiskSample(int sampleIndex, int sampleCount, float phi) {
+    float r = sqrt(float(sampleIndex) + 0.5) / sqrt(float(sampleCount));
+    float theta = float(sampleIndex) * 2.39996322 + phi; // 2.399... est l'angle d'or
+    return vec2(r * cos(theta), r * sin(theta));
+}
+
+// 1. Recherche du bloqueur moyen (Find Blocker)
+float FindBlocker(vec2 uv, float zReceiver, int cascadeIndex, float searchRadius) {
+    float avgBlockerDepth = 0.0;
+    int blockers = 0;
+    float noise = InterleavedGradientNoise(gl_FragCoord.xy);
+
+    for(int i = 0; i < BLOCKER_SAMPLES; i++) {
+        vec2 offset = VogelDiskSample(i, BLOCKER_SAMPLES, noise) * searchRadius;
+        float d = texture(shadowMap, vec3(uv + offset, cascadeIndex)).r;
+        if(d < zReceiver) {
+            avgBlockerDepth += d;
+            blockers++;
+        }
+    }
+
+    if(blockers == 0) return -1.0;
+    return avgBlockerDepth / float(blockers);
+}
+
+// 2. Calcul final des ombres douces (PCSS + PCF Vogel)
 float ShadowCalculation(vec3 fragWorldPos, vec3 N, vec3 L) {
-    // Distance exacte de la caméra au pixel
     float depth = length(ubo.cameraPos.xyz - fragWorldPos);
 
-    // On cherche dans quelle tranche on se trouve
     int cascadeIndex = 0;
     for(int i = 0; i < 3; ++i) {
         if(depth > ubo.cascadeSplits[i]) {
@@ -83,31 +118,45 @@ float ShadowCalculation(vec3 fragWorldPos, vec3 N, vec3 L) {
         }
     }
 
-    // Projection depuis les yeux du soleil pour CETTE cascade
     vec4 fragPosLightSpace = ubo.lightSpaceMatrices[cascadeIndex] * vec4(fragWorldPos, 1.0);
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
 
-    // Si on regarde au-delà du frustum du soleil
     if(projCoords.z > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
 
-    // Biais anti-acné progressif (plus la cascade est grande, plus l'erreur d'arrondi est forte)
-    float bias = max(0.005 * (1.0 - dot(N, L)), 0.001);
+    // Biais adaptatif pour le CSM
+    float bias = max(0.002 * (1.0 - dot(N, L)), 0.0005);
     if (cascadeIndex > 0) bias *= 2.0;
     if (cascadeIndex > 1) bias *= 2.0;
 
-    // PCF (Floutage) sur un tableau 2D (sampler2DArray utilise un vec3)
+    // --- ÉTAPE 1 : BLOCKER SEARCH ---
+    // Le rayon de recherche dépend de la cascade (on cherche plus large au loin)
+    float searchRadius = LIGHT_SIZE * (float(cascadeIndex) + 1.0) * 0.5;
+    float avgBlockerDepth = FindBlocker(projCoords.xy, currentDepth - bias, cascadeIndex, searchRadius);
+
+    // Si aucun bloqueur, le pixel est totalement éclairé
+    if(avgBlockerDepth == -1.0) return 0.0;
+
+    // --- ÉTAPE 2 : ESTIMATION DE LA PÉNOMBRE ---
+    // Formule simplifiée pour lumière directionnelle (orthographique)
+    float penumbra = (currentDepth - avgBlockerDepth) * LIGHT_SIZE * 100.0;
+
+    // On sature le rayon pour éviter les bords trop nets ou trop "bruités"
+    float filterRadius = clamp(penumbra, 0.0005, 0.01);
+
+    // --- ÉTAPE 3 : PCF AVEC SPIRALE DE VOGEL ---
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / textureSize(shadowMap, 0).xy;
-    for(int x = -1; x <= 1; ++x) {
-        for(int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture(shadowMap, vec3(projCoords.xy + vec2(x, y) * texelSize, cascadeIndex)).r;
-            shadow += currentDepth - bias > pcfDepth  ? 1.0 : 0.0;
-        }
+    float noise = InterleavedGradientNoise(gl_FragCoord.xy + 0.123); // Seed décalé pour éviter les patterns
+
+    for(int i = 0; i < PCF_SAMPLES; i++) {
+        vec2 offset = VogelDiskSample(i, PCF_SAMPLES, noise) * filterRadius;
+        float pcfDepth = texture(shadowMap, vec3(projCoords.xy + offset, cascadeIndex)).r;
+        shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
     }
-    return shadow / 9.0;
+
+    return shadow / float(PCF_SAMPLES);
 }
 
 void main() {
@@ -172,7 +221,7 @@ void main() {
     vec3 kD_ibl = vec3(1.0) - kS_ibl;
     kD_ibl *= 1.0 - metallic;
 
-    float iblIntensity = 2.0;
+    float iblIntensity = 5.0;
 
     vec3 irradiance = texture(irradianceMap, N).rgb;
     vec3 diffuseIBL = irradiance * albedo * iblIntensity;

@@ -89,7 +89,7 @@ public:
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
     VkCommandBuffer BeginSingleTimeCommands();
     void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
-    void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels = 1, uint32_t layerCount = 1);
     void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
     [[nodiscard]] VkCommandBuffer GetCurrentCommandBuffer() const { return m_CommandBuffers[m_CurrentFrame]; }
