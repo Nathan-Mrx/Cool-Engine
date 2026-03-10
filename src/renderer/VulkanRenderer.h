@@ -133,6 +133,8 @@ public:
     AccelerationStructure CreateBLAS(VkBuffer vertexBuffer, uint32_t vertexCount, VkBuffer indexBuffer, uint32_t indexCount);
     void DestroyAccelerationStructure(AccelerationStructure& as);
 
+    void BuildTLAS(const std::vector<VkAccelerationStructureInstanceKHR>& instances);
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
@@ -309,6 +311,11 @@ private:
     PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
 
     DeletionQueue m_MainDeletionQueue;
+
+    // --- RAY TRACING : TLAS ---
+    AccelerationStructure m_TLAS;
+    VkBuffer m_TLASInstancesBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_TLASInstancesMemory = VK_NULL_HANDLE;
 
 #ifdef NDEBUG
     const bool m_EnableValidationLayers = false;

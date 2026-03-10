@@ -137,6 +137,12 @@ void VulkanRenderer::Shutdown() {
     m_SkyboxTexture = nullptr;
     m_BrdfLutTexture = nullptr;
 
+    if (m_TLASInstancesBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_Device, m_TLASInstancesBuffer, nullptr);
+        vkFreeMemory(m_Device, m_TLASInstancesMemory, nullptr);
+    }
+    DestroyAccelerationStructure(m_TLAS);
+
     // ==========================================================
     // 3. NETTOYAGE DES OMBRES (CSM)
     // ==========================================================
@@ -3707,4 +3713,116 @@ void VulkanRenderer::DestroyAccelerationStructure(AccelerationStructure& as) {
         vkFreeMemory(m_Device, as.memory, nullptr);
         as.memory = VK_NULL_HANDLE;
     }
+}
+
+// ==============================================================================
+// RAY TRACING : CONSTRUCTION DU TLAS (Top-Level Acceleration Structure)
+// ==============================================================================
+void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstanceKHR>& instances) {
+    if (instances.empty()) return;
+
+    VkDeviceSize bufferSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
+
+    // 1. On nettoie l'ancien buffer d'instances s'il existe
+    if (m_TLASInstancesBuffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_Device, m_TLASInstancesBuffer, nullptr);
+        vkFreeMemory(m_Device, m_TLASInstancesMemory, nullptr);
+    }
+
+    // 2. On crée un buffer pour stocker nos instances (Visible par le CPU pour le mettre à jour)
+    CreateBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        m_TLASInstancesBuffer, m_TLASInstancesMemory
+    );
+
+    // 3. On copie nos instances dans ce buffer
+    void* data;
+    vkMapMemory(m_Device, m_TLASInstancesMemory, 0, bufferSize, 0, &data);
+    memcpy(data, instances.data(), bufferSize);
+    vkUnmapMemory(m_Device, m_TLASInstancesMemory);
+
+    // 4. On indique au GPU où se trouve ce tableau d'instances
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = GetBufferDeviceAddress(m_TLASInstancesBuffer);
+
+    // 5. Configuration de la construction du TLAS
+    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
+    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    // On l'optimise pour le rendu rapide, et on autorise les mises à jour futures !
+    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    buildInfo.geometryCount = 1;
+    buildInfo.pGeometries = &geometry;
+
+    uint32_t primitiveCount = static_cast<uint32_t>(instances.size());
+
+    // 6. Demande de la taille mémoire requise
+    VkAccelerationStructureBuildSizesInfoKHR buildSizesInfo{};
+    buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    vkGetAccelerationStructureBuildSizesKHR(m_Device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &primitiveCount, &buildSizesInfo);
+
+    // 7. On détruit l'ancien TLAS s'il existe
+    if (m_TLAS.handle != VK_NULL_HANDLE) {
+        DestroyAccelerationStructure(m_TLAS);
+    }
+
+    // 8. Allocation du Buffer de l'Arbre Principal
+    CreateBuffer(
+        buildSizesInfo.accelerationStructureSize,
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        m_TLAS.buffer, m_TLAS.memory
+    );
+
+    // 9. Création de l'objet Vulkan TLAS
+    VkAccelerationStructureCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    createInfo.buffer = m_TLAS.buffer;
+    createInfo.size = buildSizesInfo.accelerationStructureSize;
+    createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    vkCreateAccelerationStructureKHR(m_Device, &createInfo, nullptr, &m_TLAS.handle);
+
+    // 10. Buffer Brouillon (Scratch) requis par le GPU
+    VkBuffer scratchBuffer;
+    VkDeviceMemory scratchMemory;
+    CreateBuffer(
+        buildSizesInfo.buildScratchSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        scratchBuffer, scratchMemory
+    );
+
+    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    buildInfo.dstAccelerationStructure = m_TLAS.handle;
+    buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(scratchBuffer);
+
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.primitiveCount = primitiveCount;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.transformOffset = 0;
+
+    const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[1] = { &buildRangeInfo };
+
+    // 11. CONSTRUCTION !
+    VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
+    vkCmdBuildAccelerationStructuresKHR(cmdBuf, 1, &buildInfo, pBuildRangeInfos);
+    EndSingleTimeCommands(cmdBuf);
+
+    // 12. Nettoyage du brouillon
+    vkDestroyBuffer(m_Device, scratchBuffer, nullptr);
+    vkFreeMemory(m_Device, scratchMemory, nullptr);
+
+    // 13. Récupération de l'adresse finale du TLAS
+    VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
+    addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    addressInfo.accelerationStructure = m_TLAS.handle;
+    m_TLAS.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_Device, &addressInfo);
 }
