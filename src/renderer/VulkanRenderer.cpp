@@ -87,6 +87,7 @@ void VulkanRenderer::Init() {
     GenerateEnvironmentCubemap();
     GenerateIrradianceCubemap();
     GeneratePrefilterCubemap();
+    CreateDDGIPipeline();
     CreateSkyboxPipeline();
     CreateCommandBuffer();
 
@@ -220,6 +221,10 @@ void VulkanRenderer::Shutdown() {
 
     vkDestroyPipeline(m_Device, m_GraphicsPipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
+
+    vkDestroyPipeline(m_Device, m_DDGIPipeline, nullptr);
+    vkDestroyPipelineLayout(m_Device, m_DDGIPipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(m_Device, m_DDGIDescriptorSetLayout, nullptr);
 
     // ==========================================================
     // 5. NETTOYAGE DES MÉMOIRES ET COMMANDES VULKAN
@@ -901,9 +906,16 @@ void VulkanRenderer::Clear(Scene* scene) {
     BeginFrame();
 
     // Le TLAS est mis à jour ici car on est sûr que le carnet est ouvert,
-    // et qu'aucun RenderPass n'a encore commencé (car on est au début de Clear).
+    // et qu'aucun RenderPass n'a encore commencé.
     if (scene) {
         UpdateTLAS(scene);
+
+        // =========================================================
+        // --- LE DÉCLENCHEMENT DU COMPUTE SHADER DDGI EST ICI ! ---
+        // =========================================================
+        if (scene->GetDDGIVolume()) {
+            ComputeDDGI(scene->GetDDGIVolume());
+        }
     }
 
     VkRenderPassBeginInfo renderPassInfo{};
