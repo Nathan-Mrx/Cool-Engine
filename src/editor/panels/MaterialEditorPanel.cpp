@@ -16,6 +16,7 @@
 #include "editor/materials/MaterialNodeRegistry.h"
 #include "project/Project.h"
 #include "renderer/Renderer.h"
+#include "renderer/VulkanRenderer.h"
 
 static void DrawPinIcon(PinType type, bool connected) {
     ImVec2 size(24, 14); // Plus large pour la marge
@@ -229,34 +230,136 @@ void MaterialEditorPanel::RenderPreview3D() {
             glUseProgram(0);
         }
     } else {
-        // Mode Vulkan
-        Renderer::Clear();
-        Renderer::BeginScene(glm::mat4(1.0f), glm::mat4(1.0f), glm::vec3(0.0f));
-
-        if (m_PreviewMesh) {
+        // --- MODE VULKAN (Isolé et Sécurisé) ---
+        if (m_PreviewMesh && m_PreviewFramebuffer) {
             float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
             float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
             float aspect = (height > 0.0f) ? (width / height) : 1.0f;
 
-            // 1. PROJECTION (Avec le fix d'inversion Vulkan !)
             glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
-            proj[1][1] *= -1.0f; // Crucial : Vulkan a l'axe Y inversé par rapport à OpenGL !
+            proj[1][1] *= -1.0f;
 
-            // 2. VUE Z-UP CENTIMÉTRIQUE (On recule sur l'axe X, le Z pointe en haut)
             glm::vec3 camPos = glm::vec3(m_CameraDistance, 0.0f, 0.0f);
             glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-            // 3. MODÈLE (Rotation)
             m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
             glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 0.0f, 1.0f));
 
-            // On envoie le paquet final au GPU !
-            Renderer::SubmitPushConstant(proj * view * model);
+            // Traceur Live
+            VulkanTexture* t_albedo = nullptr; VulkanTexture* t_normal = nullptr;
+            VulkanTexture* t_metallic = nullptr; VulkanTexture* t_roughness = nullptr; VulkanTexture* t_ao = nullptr;
+            glm::vec4 c_color = glm::vec4(1.0f); float v_met = 0.0f, v_rough = 0.5f, v_ao = 1.0f;
 
-            m_PreviewMesh->Draw();
+            MaterialNode* baseNode = nullptr;
+            for (auto& n : m_Nodes) { if (n.Name == "Base Material") { baseNode = &n; break; } }
+
+            if (baseNode && baseNode->Inputs.size() >= 6) {
+
+                std::function<VulkanTexture*(ed::PinId)> traceTexRec = [&](ed::PinId pinId) -> VulkanTexture* {
+                    for (auto& link : m_Links) {
+                        if (link.EndPinID == pinId) {
+                            MaterialPin* p = FindPin(link.StartPinID);
+                            if (p) {
+                                MaterialNode* src = FindNode(p->NodeID);
+                                if (!src) continue;
+
+                                if (src->Name == "Texture2D") {
+                                    if (src->TextureID == nullptr && !src->TexturePath.empty()) {
+                                        src->TextureID = TextureLoader::LoadTexture(src->TexturePath.c_str());
+                                    }
+                                    return (VulkanTexture*)src->TextureID;
+                                }
+
+                                if (src->Name == "StaticSwitchParameter" || src->Name == "Static Switch Parameter") {
+                                    if (src->Inputs.size() >= 2) {
+                                        int activeIdx = src->BoolValue ? 0 : 1;
+                                        return traceTexRec(src->Inputs[activeIdx].ID);
+                                    }
+                                }
+
+                                for (auto& inPin : src->Inputs) {
+                                    VulkanTexture* res = traceTexRec(inPin.ID);
+                                    if (res) return res;
+                                }
+                            }
+                        }
+                    }
+                    return nullptr;
+                };
+
+                std::function<glm::vec4(ed::PinId, glm::vec4)> traceColorRec = [&](ed::PinId pinId, glm::vec4 def) -> glm::vec4 {
+                    for (auto& link : m_Links) {
+                        if (link.EndPinID == pinId) {
+                            MaterialPin* p = FindPin(link.StartPinID);
+                            if (p) {
+                                MaterialNode* src = FindNode(p->NodeID);
+                                if (!src) continue;
+
+                                if (src->Name == "Color") return glm::vec4(src->ColorValue.r, src->ColorValue.g, src->ColorValue.b, src->ColorValue.a);
+
+                                if (src->Name == "StaticSwitchParameter" || src->Name == "Static Switch Parameter") {
+                                    if (src->Inputs.size() >= 2) {
+                                        int activeIdx = src->BoolValue ? 0 : 1;
+                                        return traceColorRec(src->Inputs[activeIdx].ID, def);
+                                    }
+                                }
+
+                                for (auto& inPin : src->Inputs) {
+                                    glm::vec4 res = traceColorRec(inPin.ID, glm::vec4(-1.0f));
+                                    if (res.x != -1.0f) return res;
+                                }
+                            }
+                        }
+                    }
+                    return def;
+                };
+
+                std::function<float(ed::PinId, float)> traceFloatRec = [&](ed::PinId pinId, float def) -> float {
+                    for (auto& link : m_Links) {
+                        if (link.EndPinID == pinId) {
+                            MaterialPin* p = FindPin(link.StartPinID);
+                            if (p) {
+                                MaterialNode* src = FindNode(p->NodeID);
+                                if (!src) continue;
+
+                                if (src->Name == "Float") return src->FloatValue;
+
+                                if (src->Name == "StaticSwitchParameter" || src->Name == "Static Switch Parameter") {
+                                    if (src->Inputs.size() >= 2) {
+                                        int activeIdx = src->BoolValue ? 0 : 1;
+                                        return traceFloatRec(src->Inputs[activeIdx].ID, def);
+                                    }
+                                }
+
+                                for (auto& inPin : src->Inputs) {
+                                    float res = traceFloatRec(inPin.ID, -9999.0f);
+                                    if (res != -9999.0f) return res;
+                                }
+                            }
+                        }
+                    }
+                    return def;
+                };
+
+                t_albedo = traceTexRec(baseNode->Inputs[0].ID);
+                t_normal = traceTexRec(baseNode->Inputs[1].ID);
+                t_metallic = traceTexRec(baseNode->Inputs[2].ID);
+                t_roughness = traceTexRec(baseNode->Inputs[3].ID);
+                t_ao = traceTexRec(baseNode->Inputs[5].ID);
+
+                c_color = traceColorRec(baseNode->Inputs[0].ID, glm::vec4(1.0f));
+                v_met = traceFloatRec(baseNode->Inputs[2].ID, 0.0f);
+                v_rough = traceFloatRec(baseNode->Inputs[3].ID, 0.5f);
+                v_ao = traceFloatRec(baseNode->Inputs[5].ID, 1.0f);
+            }
+
+            VulkanRenderer::Get()->RenderMaterialPreview(
+                m_PreviewMesh.get(), (VulkanFramebuffer*)m_PreviewFramebuffer.get(),
+                model, view, proj, camPos,
+                t_albedo, t_normal, t_metallic, t_roughness, t_ao,
+                c_color, v_met, v_rough, v_ao
+            );
         }
-
-        Renderer::EndScene();
     }
 
     m_PreviewFramebuffer->Unbind();
@@ -568,7 +671,15 @@ void MaterialEditorPanel::DrawStandardNode(MaterialNode& node) {
         if (node.TexturePath.empty()) ImGui::Button("Drop Texture", ImVec2(120, 30));
         else {
             if (node.TextureID == 0) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
-            if (node.TextureID != 0) ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
+
+            if (node.TextureID != 0) {
+                void* imguiTexID = node.TextureID;
+                // FIX VULKAN : ImGui a besoin de son DescriptorSet spécial, pas du pointeur de la structure !
+                if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+                    imguiTexID = ((VulkanTexture*)node.TextureID)->ImGuiDescriptor;
+                }
+                ImGui::Image((ImTextureID)imguiTexID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
+            }
         }
 
         if (ImGui::BeginDragDropTarget()) {
@@ -845,9 +956,117 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
     nlohmann::json data;
     data["Type"] = "MaterialGraph";
     data["NextID"] = m_NextId;
-
-    // On compile et sauvegarde le GLSL dans le fichier pour que le moteur 3D n'ait pas à le faire
     data["GeneratedGLSL"] = CompileMaterial();
+
+    // =========================================================================
+    // RÉSOLUTION INTELLIGENTE DU PBR (Style Unreal Engine)
+    // =========================================================================
+    MaterialNode* baseNode = nullptr;
+    for (auto& n : m_Nodes) { if (n.Name == "Base Material") { baseNode = &n; break; } }
+
+    if (baseNode) {
+        // 1. Traceur de Texture Récursif
+        std::function<std::string(ed::PinId)> getConnectedTexture = [&](ed::PinId pinId) -> std::string {
+            for (auto& link : m_Links) {
+                if (link.EndPinID == pinId) {
+                    MaterialPin* outPin = FindPin(link.StartPinID);
+                    if (outPin) {
+                        MaterialNode* srcNode = FindNode(outPin->NodeID);
+                        if (!srcNode) continue;
+
+                        if (srcNode->Name == "Texture2D") return srcNode->TexturePath;
+
+                        // Si c'est un Switch, on bifurque selon son état ! (0 = True, 1 = False)
+                        if (srcNode->Name == "StaticSwitchParameter" || srcNode->Name == "Static Switch Parameter") {
+                            if (srcNode->Inputs.size() >= 2) {
+                                int activeIdx = srcNode->BoolValue ? 0 : 1;
+                                return getConnectedTexture(srcNode->Inputs[activeIdx].ID);
+                            }
+                        }
+
+                        // Si c'est un autre noeud intermédiaire (ex: Multiply), on fouille ses entrées
+                        for (auto& inPin : srcNode->Inputs) {
+                            std::string res = getConnectedTexture(inPin.ID);
+                            if (!res.empty()) return res;
+                        }
+                    }
+                }
+            }
+            return "";
+        };
+
+        // 2. Traceur de Float Récursif
+        std::function<float(ed::PinId, float)> getConnectedFloat = [&](ed::PinId pinId, float def) -> float {
+            for (auto& link : m_Links) {
+                if (link.EndPinID == pinId) {
+                    MaterialPin* outPin = FindPin(link.StartPinID);
+                    if (outPin) {
+                        MaterialNode* srcNode = FindNode(outPin->NodeID);
+                        if (!srcNode) continue;
+
+                        if (srcNode->Name == "Float") return srcNode->FloatValue;
+
+                        if (srcNode->Name == "StaticSwitchParameter" || srcNode->Name == "Static Switch Parameter") {
+                            if (srcNode->Inputs.size() >= 2) {
+                                int activeIdx = srcNode->BoolValue ? 0 : 1;
+                                return getConnectedFloat(srcNode->Inputs[activeIdx].ID, def);
+                            }
+                        }
+
+                        for (auto& inPin : srcNode->Inputs) {
+                            float res = getConnectedFloat(inPin.ID, -9999.0f);
+                            if (res != -9999.0f) return res;
+                        }
+                    }
+                }
+            }
+            return def;
+        };
+
+        // 3. Traceur de Couleur Récursif
+        std::function<nlohmann::json(ed::PinId)> getConnectedColor = [&](ed::PinId pinId) -> nlohmann::json {
+            for (auto& link : m_Links) {
+                if (link.EndPinID == pinId) {
+                    MaterialPin* outPin = FindPin(link.StartPinID);
+                    if (outPin) {
+                        MaterialNode* srcNode = FindNode(outPin->NodeID);
+                        if (!srcNode) continue;
+
+                        if (srcNode->Name == "Color") return {srcNode->ColorValue.r, srcNode->ColorValue.g, srcNode->ColorValue.b, srcNode->ColorValue.a};
+
+                        if (srcNode->Name == "StaticSwitchParameter" || srcNode->Name == "Static Switch Parameter") {
+                            if (srcNode->Inputs.size() >= 2) {
+                                int activeIdx = srcNode->BoolValue ? 0 : 1;
+                                return getConnectedColor(srcNode->Inputs[activeIdx].ID);
+                            }
+                        }
+
+                        for (auto& inPin : srcNode->Inputs) {
+                            nlohmann::json res = getConnectedColor(inPin.ID);
+                            if (!res.empty()) return res;
+                        }
+                    }
+                }
+            }
+            return nlohmann::json();
+        };
+
+        // On sauvegarde tout en se basant sur les ID des Pins du Base Material
+        if (baseNode->Inputs.size() >= 6) {
+            data["PBR_Albedo"] = getConnectedTexture(baseNode->Inputs[0].ID);
+            data["PBR_Normal"] = getConnectedTexture(baseNode->Inputs[1].ID);
+            data["PBR_Metallic"] = getConnectedTexture(baseNode->Inputs[2].ID);
+            data["PBR_Roughness"] = getConnectedTexture(baseNode->Inputs[3].ID);
+            data["PBR_AO"] = getConnectedTexture(baseNode->Inputs[5].ID); // Specular est en index 4
+
+            nlohmann::json cVal = getConnectedColor(baseNode->Inputs[0].ID);
+            data["PBR_ColorVal"] = cVal.empty() ? nlohmann::json::array({1.0f, 1.0f, 1.0f, 1.0f}) : cVal;
+
+            data["PBR_MetallicVal"] = getConnectedFloat(baseNode->Inputs[2].ID, 0.0f);
+            data["PBR_RoughnessVal"] = getConnectedFloat(baseNode->Inputs[3].ID, 0.5f);
+            data["PBR_AOVal"] = getConnectedFloat(baseNode->Inputs[5].ID, 1.0f);
+        }
+    }
 
     // --- SAUVEGARDE DES NOEUDS ---
     auto& nodesOut = data["Nodes"];

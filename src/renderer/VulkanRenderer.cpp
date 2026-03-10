@@ -953,68 +953,8 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
     if (!m_IsFrameStarted || !scene) return;
 
     // ==========================================================
-    // ÉTAPE A : LA PASSE DES OMBRES (CSM) !
-    // ==========================================================
-    // On calcule les 4 caméras solaires en fonction de TA caméra actuelle
-    auto shadowMatrices = CalculateCascadeMatrices();
-    // On dessine les 4 cascades hors-écran
-    RenderShadows(m_CommandBuffers[m_CurrentFrame], scene, shadowMatrices);
-
-
-    // ==========================================================
-    // ÉTAPE B : DÉMARRAGE DE LA SCÈNE PRINCIPALE (L'ancien Clear)
-    // ==========================================================
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-
-    if (m_TargetFramebuffer) {
-        renderPassInfo.renderPass = m_TargetFramebuffer->GetRenderPass();
-        renderPassInfo.framebuffer = m_TargetFramebuffer->GetVulkanFramebuffer();
-        renderPassInfo.renderArea.offset = {0, 0};
-        renderPassInfo.renderArea.extent = { m_TargetFramebuffer->GetSpecification().Width, m_TargetFramebuffer->GetSpecification().Height };
-
-        std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{0.1f, 0.1f, 0.1f, 1.0f}};
-        clearValues[1].depthStencil = {1.0f, 0};
-        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-        renderPassInfo.pClearValues = clearValues.data();
-
-        vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-        VkViewport viewport{};
-        viewport.width = (float)m_TargetFramebuffer->GetSpecification().Width;
-        viewport.height = (float)m_TargetFramebuffer->GetSpecification().Height;
-        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(m_CommandBuffers[m_CurrentFrame], 0, 1, &viewport);
-        VkRect2D scissor{};
-        scissor.extent = renderPassInfo.renderArea.extent;
-        vkCmdSetScissor(m_CommandBuffers[m_CurrentFrame], 0, 1, &scissor);
-
-    } else {
-        renderPassInfo.renderPass = m_RenderPass;
-        renderPassInfo.framebuffer = m_SwapChainFramebuffers[m_CurrentImageIndex];
-        renderPassInfo.renderArea.offset = {0, 0};
-        renderPassInfo.renderArea.extent = m_SwapChainExtent;
-
-        VkClearValue clearColor = {{{0.1f, 0.2f, 0.4f, 1.0f}}};
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearColor;
-
-        vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-        VkViewport viewport{};
-        viewport.width = (float)m_SwapChainExtent.width;
-        viewport.height = (float)m_SwapChainExtent.height;
-        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(m_CommandBuffers[m_CurrentFrame], 0, 1, &viewport);
-        VkRect2D scissor{};
-        scissor.extent = m_SwapChainExtent;
-        vkCmdSetScissor(m_CommandBuffers[m_CurrentFrame], 0, 1, &scissor);
-    }
-
-
-    // ==========================================================
-    // ÉTAPE C : LE DESSIN CLASSIQUE (L'ancienne RenderScene)
+    // LE DESSIN CLASSIQUE (Dans le Render Pass principal déjà ouvert par Clear())
+    // On ne recalcule PLUS les ombres ici, PrepareShadows() l'a déjà fait !
     // ==========================================================
 
     // 1. La Skybox
@@ -1031,7 +971,7 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
     vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_SkyboxPipelineLayout, 0, 1, &m_SkyboxDescriptorSet, 0, nullptr);
     m_SkyboxCube->Draw();
 
-    // 2. Les Entités PBR (On re-lie le pipeline PBR ici !)
+    // 2. Les Entités PBR
     vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
 
     auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
@@ -1054,28 +994,70 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
 
             vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
 
-            if (m_EntityMaterials.find(entityID) == m_EntityMaterials.end()) {
-                VulkanTexture* t_albedo = m_DefaultWhiteTexture;
+            // ==========================================================
+            // GESTION DU MATÉRIAU PBR DE L'ENTITÉ
+            // ==========================================================
 
-                if (entity.HasComponent<MaterialComponent>()) {
-                    auto& matComp = entity.GetComponent<MaterialComponent>();
-                    if (!matComp.Textures.empty()) {
-                        t_albedo = static_cast<VulkanTexture*>(matComp.Textures.begin()->second);
-                    }
-                }
-                m_EntityMaterials[entityID] = CreateVulkanMaterial(t_albedo, m_DefaultNormalTexture, m_DefaultWhiteTexture, m_DefaultWhiteTexture, m_DefaultWhiteTexture);
+            VulkanTexture* texAlbedo = m_DefaultWhiteTexture;
+            VulkanTexture* texNormal = m_DefaultNormalTexture;
+            VulkanTexture* texMetallic = m_DefaultBlackTexture;
+            VulkanTexture* texRoughness = m_DefaultWhiteTexture;
+            VulkanTexture* texAO = m_DefaultWhiteTexture;
+
+            glm::vec4 baseColor = glm::vec4(1.0f); // Blanc par défaut pour ne pas teinter la texture
+            float metallicVal = 0.0f;
+            float roughnessVal = 0.5f;
+            float aoVal = 1.0f;
+
+            if (entity.HasComponent<ColorComponent>()) {
+                baseColor = glm::vec4(entity.GetComponent<ColorComponent>().Color, 1.0f);
+            }
+
+            if (entity.HasComponent<MaterialComponent>()) {
+                auto& matComp = entity.GetComponent<MaterialComponent>();
+
+                if (matComp.TextureOverrides.count("u_Albedo") && matComp.TextureOverrides["u_Albedo"])
+                    texAlbedo = static_cast<VulkanTexture*>(matComp.TextureOverrides["u_Albedo"]);
+
+                if (matComp.TextureOverrides.count("u_Normal") && matComp.TextureOverrides["u_Normal"])
+                    texNormal = static_cast<VulkanTexture*>(matComp.TextureOverrides["u_Normal"]);
+
+                if (matComp.TextureOverrides.count("u_Metallic") && matComp.TextureOverrides["u_Metallic"])
+                    texMetallic = static_cast<VulkanTexture*>(matComp.TextureOverrides["u_Metallic"]);
+
+                if (matComp.TextureOverrides.count("u_Roughness") && matComp.TextureOverrides["u_Roughness"])
+                    texRoughness = static_cast<VulkanTexture*>(matComp.TextureOverrides["u_Roughness"]);
+
+                if (matComp.TextureOverrides.count("u_AO") && matComp.TextureOverrides["u_AO"])
+                    texAO = static_cast<VulkanTexture*>(matComp.TextureOverrides["u_AO"]);
+
+                if (matComp.FloatOverrides.count("u_Metallic")) metallicVal = matComp.FloatOverrides["u_Metallic"];
+                else if (texMetallic != m_DefaultBlackTexture) metallicVal = 1.0f;
+
+                if (matComp.FloatOverrides.count("u_Roughness")) roughnessVal = matComp.FloatOverrides["u_Roughness"];
+                else if (texRoughness != m_DefaultWhiteTexture) roughnessVal = 1.0f;
+
+                if (matComp.FloatOverrides.count("u_AO")) aoVal = matComp.FloatOverrides["u_AO"];
+                else if (texAO != m_DefaultWhiteTexture) aoVal = 1.0f;
+
+                if (matComp.ColorOverrides.count("u_BaseColor")) baseColor = matComp.ColorOverrides["u_BaseColor"];
+            }
+
+            if (m_EntityMaterials.find(entityID) == m_EntityMaterials.end()) {
+                m_EntityMaterials[entityID] = CreateVulkanMaterial(
+                    texAlbedo, texNormal, texMetallic, texRoughness, texAO
+                );
             }
 
             VulkanMaterial& mat = m_EntityMaterials[entityID];
             MaterialUBO ubo{};
-            if (entity.HasComponent<ColorComponent>()) ubo.baseColor = glm::vec4(entity.GetComponent<ColorComponent>().Color, 1.0f);
 
+            ubo.baseColor = baseColor;
             ubo.cameraPos = glm::vec4(m_CameraPos, 1.0f);
-            ubo.metallic = 0.5f;
-            ubo.roughness = 0.2f;
-            ubo.ao = 1.0f;
+            ubo.metallic = metallicVal;
+            ubo.roughness = roughnessVal;
+            ubo.ao = aoVal;
 
-            // ON INJECTE LE CSM ICI !
             for (int j = 0; j < 4; j++) {
                 ubo.lightSpaceMatrices[j] = m_CurrentShadowMatrices[j];
             }
@@ -3415,4 +3397,110 @@ void VulkanRenderer::PrepareShadows(Scene* scene) {
 
     // On exécute la passe d'ombre OFFSCREEN
     RenderShadows(m_CommandBuffers[m_CurrentFrame], scene, m_CurrentShadowMatrices);
+}
+
+void VulkanRenderer::RenderMaterialPreview(
+    Mesh* mesh, VulkanFramebuffer* target,
+    glm::mat4 model, glm::mat4 view, glm::mat4 proj, glm::vec3 camPos,
+    VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao,
+    glm::vec4 colorVal, float metallicVal, float roughnessVal, float aoVal)
+{
+    if (!mesh || !target) return;
+
+    // 1. On lance un rendu isolé (Sécurité absolue contre les plantages de Frame)
+    VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
+
+    VkRenderPassBeginInfo rpBegin{};
+    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpBegin.renderPass = target->GetRenderPass();
+    rpBegin.framebuffer = target->GetVulkanFramebuffer();
+    rpBegin.renderArea.extent = { target->GetSpecification().Width, target->GetSpecification().Height };
+
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color = {{0.15f, 0.15f, 0.15f, 1.0f}};
+    clearValues[1].depthStencil = {1.0f, 0};
+    rpBegin.clearValueCount = 2;
+    rpBegin.pClearValues = clearValues.data();
+
+    vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+
+    VkViewport viewport{0.0f, 0.0f, (float)target->GetSpecification().Width, (float)target->GetSpecification().Height, 0.0f, 1.0f};
+    vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+    VkRect2D scissor{{0,0}, rpBegin.renderArea.extent};
+    vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
+
+    // 2. Matrices (Caméra)
+    struct PushConstants { glm::mat4 model; glm::mat4 viewProj; } push{};
+    push.model = model;
+    push.viewProj = proj * view;
+    vkCmdPushConstants(cmdBuf, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
+
+    // 3. Fallbacks Textures
+    VulkanTexture* t_albedo = albedo ? albedo : m_DefaultWhiteTexture;
+    VulkanTexture* t_normal = normal ? normal : m_DefaultNormalTexture;
+    VulkanTexture* t_metallic = metallic ? metallic : m_DefaultBlackTexture;
+    VulkanTexture* t_roughness = roughness ? roughness : m_DefaultWhiteTexture;
+    VulkanTexture* t_ao = ao ? ao : m_DefaultWhiteTexture;
+
+    // 4. On gère l'Entité factice pour le "Colis" de Preview
+    entt::entity previewEntity = (entt::entity)999999;
+    if (m_EntityMaterials.find(previewEntity) == m_EntityMaterials.end()) {
+        // On le crée une seule fois !
+        m_EntityMaterials[previewEntity] = CreateVulkanMaterial(t_albedo, t_normal, t_metallic, t_roughness, t_ao);
+    }
+
+    VulkanMaterial& mat = m_EntityMaterials[previewEntity];
+
+    // MISE À JOUR DYNAMIQUE : On modifie les textures à la volée sans saturer la RAM !
+    std::array<VkDescriptorImageInfo, 10> imageInfos{};
+    VulkanTexture* textures[] = {
+        t_albedo, t_normal, t_metallic, t_roughness, t_ao,
+        m_EnvironmentCubemap, m_BrdfLutTexture, m_IrradianceCubemap, m_PrefilterCubemap
+    };
+
+    for(int t = 0; t < 9; t++) {
+        imageInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfos[t].imageView = textures[t] ? textures[t]->View : m_DefaultWhiteTexture->View;
+        imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : m_DefaultWhiteTexture->Sampler;
+    }
+    // L'Array de Shadow Maps
+    imageInfos[9].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    imageInfos[9].imageView = m_ShadowImageView;
+    imageInfos[9].sampler = m_ShadowSampler;
+
+    std::array<VkWriteDescriptorSet, 10> descriptorWrites{};
+    for(int t = 0; t < 10; t++) {
+        descriptorWrites[t].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[t].dstSet = mat.DescriptorSets[0]; // On met à jour le set de la preview
+        descriptorWrites[t].dstBinding = t + 1;
+        descriptorWrites[t].dstArrayElement = 0;
+        descriptorWrites[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[t].descriptorCount = 1;
+        descriptorWrites[t].pImageInfo = &imageInfos[t];
+    }
+    // On applique les nouveaux câbles instantanément !
+    vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+
+    // Mise à jour des valeurs du PBR
+    MaterialUBO ubo{};
+    ubo.baseColor = colorVal;
+    ubo.cameraPos = glm::vec4(camPos, 1.0f);
+    ubo.metallic = metallic ? 1.0f : metallicVal;
+    ubo.roughness = roughness ? 1.0f : roughnessVal;
+    ubo.ao = ao ? 1.0f : aoVal;
+
+    memcpy(mat.UniformBuffersMapped[0], &ubo, sizeof(ubo));
+
+    vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &mat.DescriptorSets[0], 0, nullptr);
+
+    // 5. On dessine !
+    VkBuffer vertexBuffers[] = { mesh->GetVertexBuffer() };
+    VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffers, offsets);
+    vkCmdBindIndexBuffer(cmdBuf, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+    vkCmdDrawIndexed(cmdBuf, mesh->GetIndicesCount(), 1, 0, 0, 0);
+
+    vkCmdEndRenderPass(cmdBuf);
+    EndSingleTimeCommands(cmdBuf);
 }

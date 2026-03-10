@@ -332,6 +332,7 @@ void MaterialInstanceEditorPanel::RenderPreview3D() {
             m_PreviewMesh->Draw();
         }
     } else {
+        /*
         // Mode Vulkan
         Renderer::Clear();
         Renderer::BeginScene(glm::mat4(1.0f), glm::mat4(1.0f), glm::vec3(0.0f));
@@ -360,6 +361,7 @@ void MaterialInstanceEditorPanel::RenderPreview3D() {
         }
 
         Renderer::EndScene();
+        */
     }
 
     m_PreviewFramebuffer->Unbind();

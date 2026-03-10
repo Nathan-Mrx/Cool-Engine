@@ -110,6 +110,8 @@ public:
 
     void PrepareShadows(Scene* scene);
 
+    void RenderMaterialPreview(Mesh* mesh, VulkanFramebuffer* target, glm::mat4 model, glm::mat4 view, glm::mat4 proj, glm::vec3 camPos, VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao, glm::vec4 colorVal, float metallicVal, float roughnessVal, float aoVal);
+
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
