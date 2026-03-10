@@ -184,13 +184,12 @@ void EditorLayer::OnUpdate(float deltaTime) {
         Renderer::EndScene();
     } else {
         // --- VULKAN RENDERING ---
-
-        // --- RAY TRACING : On met à jour la position des objets pour les rayons ---
-        VulkanRenderer::Get()->UpdateTLAS(m_ActiveScene.get());
-
-
+        // 1. PHASE DE CALCUL / PRÉPARATION (Hors RenderPass)
+        VulkanRenderer::Get()->PreRender(m_ActiveScene.get());
         VulkanRenderer::Get()->PrepareShadows(m_ActiveScene.get());
-        Renderer::Clear(); // Démarre le carnet de commandes du Framebuffer
+
+        // 2. PHASE DE DESSIN (Ouvre le RenderPass via vkCmdBeginRenderPass interne)
+        Renderer::Clear(m_ActiveScene.get());
 
         // Calcul de la caméra de l'éditeur
         glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);

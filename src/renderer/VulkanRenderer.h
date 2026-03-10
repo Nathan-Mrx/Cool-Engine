@@ -65,7 +65,7 @@ public:
     void Init() override;
     void Shutdown() override;
 
-    void Clear() override;
+    void Clear(Scene* scene) override;
     void BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) override;
     void RenderScene(Scene* scene, int renderMode) override;
     void DrawGrid(bool enable) override;
@@ -82,7 +82,7 @@ public:
     void ShutdownImGui() override;
 
     void SetTargetFramebuffer(VulkanFramebuffer* fb) { m_TargetFramebuffer = fb; }
-    void BeginFrameIfNeeded();
+    void BeginFrameIfNeeded(Scene* scene = nullptr);
 
     static VulkanRenderer* Get();
 
@@ -136,6 +136,7 @@ public:
     void BuildTLAS(const std::vector<VkAccelerationStructureInstanceKHR>& instances);
 
     void UpdateTLAS(Scene* scene);
+    void PreRender(Scene* scene);
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
@@ -314,11 +315,10 @@ private:
 
     DeletionQueue m_MainDeletionQueue;
 
-    // --- RAY TRACING : TLAS ---
-    AccelerationStructure m_TLAS;
-    VkBuffer m_TLASInstancesBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_TLASInstancesMemory = VK_NULL_HANDLE;
-
+    // --- RAY TRACING : TLAS (APPROCHE AAA) ---
+    std::vector<AccelerationStructure> m_TLAS;
+    std::vector<VkBuffer> m_TLASInstancesBuffer;
+    std::vector<VkDeviceMemory> m_TLASInstancesMemory;
 #ifdef NDEBUG
     const bool m_EnableValidationLayers = false;
 #else

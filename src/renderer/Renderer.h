@@ -12,7 +12,7 @@ public:
     static void Shutdown();
 
     // --- REDIRECTIONS (Le pont entre le jeu et le GPU) ---
-    static void Clear() { s_Instance->Clear(); }
+    static void Clear(Scene* scene = nullptr) { s_Instance->Clear(scene); }
 
     static void BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
         s_Instance->BeginScene(view, projection, cameraPos);

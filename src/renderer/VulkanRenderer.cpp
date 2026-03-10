@@ -88,6 +88,11 @@ void VulkanRenderer::Init() {
     GeneratePrefilterCubemap();
     CreateSkyboxPipeline();
     CreateCommandBuffer();
+
+    m_TLAS.resize(MAX_FRAMES_IN_FLIGHT);
+    m_TLASInstancesBuffer.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+    m_TLASInstancesMemory.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+
     CreateSyncObjects();
 }
 
@@ -137,11 +142,13 @@ void VulkanRenderer::Shutdown() {
     m_SkyboxTexture = nullptr;
     m_BrdfLutTexture = nullptr;
 
-    if (m_TLASInstancesBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(m_Device, m_TLASInstancesBuffer, nullptr);
-        vkFreeMemory(m_Device, m_TLASInstancesMemory, nullptr);
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        if (m_TLASInstancesBuffer[i] != VK_NULL_HANDLE) {
+            vkDestroyBuffer(m_Device, m_TLASInstancesBuffer[i], nullptr);
+            vkFreeMemory(m_Device, m_TLASInstancesMemory[i], nullptr);
+        }
+        DestroyAccelerationStructure(m_TLAS[i]);
     }
-    DestroyAccelerationStructure(m_TLAS);
 
     // ==========================================================
     // 3. NETTOYAGE DES OMBRES (CSM)
@@ -883,8 +890,8 @@ void VulkanRenderer::CreateSyncObjects() {
 // ==============================================================================
 // --- ÉTAPE 10 : LA BOUCLE DE RENDU (Le dessin !) ---
 // ==============================================================================
-void VulkanRenderer::Clear() {
-    BeginFrameIfNeeded();
+void VulkanRenderer::Clear(Scene* scene) {
+    BeginFrameIfNeeded(scene);
 
     m_MainDeletionQueue.flush();
 
@@ -928,7 +935,8 @@ void VulkanRenderer::Clear() {
     }
 }
 
-void VulkanRenderer::BeginFrameIfNeeded() {
+// Tu devras rajouter le paramètre (Scene* scene) dans le .h et ici
+void VulkanRenderer::BeginFrameIfNeeded(Scene* scene) {
     if (!m_IsFrameStarted) {
         vkWaitForFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame], VK_TRUE, UINT64_MAX);
         vkAcquireNextImageKHR(m_Device, m_SwapChain, UINT64_MAX, m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &m_CurrentImageIndex);
@@ -940,6 +948,13 @@ void VulkanRenderer::BeginFrameIfNeeded() {
         vkBeginCommandBuffer(m_CommandBuffers[m_CurrentFrame], &beginInfo);
 
         m_IsFrameStarted = true;
+
+        // ====================================================================
+        // --- LE FIX MAGIQUE : LE TLAS EST CONSTRUIT ICI, SUR UN CARNET VIERGE
+        // ====================================================================
+        if (scene) {
+            UpdateTLAS(scene);
+        }
     }
 }
 
@@ -1114,6 +1129,24 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
             ubo.cascadeSplits = m_CurrentCascadeSplits;
 
             memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));
+
+            // NOUVEAU : On s'assure que le TLAS de ce Descriptor Set est à jour !
+            if (m_TLAS[m_CurrentFrame].handle != VK_NULL_HANDLE) {
+                VkWriteDescriptorSetAccelerationStructureKHR descriptorAS{};
+                descriptorAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+                descriptorAS.accelerationStructureCount = 1;
+                descriptorAS.pAccelerationStructures = &m_TLAS[m_CurrentFrame].handle;
+
+                VkWriteDescriptorSet write{};
+                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.pNext = &descriptorAS;
+                write.dstSet = mat.DescriptorSets[m_CurrentFrame];
+                write.dstBinding = 11;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+
+                vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
+            }
 
             vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     m_PipelineLayout, 0, 1, &mat.DescriptorSets[m_CurrentFrame], 0, nullptr);
@@ -1576,27 +1609,18 @@ void VulkanRenderer::CreateSceneRenderPass() {
 }
 
 void VulkanRenderer::CreateDescriptorSetLayout() {
-    // 1. Le contrat pour nos variables mathématiques (Couleurs, paramètres)
+    // 1. Le contrat UBO
     VkDescriptorSetLayoutBinding uboLayoutBinding{};
     uboLayoutBinding.binding = 0;
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // Utilisé par le shader de pixels
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // 2. Le contrat pour notre Texture Principale
-    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
-    samplerLayoutBinding.binding = 1;
-    samplerLayoutBinding.descriptorCount = 1;
-    samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    samplerLayoutBinding.pImmutableSamplers = nullptr;
-    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    // 3. On assemble le plan PBR
-    // On passe à 11 éléments (UBO + 10 textures)
-    std::array<VkDescriptorSetLayoutBinding, 11> bindings{};
+    // 2. On assemble le plan PBR (Maintenant 12 éléments !)
+    std::array<VkDescriptorSetLayoutBinding, 12> bindings{};
     bindings[0] = uboLayoutBinding;
 
-    // Boucle de 1 à 10 !
+    // Boucle de 1 à 10 pour les Textures
     for (int i = 1; i <= 10; i++) {
         bindings[i].binding = i;
         bindings[i].descriptorCount = 1;
@@ -1604,6 +1628,14 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
         bindings[i].pImmutableSamplers = nullptr;
         bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
+
+    // 3. NOUVEAU : Le contrat pour le TLAS
+    VkDescriptorSetLayoutBinding tlasLayoutBinding{};
+    tlasLayoutBinding.binding = 11;
+    tlasLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    tlasLayoutBinding.descriptorCount = 1;
+    tlasLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // On le lira dans triangle.frag
+    bindings[11] = tlasLayoutBinding;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1618,17 +1650,21 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
 }
 
 void VulkanRenderer::CreateDescriptorPool() {
-    // L'usine a maintenant 2 rayons : un pour les Buffers, un pour les Textures
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    // L'usine a maintenant 3 rayons : Buffers, Textures, et Acceleration Structures
+    std::array<VkDescriptorPoolSize, 3> poolSizes{};
+
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = 1000;
 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = 5000; // 5 textures par set * 1000 sets !
+    poolSizes[1].descriptorCount = 5000;
+
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    poolSizes[2].descriptorCount = 1000; // Un TLAS par Set
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // <--- On passe bien la taille du tableau (2)
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // Taille passe à 3 !
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = 1000;
 
@@ -1690,8 +1726,8 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         imageInfos[9].imageView = m_ShadowImageView;
         imageInfos[9].sampler = m_ShadowSampler;
 
-        // 11 Writes !
-        std::array<VkWriteDescriptorSet, 11> descriptorWrites{};
+        // 12 Writes !
+        std::array<VkWriteDescriptorSet, 12> descriptorWrites{};
 
         // UBO (Binding 0)
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1713,7 +1749,20 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
             descriptorWrites[t + 1].pImageInfo = &imageInfos[t];
         }
 
-        vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        // Écriture 11 : LE TLAS
+        VkWriteDescriptorSetAccelerationStructureKHR descriptorAS{};
+        descriptorAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        descriptorAS.accelerationStructureCount = 1;
+        // On donne l'adresse du TLAS global !
+        descriptorAS.pAccelerationStructures = &m_TLAS[i].handle;
+
+        descriptorWrites[11].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        // Obligatoire pour attacher une structure spéciale
+        descriptorWrites[11].pNext = &descriptorAS;
+        descriptorWrites[11].dstSet = mat.DescriptorSets[i];
+        descriptorWrites[11].dstBinding = 11; // La prise 11 !
+        descriptorWrites[11].descriptorCount = 1;
+        descriptorWrites[11].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 
         vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -3721,75 +3770,66 @@ void VulkanRenderer::DestroyAccelerationStructure(AccelerationStructure& as) {
 void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstanceKHR>& instances) {
     if (instances.empty()) return;
 
+    uint32_t frame = m_CurrentFrame; // L'astuce magique : On isole le travail de cette frame !
     VkDeviceSize bufferSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
 
-    // 1. On nettoie l'ancien buffer d'instances s'il existe
-    if (m_TLASInstancesBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(m_Device, m_TLASInstancesBuffer, nullptr);
-        vkFreeMemory(m_Device, m_TLASInstancesMemory, nullptr);
+    // 1. Plus besoin de WaitIdle ! La "Fence" de cette frame a déjà été validée par le moteur.
+    if (m_TLASInstancesBuffer[frame] != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_Device, m_TLASInstancesBuffer[frame], nullptr);
+        vkFreeMemory(m_Device, m_TLASInstancesMemory[frame], nullptr);
     }
 
-    // 2. On crée un buffer pour stocker nos instances (Visible par le CPU pour le mettre à jour)
     CreateBuffer(
         bufferSize,
         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        m_TLASInstancesBuffer, m_TLASInstancesMemory
+        m_TLASInstancesBuffer[frame], m_TLASInstancesMemory[frame]
     );
 
-    // 3. On copie nos instances dans ce buffer
     void* data;
-    vkMapMemory(m_Device, m_TLASInstancesMemory, 0, bufferSize, 0, &data);
+    vkMapMemory(m_Device, m_TLASInstancesMemory[frame], 0, bufferSize, 0, &data);
     memcpy(data, instances.data(), bufferSize);
-    vkUnmapMemory(m_Device, m_TLASInstancesMemory);
+    vkUnmapMemory(m_Device, m_TLASInstancesMemory[frame]);
 
-    // 4. On indique au GPU où se trouve ce tableau d'instances
     VkAccelerationStructureGeometryKHR geometry{};
     geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
     geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
     geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
     geometry.geometry.instances.arrayOfPointers = VK_FALSE;
-    geometry.geometry.instances.data.deviceAddress = GetBufferDeviceAddress(m_TLASInstancesBuffer);
+    geometry.geometry.instances.data.deviceAddress = GetBufferDeviceAddress(m_TLASInstancesBuffer[frame]);
 
-    // 5. Configuration de la construction du TLAS
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    // On l'optimise pour le rendu rapide, et on autorise les mises à jour futures !
     buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     buildInfo.geometryCount = 1;
     buildInfo.pGeometries = &geometry;
 
     uint32_t primitiveCount = static_cast<uint32_t>(instances.size());
 
-    // 6. Demande de la taille mémoire requise
     VkAccelerationStructureBuildSizesInfoKHR buildSizesInfo{};
     buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
     vkGetAccelerationStructureBuildSizesKHR(m_Device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &primitiveCount, &buildSizesInfo);
 
-    // 7. On détruit l'ancien TLAS s'il existe
-    if (m_TLAS.handle != VK_NULL_HANDLE) {
-        DestroyAccelerationStructure(m_TLAS);
+    if (m_TLAS[frame].handle != VK_NULL_HANDLE) {
+        DestroyAccelerationStructure(m_TLAS[frame]);
     }
 
-    // 8. Allocation du Buffer de l'Arbre Principal
     CreateBuffer(
         buildSizesInfo.accelerationStructureSize,
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        m_TLAS.buffer, m_TLAS.memory
+        m_TLAS[frame].buffer, m_TLAS[frame].memory
     );
 
-    // 9. Création de l'objet Vulkan TLAS
     VkAccelerationStructureCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    createInfo.buffer = m_TLAS.buffer;
+    createInfo.buffer = m_TLAS[frame].buffer;
     createInfo.size = buildSizesInfo.accelerationStructureSize;
     createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    vkCreateAccelerationStructureKHR(m_Device, &createInfo, nullptr, &m_TLAS.handle);
+    vkCreateAccelerationStructureKHR(m_Device, &createInfo, nullptr, &m_TLAS[frame].handle);
 
-    // 10. Buffer Brouillon (Scratch) requis par le GPU
     VkBuffer scratchBuffer;
     VkDeviceMemory scratchMemory;
     CreateBuffer(
@@ -3800,7 +3840,7 @@ void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstance
     );
 
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildInfo.dstAccelerationStructure = m_TLAS.handle;
+    buildInfo.dstAccelerationStructure = m_TLAS[frame].handle;
     buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(scratchBuffer);
 
     VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
@@ -3811,20 +3851,30 @@ void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstance
 
     const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[1] = { &buildRangeInfo };
 
-    // 11. CONSTRUCTION !
-    VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
+    // =================================================================================
+    // L'APPROCHE AAA : On injecte directement dans le flux du GPU en temps réel !
+    // Plus de SingleTimeCommands, le CPU ne s'arrête plus jamais d'avancer.
+    // =================================================================================
+    VkCommandBuffer cmdBuf = m_CommandBuffers[frame];
     vkCmdBuildAccelerationStructuresKHR(cmdBuf, 1, &buildInfo, pBuildRangeInfos);
-    EndSingleTimeCommands(cmdBuf);
 
-    // 12. Nettoyage du brouillon
-    vkDestroyBuffer(m_Device, scratchBuffer, nullptr);
-    vkFreeMemory(m_Device, scratchMemory, nullptr);
+    // Barrière de mémoire : on dit au Shader PBR "Attends que l'arbre soit construit avant de tirer un rayon !"
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 
-    // 13. Récupération de l'adresse finale du TLAS
+    // On délègue la destruction du brouillon au "Garbage Collector" car le GPU s'en sert encore !
+    m_MainDeletionQueue.push_function([=, device = m_Device]() {
+        vkDestroyBuffer(device, scratchBuffer, nullptr);
+        vkFreeMemory(device, scratchMemory, nullptr);
+    });
+
     VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
     addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-    addressInfo.accelerationStructure = m_TLAS.handle;
-    m_TLAS.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_Device, &addressInfo);
+    addressInfo.accelerationStructure = m_TLAS[frame].handle;
+    m_TLAS[frame].deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_Device, &addressInfo);
 }
 
 // ==============================================================================
@@ -3873,4 +3923,8 @@ void VulkanRenderer::UpdateTLAS(Scene* scene) {
     if (!instances.empty()) {
         BuildTLAS(instances);
     }
+}
+
+void VulkanRenderer::PreRender(Scene* scene) {
+    // On ne fait plus rien ici, on a trouvé une meilleure place.
 }

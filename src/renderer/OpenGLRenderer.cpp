@@ -491,7 +491,7 @@ void OpenGLRenderer::DrawGrid(bool show) {
     // ...
 }
 
-void OpenGLRenderer::Clear() {
+void OpenGLRenderer::Clear(Scene* scene) {
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     // AJOUT DU GL_STENCIL_BUFFER_BIT ICI :
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);

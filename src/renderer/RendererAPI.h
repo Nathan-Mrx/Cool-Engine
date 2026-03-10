@@ -24,7 +24,7 @@ public:
     virtual void Init() = 0;
     virtual void Shutdown() = 0;
     
-    virtual void Clear() = 0;
+    virtual void Clear(Scene* scene = nullptr) = 0;
     virtual void BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) = 0;
     virtual void RenderScene(Scene* scene, int renderMode) = 0;
     virtual void DrawGrid(bool enable) = 0;

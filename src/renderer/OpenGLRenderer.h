@@ -22,7 +22,7 @@ public:
     void DrawDebugBox(const glm::mat4& transform, const glm::vec3& color);
     void DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, const glm::vec3& right, const glm::vec3& up, const glm::vec3& color, const glm::mat4& view, const glm::mat4& projection, float length);
 
-    void Clear() override;
+    void Clear(Scene* scene) override;
 
     void BeginOutlineMask(const glm::mat4& transform);
     void BeginOutlineDraw(const glm::mat4& outlineTransform, const glm::vec3& color);
