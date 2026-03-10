@@ -21,21 +21,13 @@ layout(binding = 2) uniform sampler2D normalMap;
 layout(binding = 3) uniform sampler2D metallicMap;
 layout(binding = 4) uniform sampler2D roughnessMap;
 layout(binding = 5) uniform sampler2D aoMap;
-layout(binding = 6) uniform sampler2D hdrMap;  // <--- On le garde temporairement pour avoir un reflet !
-layout(binding = 7) uniform sampler2D brdfMap; // <--- Notre nouvelle LUT correctrice !
+
+layout(binding = 6) uniform samplerCube environmentMap;
+layout(binding = 7) uniform sampler2D brdfMap;
+layout(binding = 8) uniform samplerCube irradianceMap;
 
 const float PI = 3.14159265359;
-const vec2 invAtan = vec2(0.1591, 0.3183);
 
-// La fonction reste là tant qu'on n'a pas de vraie Cubemap
-vec2 SampleSphericalMap(vec3 v) {
-    vec2 uv = vec2(atan(v.y, v.x), asin(v.z));
-    uv *= invAtan;
-    uv += 0.5;
-    return uv;
-}
-
-// --- MATHS DE LA LUMIÈRE (Cook-Torrance) ---
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float a = roughness*roughness;
     float a2 = a*a;
@@ -101,36 +93,54 @@ void main() {
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
 
-    // 4. L'ÉQUATION PBR DIRECTE (Le Soleil)
-    float NDF = DistributionGGX(N, H, roughness);
-    float G   = GeometrySmith(N, V, L, roughness);
-    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
-
-    vec3 numerator    = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-    vec3 specular = numerator / denominator;
-
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
-
+    // ==========================================================
+    // 4. L'ÉQUATION PBR DIRECTE (Le Soleil uniquement !)
+    // ==========================================================
+    vec3 Lo = vec3(0.0);
     float NdotL = max(dot(N, L), 0.0);
-    vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
+
+    if (NdotL > 0.0) { // On éclaire que si la face regarde le soleil !
+        float NDF = DistributionGGX(N, H, roughness);
+        float G   = GeometrySmith(N, V, L, roughness);
+        vec3 F_dir = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        vec3 numerator    = NDF * G * F_dir;
+        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
+        vec3 specular = numerator / denominator;
+
+        vec3 kS_dir = F_dir;
+        vec3 kD_dir = vec3(1.0) - kS_dir;
+        kD_dir *= 1.0 - metallic;
+
+        Lo = (kD_dir * albedo / PI + specular) * radiance * NdotL;
+    }
 
     // ==========================================================
-    // 5. IMAGE BASED LIGHTING (Avec la BRDF LUT !)
+    // 5. IMAGE BASED LIGHTING (L'Ambiance indépendante !)
     // ==========================================================
+
+    // Le Fresnel Ambiant (Il utilise N et V, pas le soleil !)
+    vec3 F_ibl = fresnelSchlick(max(dot(N, V), 0.0), F0);
+    vec3 kS_ibl = F_ibl;
+    vec3 kD_ibl = vec3(1.0) - kS_ibl;
+    kD_ibl *= 1.0 - metallic;
+
+    // Multiplicateur pour booster le ciel si le HDR est trop terne
+    float iblIntensity = 2.0;
+
+    // Lumière diffuse ambiante
+    vec3 irradiance = texture(irradianceMap, N).rgb;
+    vec3 diffuseIBL = irradiance * albedo * iblIntensity;
+
+    // Lumière spéculaire (Reflets bruts temporaires)
     vec3 R = reflect(-V, N);
-    vec2 envUV = SampleSphericalMap(normalize(R));
-    vec3 envColor = texture(hdrMap, envUV).rgb;
-
-    // La lecture de notre nouvelle texture magique :
+    vec3 envColor = texture(environmentMap, R).rgb * iblIntensity;
     vec2 brdf = texture(brdfMap, vec2(max(dot(N, V), 0.0), roughness)).rg;
+    vec3 specularIBL = envColor * (F_ibl * brdf.x + brdf.y);
 
-    vec3 specularIBL = envColor * (F0 * brdf.x + brdf.y) * (1.0 - roughness);
-    vec3 diffuseIBL = envColor * albedo * 0.2;
+    // L'Ambiance n'est plus jamais détruite par le soleil !
+    vec3 ambient = (kD_ibl * diffuseIBL + specularIBL) * ao;
 
-    vec3 ambient = (diffuseIBL * kD + specularIBL) * ao;
     // ==========================================================
 
     vec3 color = ambient + Lo;

@@ -145,6 +145,9 @@ private:
 
     void GenerateBRDFLUT();
 
+    void GenerateEnvironmentCubemap();
+    void GenerateIrradianceCubemap();
+
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
     VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
@@ -220,6 +223,9 @@ private:
     VulkanTexture* m_BrdfLutTexture = nullptr;
 
     std::vector<VulkanTexture*> m_TrackedTextures;
+
+    VulkanTexture* m_EnvironmentCubemap = nullptr;
+    VulkanTexture* m_IrradianceCubemap = nullptr;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {

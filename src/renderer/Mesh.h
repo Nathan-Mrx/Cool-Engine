@@ -22,6 +22,9 @@ public:
     unsigned int GetVAO() const { return m_VAO; }
     unsigned int GetIndicesCount() const { return (unsigned int)m_Indices.size(); }
 
+    VkBuffer GetVertexBuffer() const { return m_VertexBuffer; }
+    VkBuffer GetIndexBuffer() const { return m_IndexBuffer; }
+
 private:
     void SetupMesh();
     void SetupVulkanMesh();
