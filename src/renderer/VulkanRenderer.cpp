@@ -75,6 +75,18 @@ void VulkanRenderer::Init() {
     CreateSkyboxPipeline();
 
     CreateCommandBuffer();
+
+    // Chargement des fonctions KHR pour l'Acceleration Structure
+    vkCreateAccelerationStructureKHR = (PFN_vkCreateAccelerationStructureKHR)vkGetDeviceProcAddr(m_Device, "vkCreateAccelerationStructureKHR");
+    vkDestroyAccelerationStructureKHR = (PFN_vkDestroyAccelerationStructureKHR)vkGetDeviceProcAddr(m_Device, "vkDestroyAccelerationStructureKHR");
+    vkGetAccelerationStructureBuildSizesKHR = (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetDeviceProcAddr(m_Device, "vkGetAccelerationStructureBuildSizesKHR");
+    vkGetAccelerationStructureDeviceAddressKHR = (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetDeviceProcAddr(m_Device, "vkGetAccelerationStructureDeviceAddressKHR");
+    vkCmdBuildAccelerationStructuresKHR = (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetDeviceProcAddr(m_Device, "vkCmdBuildAccelerationStructuresKHR");
+
+    if (!vkCreateAccelerationStructureKHR || !vkCmdBuildAccelerationStructuresKHR) {
+        throw std::runtime_error("Erreur fatale: Impossible de charger les fonctions KHR pour le Ray Tracing !");
+    }
+
     CreateSyncObjects();
 }
 
@@ -427,12 +439,12 @@ bool VulkanRenderer::FindQueueFamilies(VkPhysicalDevice device, uint32_t& outGra
 }
 
 void VulkanRenderer::CreateLogicalDevice() {
-    // 1. On trouve les numéros des portes (Souvent c'est la même porte pour les deux sur les RTX)
+    // 1. On trouve les numéros des portes
     if (!FindQueueFamilies(m_PhysicalDevice, m_GraphicsQueueFamilyIndex, m_PresentQueueFamilyIndex)) {
         throw std::runtime_error("Erreur: GPU incompatible, impossible de trouver les files d'attente requises !");
     }
 
-    // 2. On configure la création des files d'attente (on utilise un 'set' pour éviter de créer deux fois la même file si Graphics = Present)
+    // 2. On configure la création des files d'attente
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
     std::set<uint32_t> uniqueQueueFamilies = { m_GraphicsQueueFamilyIndex, m_PresentQueueFamilyIndex };
 
@@ -446,51 +458,49 @@ void VulkanRenderer::CreateLogicalDevice() {
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
-    // 1. Tes features de base classiques (Garde ce que tu as déjà activé ici, ex: Anisotropy)
+    // 3. Les features de base classiques
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
-    // deviceFeatures.fillModeNonSolid = VK_TRUE; // (Si tu as le Wireframe d'activé)
-
-    // 2. Les Features Ray Query
-    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
-    rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-    rayQueryFeatures.rayQuery = VK_TRUE;
-
-    // 3. Les Features d'Acceleration Structure (Relié à Ray Query via pNext)
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelStructFeatures{};
-    accelStructFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-    accelStructFeatures.accelerationStructure = VK_TRUE;
-    accelStructFeatures.pNext = &rayQueryFeatures;
 
     // 4. Les Features Vulkan 1.2 (Vital : Buffer Device Address)
-    // Le RT a besoin d'adresses mémoires brutes (pointeurs GPU) pour trouver les vertices
     VkPhysicalDeviceVulkan12Features vulkan12Features{};
     vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     vulkan12Features.bufferDeviceAddress = VK_TRUE;
-    vulkan12Features.descriptorIndexing = VK_TRUE; // La DDGI adorera le Descriptor Indexing
-    vulkan12Features.pNext = &accelStructFeatures;
+    vulkan12Features.descriptorIndexing = VK_TRUE;
 
-    // 5. La capsule globale qui contient TOUTES les features
+    // 5. Les Features d'Acceleration Structure
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelStructFeatures{};
+    accelStructFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    accelStructFeatures.accelerationStructure = VK_TRUE;
+    accelStructFeatures.pNext = &vulkan12Features; // On attache la 1.2 ici
+
+    // 6. Les Features Ray Query
+    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+    rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    rayQueryFeatures.rayQuery = VK_TRUE;
+    rayQueryFeatures.pNext = &accelStructFeatures; // On attache l'Accel ici
+
+    // 7. La capsule globale
     VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
     physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     physicalDeviceFeatures2.features = deviceFeatures;
-    physicalDeviceFeatures2.pNext = &vulkan12Features;
+    physicalDeviceFeatures2.pNext = &rayQueryFeatures; // Le début de la chaîne !
 
-    // 6. Création du Device
+    // 8. Création du Device
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
 
-    // ATTENTION : pEnabledFeatures DOIT être à nullptr quand on utilise pNext pour les features !
+    // LE FIX EST LÀ : pEnabledFeatures = nullptr et pNext pointe vers la chaîne
     createInfo.pEnabledFeatures = nullptr;
-    createInfo.pNext = &physicalDeviceFeatures2; // <--- On branche la chaîne ici !
+    createInfo.pNext = &physicalDeviceFeatures2;
 
-    // On active les extensions (qui contiennent maintenant le RT)
+    // On active les extensions complètes (Swapchain + Ray Tracing)
     createInfo.enabledExtensionCount = static_cast<uint32_t>(m_DeviceExtensions.size());
     createInfo.ppEnabledExtensionNames = m_DeviceExtensions.data();
 
-    // Layers de validation (si applicables)
+    // Validation Layers
     if (m_EnableValidationLayers) {
         createInfo.enabledLayerCount = static_cast<uint32_t>(m_ValidationLayers.size());
         createInfo.ppEnabledLayerNames = m_ValidationLayers.data();
@@ -498,27 +508,12 @@ void VulkanRenderer::CreateLogicalDevice() {
         createInfo.enabledLayerCount = 0;
     }
 
+    // 9. L'appel système UNIQUE !
     if (vkCreateDevice(m_PhysicalDevice, &createInfo, nullptr, &m_Device) != VK_SUCCESS) {
-        throw std::runtime_error("Erreur: Impossible de créer le Logical Device avec Ray Tracing !");
+        throw std::runtime_error("Erreur fatale: Impossible de créer le Logical Device avec Ray Tracing !");
     }
 
-    const std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = deviceExtensions.data();
-
-    if (m_EnableValidationLayers) {
-        createInfo.enabledLayerCount = static_cast<uint32_t>(m_ValidationLayers.size());
-        createInfo.ppEnabledLayerNames = m_ValidationLayers.data();
-    } else {
-        createInfo.enabledLayerCount = 0;
-    }
-
-    // 5. L'appel système !
-    if (vkCreateDevice(m_PhysicalDevice, &createInfo, nullptr, &m_Device) != VK_SUCCESS) {
-        throw std::runtime_error("Erreur fatale: Impossible de creer le Device Logique !");
-    }
-
-    // 6. On récupère les "poignées" des files d'attente
+    // 10. On récupère les "poignées" des files d'attente
     vkGetDeviceQueue(m_Device, m_GraphicsQueueFamilyIndex, 0, &m_GraphicsQueue);
     vkGetDeviceQueue(m_Device, m_PresentQueueFamilyIndex, 0, &m_PresentQueue);
 
@@ -1446,6 +1441,15 @@ void VulkanRenderer::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, V
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties);
 
+    // --- LE FIX RAY TRACING EST ICI ---
+    // Si on demande une Device Address, on doit l'autoriser à l'allocation !
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+        allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        allocInfo.pNext = &allocFlagsInfo;
+    }
+
     if (vkAllocateMemory(m_Device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
         throw std::runtime_error("Echec de l'allocation de la memoire du buffer!");
     }
@@ -1488,6 +1492,13 @@ void VulkanRenderer::TransitionImageLayout(VkImage image, VkFormat format, VkIma
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    // (Dans la fonction TransitionImageLayout, à rajouter :)
+    else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     } else {
         throw std::invalid_argument("Layout transition non supportee !");
     }
@@ -2143,8 +2154,6 @@ void VulkanRenderer::GenerateBRDFLUT() {
     vkCmdEndRenderPass(cmdBuf);
     EndSingleTimeCommands(cmdBuf);
 
-    TransitionImageLayout(m_BrdfLutTexture->Image, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
-
     // 6. Nettoyage de l'usine éphémère (On garde juste l'image générée)
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -2741,8 +2750,6 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
 
     EndSingleTimeCommands(cmdBuf);
 
-    TransitionImageLayout(m_IrradianceCubemap->Image, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 6);
-
     // 5. NETTOYAGE
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -3063,8 +3070,6 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     }
 
     EndSingleTimeCommands(cmdBuf);
-
-    TransitionImageLayout(m_PrefilterCubemap->Image, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, mipLevels, 6);
 
     // 5. NETTOYAGE
     vkDestroyPipeline(m_Device, pipeline, nullptr);
@@ -3586,4 +3591,11 @@ void VulkanRenderer::InvalidateEntityMaterial(entt::entity entityID) {
             // ils sont rattachés au m_DescriptorPool qui est détruit globalement à la fin.
         });
     }
+}
+
+VkDeviceAddress VulkanRenderer::GetBufferDeviceAddress(VkBuffer buffer) {
+    VkBufferDeviceAddressInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    info.buffer = buffer;
+    return vkGetBufferDeviceAddress(m_Device, &info);
 }

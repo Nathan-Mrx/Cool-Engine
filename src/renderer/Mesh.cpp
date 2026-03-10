@@ -75,9 +75,13 @@ void Mesh::SetupVulkanMesh() {
     vkUnmapMemory(device, stagingVertexMemory);
 
     // Le Vrai Buffer Vidéo (Cible)
-    vkRenderer->CreateBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                             m_VertexBuffer, m_VertexBufferMemory);
+    vkRenderer->CreateBuffer(vertexBufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        m_VertexBuffer, m_VertexBufferMemory);
 
     // On ordonne au GPU de transférer du Sas vers la VRAM
     VkCommandBuffer vertexCmd = vkRenderer->BeginSingleTimeCommands();
@@ -105,9 +109,13 @@ void Mesh::SetupVulkanMesh() {
     memcpy(indexData, m_Indices.data(), (size_t)indexBufferSize);
     vkUnmapMemory(device, stagingIndexMemory);
 
-    vkRenderer->CreateBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                             m_IndexBuffer, m_IndexBufferMemory);
+    vkRenderer->CreateBuffer(indexBufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        m_IndexBuffer, m_IndexBufferMemory);
 
     VkCommandBuffer indexCmd = vkRenderer->BeginSingleTimeCommands();
     VkBufferCopy indexCopyRegion{};

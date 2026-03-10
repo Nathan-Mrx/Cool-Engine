@@ -113,13 +113,14 @@ public:
     void RenderMaterialPreview(Mesh* mesh, VulkanFramebuffer* target, glm::mat4 model, glm::mat4 view, glm::mat4 proj, glm::vec3 camPos, VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao, glm::vec4 colorVal, float metallicVal, float roughnessVal, float aoVal);
 
     void InvalidateEntityMaterial(entt::entity entityID);
+    VkDeviceAddress GetBufferDeviceAddress(VkBuffer buffer);
 
 
     const std::vector<const char*> m_DeviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,   // Pour construire les BVH (TLAS / BLAS)
-        VK_KHR_RAY_QUERY_EXTENSION_NAME,                // Pour tirer des rayons depuis le Compute Shader
-        VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME  // Requis par l'Acceleration Structure
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+        VK_KHR_RAY_QUERY_EXTENSION_NAME,
+        VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME
     };
 
 private:
@@ -289,6 +290,13 @@ private:
             deletors.clear();
         }
     };
+
+    // --- POINTEURS DE FONCTIONS RAY TRACING (KHR) ---
+    PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
+    PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR;
+    PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR;
+    PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
 
     DeletionQueue m_MainDeletionQueue;
 
