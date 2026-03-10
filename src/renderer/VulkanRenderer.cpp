@@ -4190,12 +4190,20 @@ void VulkanRenderer::CreateDDGIPipeline() {
     envMapBinding.descriptorCount = 1;
     envMapBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {storageBinding, envMapBinding};
+    VkDescriptorSetLayoutBinding tlasBinding{};
+    tlasBinding.binding = 2; // <-- Prise N°2
+    tlasBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    tlasBinding.descriptorCount = 1;
+    tlasBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 3> bindings = {storageBinding, envMapBinding, tlasBinding}; // Passe à 3 !
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
+
+
 
     vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_DDGIDescriptorSetLayout);
 
@@ -4257,6 +4265,8 @@ void VulkanRenderer::ComputeDDGI(DDGIVolume* volume) {
         storageImageInfo.imageView = volume->GetIrradianceTexture()->View;
         storageImageInfo.sampler = volume->GetIrradianceTexture()->Sampler;
 
+
+
         VkWriteDescriptorSet writeStorage{};
         writeStorage.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeStorage.dstSet = m_DDGIDescriptorSet;
@@ -4280,7 +4290,21 @@ void VulkanRenderer::ComputeDDGI(DDGIVolume* volume) {
         writeEnv.descriptorCount = 1;
         writeEnv.pImageInfo = &envMapInfo;
 
-        std::array<VkWriteDescriptorSet, 2> writes = {writeStorage, writeEnv};
+        // Dans ComputeDDGI, juste avant la création du tableau 'writes' :
+        VkWriteDescriptorSetAccelerationStructureKHR descriptorAS{};
+        descriptorAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        descriptorAS.accelerationStructureCount = 1;
+        descriptorAS.pAccelerationStructures = &m_TLAS[m_CurrentFrame].handle;
+
+        VkWriteDescriptorSet writeTLAS{};
+        writeTLAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeTLAS.pNext = &descriptorAS;
+        writeTLAS.dstSet = m_DDGIDescriptorSet;
+        writeTLAS.dstBinding = 2;
+        writeTLAS.descriptorCount = 1;
+        writeTLAS.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+
+        std::array<VkWriteDescriptorSet, 3> writes = {writeStorage, writeEnv, writeTLAS}; // Passe à 3 !
         vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 

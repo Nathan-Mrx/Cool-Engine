@@ -1,24 +1,17 @@
 #version 460 core
+#extension GL_EXT_ray_query : require
 // VULKAN
 
-// 1 groupe de travail = 8x8 pixels = 1 sonde
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-// Set 0, Binding 0 : Notre texture d'Irradiance en mode "Storage"
 layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outIrradiance;
-
-// Set 0, Binding 1 : La Skybox (pour le premier test de DDGI)
 layout(set = 0, binding = 1) uniform samplerCube uEnvironmentMap;
+layout(set = 0, binding = 2) uniform accelerationStructureEXT tlas; // NOTRE ARBRE RT !
 
-// Push Constants : Le moyen ultra-rapide d'envoyer des petites données en Vulkan
 layout(push_constant) uniform DDGIPushConstants {
     ivec3 uProbeCount;
 } pc;
 
-// =========================================================================
-// --- MATHÉMATIQUES DDGI : LE DÉPLIAGE OCTAÉDRIQUE ---
-// Transforme une coordonnée 2D (le pixel du carré) en une direction 3D
-// =========================================================================
 vec3 OctDecode(vec2 f) {
     f = f * 2.0 - 1.0;
     vec3 n = vec3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
@@ -29,30 +22,44 @@ vec3 OctDecode(vec2 f) {
 }
 
 void main() {
-    // 1. Quelle sonde est-on en train de calculer ?
     ivec3 probeCoord = ivec3(gl_WorkGroupID.x, gl_WorkGroupID.y, gl_WorkGroupID.z);
-
-    // 2. Conversion en index 1D
     int probesPerRow = pc.uProbeCount.x * pc.uProbeCount.y;
     int probeIndex = probeCoord.x + probeCoord.y * pc.uProbeCount.x + probeCoord.z * probesPerRow;
 
-    // 3. Où se trouve le coin de cette sonde dans notre image géante 2D ?
     int gridX = probeIndex % probesPerRow;
     int gridY = probeIndex / probesPerRow;
-
-    // 4. Quel pixel exact est traité par ce thread GPU ?
     ivec2 pixelCoord = ivec2(gridX * 8 + gl_LocalInvocationID.x, gridY * 8 + gl_LocalInvocationID.y);
 
-    // =========================================================================
-    // --- LE CALCUL DE LA LUMIÈRE ---
-    // =========================================================================
     vec2 octUV = (vec2(gl_LocalInvocationID.xy) + 0.5) / 8.0;
     vec3 rayDir = OctDecode(octUV);
 
-    // POUR L'INSTANT (Étape 1 du test Vulkan) : On lit juste la Skybox !
-    // Plus tard, on lira les résultats du vrai Ray Tracing ici.
+    // Position réelle de la sonde dans le monde (On simule l'espacement de 200.0)
+    vec3 startPos = vec3(-1000.0);
+    vec3 probeWorldPos = startPos + vec3(probeCoord) * 200.0;
+
+    // =========================================================
+    // --- LE VRAI RAY TRACING MATÉRIEL ---
+    // =========================================================
+    // =========================================================
+    // --- BYPASS DU RAY TRACING POUR TESTER LE COMPUTE ---
+    // =========================================================
+    /*
+    float tMin = 0.1;
+    float tMax = 10000.0;
+    rayQueryEXT rayQuery;
+    rayQueryInitializeEXT(rayQuery, tlas, gl_RayFlagsOpaqueEXT, 0xFF, probeWorldPos, tMin, rayDir, tMax);
+    while(rayQueryProceedEXT(rayQuery)) {}
+
+    vec3 incomingLight = vec3(0.0);
+    if (rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionTriangleEXT) {
+        incomingLight = vec3(0.01);
+    } else {
+        incomingLight = texture(uEnvironmentMap, rayDir).rgb;
+    }
+    */
+
+    // ON FORCE LA LECTURE DE LA SKYBOX :
     vec3 incomingLight = texture(uEnvironmentMap, rayDir).rgb;
 
-    // On écrit le résultat dans l'image géante !
     imageStore(outIrradiance, pixelCoord, vec4(incomingLight, 1.0));
 }
