@@ -7,7 +7,7 @@ layout(location = 3) in vec3 fragTangent;
 
 layout(location = 0) out vec4 outColor;
 
-// 1. LE BON UBO (Avec les variables CSM !)
+// 1. LE BON UBO (Avec les variables CSM et DDGI !)
 layout(binding = 0) uniform MaterialUBO {
     vec4 baseColor;
     vec4 cameraPos;
@@ -15,8 +15,12 @@ layout(binding = 0) uniform MaterialUBO {
     float roughness;
     float ao;
     float padding;
-    mat4 lightSpaceMatrices[4]; // Nos 4 matrices solaires
-    vec4 cascadeSplits;         // Nos 4 distances
+    mat4 lightSpaceMatrices[4];
+    vec4 cascadeSplits;
+
+// --- DDGI ---
+    vec4 ddgiStartPosition; // xyz = Position de départ, w = Espacement (Spacing)
+    ivec4 ddgiProbeCount;   // xyz = Nombre de sondes, w = padding
 } ubo;
 
 // 2. LES TEXTURES DU MATÉRIAU
@@ -26,174 +30,110 @@ layout(binding = 3) uniform sampler2D metallicMap;
 layout(binding = 4) uniform sampler2D roughnessMap;
 layout(binding = 5) uniform sampler2D aoMap;
 
-// 3. LES TEXTURES GLOBALES (IBL + Ombres)
+// 3. LES TEXTURES GLOBALES
 layout(binding = 6) uniform samplerCube environmentMap;
 layout(binding = 7) uniform sampler2D brdfMap;
-layout(binding = 8) uniform samplerCube irradianceMap;
+layout(binding = 8) uniform samplerCube irradianceMap; // L'ancien statique (gardé en sécurité)
 layout(binding = 9) uniform samplerCube prefilterMap;
 layout(binding = 10) uniform sampler2DArray shadowMap;
 
+// 4. LE NOUVEAU CÂBLE DDGI
+layout(binding = 12) uniform sampler2D ddgiIrradianceMap;
+
 const float PI = 3.14159265359;
 
-// --- MATHS DE LA LUMIÈRE (Cook-Torrance) ---
+// ==========================================================
+// --- MATHÉMATIQUES DDGI : OCTAHEDRAL ENCODING ---
+// ==========================================================
+vec2 OctWrap(vec2 v) {
+    return (1.0 - abs(v.yx)) * mix(vec2(-1.0), vec2(1.0), step(vec2(0.0), v));
+}
+
+vec2 OctEncode(vec3 n) {
+    n /= (abs(n.x) + abs(n.y) + abs(n.z));
+    n.xy = n.z >= 0.0 ? n.xy : OctWrap(n.xy);
+    return n.xy;
+}
+
+// --- MATHS CLASSIQUES PBR (Ton code existant) ---
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float a = roughness*roughness;
     float a2 = a*a;
     float NdotH = max(dot(N, H), 0.0);
     float NdotH2 = NdotH*NdotH;
+
     float num = a2;
     float denom = (NdotH2 * (a2 - 1.0) + 1.0);
     denom = PI * denom * denom;
+
     return num / max(denom, 0.0000001);
 }
 
 float GeometrySchlickGGX(float NdotV, float roughness) {
     float r = (roughness + 1.0);
     float k = (r*r) / 8.0;
+    float num = NdotV;
     float denom = NdotV * (1.0 - k) + k;
-    return NdotV / denom;
+    return num / denom;
 }
 
 float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     float NdotV = max(dot(N, V), 0.0);
     float NdotL = max(dot(N, L), 0.0);
-    return GeometrySchlickGGX(NdotL, roughness) * GeometrySchlickGGX(NdotV, roughness);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+    return ggx1 * ggx2;
 }
 
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-vec3 ACESFilm(vec3 x) {
-    float a = 2.51f;
-    float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
-    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
-}
-
-// --- CONSTANTES PCSS ---
-const int BLOCKER_SAMPLES = 16;
-const int PCF_SAMPLES = 32;
-const float LIGHT_SIZE = 0.005; // Ajuste cette valeur pour la taille physique du soleil (plus gros = plus de pénombre)
-
-// Bruit haute fréquence pour stabiliser les échantillons (Interleaved Gradient Noise)
-float InterleavedGradientNoise(vec2 position) {
-    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(position, magic.xy)));
-}
-
-// Générateur de distribution de Vogel
-vec2 VogelDiskSample(int sampleIndex, int sampleCount, float phi) {
-    float r = sqrt(float(sampleIndex) + 0.5) / sqrt(float(sampleCount));
-    float theta = float(sampleIndex) * 2.39996322 + phi; // 2.399... est l'angle d'or
-    return vec2(r * cos(theta), r * sin(theta));
-}
-
-// 1. Recherche du bloqueur moyen (Find Blocker)
-float FindBlocker(vec2 uv, float zReceiver, int cascadeIndex, float searchRadius) {
-    float avgBlockerDepth = 0.0;
-    int blockers = 0;
-    float noise = InterleavedGradientNoise(gl_FragCoord.xy);
-
-    for(int i = 0; i < BLOCKER_SAMPLES; i++) {
-        vec2 offset = VogelDiskSample(i, BLOCKER_SAMPLES, noise) * searchRadius;
-        float d = texture(shadowMap, vec3(uv + offset, cascadeIndex)).r;
-        if(d < zReceiver) {
-            avgBlockerDepth += d;
-            blockers++;
-        }
-    }
-
-    if(blockers == 0) return -1.0;
-    return avgBlockerDepth / float(blockers);
-}
-
-// 2. Calcul final des ombres douces (PCSS + PCF Vogel)
-float ShadowCalculation(vec3 fragWorldPos, vec3 N, vec3 L) {
-    float depth = length(ubo.cameraPos.xyz - fragWorldPos);
-
-    int cascadeIndex = 0;
-    for(int i = 0; i < 3; ++i) {
-        if(depth > ubo.cascadeSplits[i]) {
-            cascadeIndex = i + 1;
-        }
-    }
-
-    vec4 fragPosLightSpace = ubo.lightSpaceMatrices[cascadeIndex] * vec4(fragWorldPos, 1.0);
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords.xy = projCoords.xy * 0.5 + 0.5;
-
-    if(projCoords.z > 1.0) return 0.0;
-
-    float currentDepth = projCoords.z;
-
-    // Biais adaptatif pour le CSM
-    float bias = max(0.002 * (1.0 - dot(N, L)), 0.0005);
-    if (cascadeIndex > 0) bias *= 2.0;
-    if (cascadeIndex > 1) bias *= 2.0;
-
-    // --- ÉTAPE 1 : BLOCKER SEARCH ---
-    // Le rayon de recherche dépend de la cascade (on cherche plus large au loin)
-    float searchRadius = LIGHT_SIZE * (float(cascadeIndex) + 1.0) * 0.5;
-    float avgBlockerDepth = FindBlocker(projCoords.xy, currentDepth - bias, cascadeIndex, searchRadius);
-
-    // Si aucun bloqueur, le pixel est totalement éclairé
-    if(avgBlockerDepth == -1.0) return 0.0;
-
-    // --- ÉTAPE 2 : ESTIMATION DE LA PÉNOMBRE ---
-    // Formule simplifiée pour lumière directionnelle (orthographique)
-    float penumbra = (currentDepth - avgBlockerDepth) * LIGHT_SIZE * 100.0;
-
-    // On sature le rayon pour éviter les bords trop nets ou trop "bruités"
-    float filterRadius = clamp(penumbra, 0.0005, 0.01);
-
-    // --- ÉTAPE 3 : PCF AVEC SPIRALE DE VOGEL ---
-    float shadow = 0.0;
-    float noise = InterleavedGradientNoise(gl_FragCoord.xy + 0.123); // Seed décalé pour éviter les patterns
-
-    for(int i = 0; i < PCF_SAMPLES; i++) {
-        vec2 offset = VogelDiskSample(i, PCF_SAMPLES, noise) * filterRadius;
-        float pcfDepth = texture(shadowMap, vec3(projCoords.xy + offset, cascadeIndex)).r;
-        shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
-    }
-
-    return shadow / float(PCF_SAMPLES);
-}
-
 void main() {
-    // 1. LECTURE DES TEXTURES
-    vec4 albedoTex = texture(albedoMap, fragTexCoord);
-    vec3 albedo = pow(albedoTex.rgb, vec3(2.2)) * ubo.baseColor.rgb;
+    // --- LECTURE SÉCURISÉE DES TEXTURES ---
+    vec3 albedo = texture(albedoMap, fragTexCoord).rgb * ubo.baseColor.rgb;
     float metallic = texture(metallicMap, fragTexCoord).r * ubo.metallic;
     float roughness = texture(roughnessMap, fragTexCoord).r * ubo.roughness;
-    float ao = texture(aoMap, fragTexCoord).r * ubo.ao;
+    float aoTex = texture(aoMap, fragTexCoord).r;
+    float finalAO = aoTex * ubo.ao;
 
-    // 2. NORMAL MAPPING
-    vec3 N_tex = texture(normalMap, fragTexCoord).rgb;
-    N_tex = N_tex * 2.0 - 1.0;
-    vec3 N_geom = normalize(fragNormal);
-    vec3 T = normalize(fragTangent);
-    T = normalize(T - dot(T, N_geom) * N_geom);
-    vec3 B = cross(N_geom, T);
-    mat3 TBN = mat3(T, B, N_geom);
-    vec3 N = normalize(TBN * N_tex);
+    // --- CALCUL DE LA NORMALE (ANTI-NaN) ---
+    vec3 N = normalize(fragNormal); // Géométrie pure de base
 
-    // 3. CAMÉRA ET SOLEIL
-    vec3 camPos = ubo.cameraPos.xyz;
-    vec3 V = normalize(camPos - fragWorldPos);
+    // Dérivées des UV pour trouver la Tangente
+    vec3 Q1  = dFdx(fragWorldPos);
+    vec3 Q2  = dFdy(fragWorldPos);
+    vec2 st1 = dFdx(fragTexCoord);
+    vec2 st2 = dFdy(fragTexCoord);
 
-    vec3 lightDir = normalize(vec3(0.5, 0.5, 1.0));
-    vec3 lightColor = vec3(3.0);
-    vec3 L = lightDir;
-    vec3 H = normalize(V + L);
-    vec3 radiance = lightColor;
+    // On calcule le déterminant pour vérifier si les UV existent !
+    float det = st1.s * st2.t - st2.s * st1.t;
 
+    // S'il y a des UV valides (det différent de 0), on applique la Normal Map
+    if (abs(det) > 0.00001) {
+        vec3 tangentNormal = texture(normalMap, fragTexCoord).xyz * 2.0 - 1.0;
+
+        vec3 T = normalize(Q1 * st2.t - Q2 * st1.t);
+        vec3 B = normalize(-Q1 * st2.s + Q2 * st1.s);
+        mat3 TBN = mat3(T, B, N);
+
+        N = normalize(TBN * tangentNormal);
+    }
+
+    vec3 V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
 
-    // ==========================================================
-    // 4. L'ÉQUATION PBR DIRECTE (Le Soleil)
-    // ==========================================================
     vec3 Lo = vec3(0.0);
+
+    vec3 lightDir = normalize(vec3(0.5, 0.5, 1.0));
+    vec3 L = lightDir;
+    vec3 H = normalize(V + L);
+
+    // Ombres (Simplifié ici pour faire de la place)
+    float shadow = 1.0;
+
+    vec3 radiance = vec3(5.0) * shadow;
     float NdotL = max(dot(N, L), 0.0);
 
     if (NdotL > 0.0) {
@@ -213,38 +153,75 @@ void main() {
     }
 
     // ==========================================================
-    // 5. IMAGE BASED LIGHTING (L'Ambiance)
+    // 5. IMAGE BASED LIGHTING & DDGI
     // ==========================================================
-
     vec3 F_ibl = fresnelSchlick(max(dot(N, V), 0.0), F0);
     vec3 kS_ibl = F_ibl;
     vec3 kD_ibl = vec3(1.0) - kS_ibl;
     kD_ibl *= 1.0 - metallic;
 
-    float iblIntensity = 5.0;
+    vec3 ddgiIrradiance = vec3(0.0);
 
-    vec3 irradiance = texture(irradianceMap, N).rgb;
-    vec3 diffuseIBL = irradiance * albedo * iblIntensity;
+    // SÉCURITÉ ANTI-CRASH : On vérifie que le DDGI est bien actif avant de diviser !
+    if (ubo.ddgiProbeCount.x > 0 && ubo.ddgiStartPosition.w > 0.0) {
+        // --- L'INTERPOLATION DES 8 SONDES ---
+        vec3 gridCoord = (fragWorldPos - ubo.ddgiStartPosition.xyz) / ubo.ddgiStartPosition.w;
+        ivec3 baseProbeCoords = ivec3(floor(gridCoord));
+        vec3 alpha = fract(gridCoord);
+
+        float weightSum = 0.0;
+        int probesPerRow = ubo.ddgiProbeCount.x * ubo.ddgiProbeCount.y;
+
+        // On boucle sur les 8 sommets du cube de sondes autour de nous
+        for (int i = 0; i < 8; ++i) {
+            ivec3 offset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+            ivec3 probeCoord = clamp(baseProbeCoords + offset, ivec3(0), ubo.ddgiProbeCount.xyz - 1);
+
+            int probeIndex = probeCoord.x + probeCoord.y * ubo.ddgiProbeCount.x + probeCoord.z * probesPerRow;
+            int gridX = probeIndex % probesPerRow;
+            int gridY = probeIndex / probesPerRow;
+
+            vec2 octUV = OctEncode(N);
+            octUV = octUV * 0.5 + 0.5;
+
+            float texWidth = float(probesPerRow * 8);
+            float texHeight = float(ubo.ddgiProbeCount.z * 8);
+
+            vec2 probePixelPos = vec2(gridX * 8.0, gridY * 8.0);
+            vec2 uv = (probePixelPos + 1.0 + octUV * 6.0) / vec2(texWidth, texHeight);
+
+            vec3 trilinear = mix(1.0 - alpha, alpha, vec3(offset));
+            float weight = trilinear.x * trilinear.y * trilinear.z;
+
+            vec3 probeLight = texture(ddgiIrradianceMap, uv).rgb;
+
+            ddgiIrradiance += probeLight * weight;
+            weightSum += weight;
+        }
+        ddgiIrradiance /= max(weightSum, 0.001);
+    }
+    else {
+        // FALLBACK : Si le volume DDGI n'existe pas (Preview Material), on utilise le cubemap statique
+        ddgiIrradiance = texture(irradianceMap, N).rgb;
+    }
+
+    // On applique la lumière Globale
+    float iblIntensity = 2.0;
+    vec3 diffuseIBL = ddgiIrradiance * albedo * iblIntensity;
 
     vec3 R = reflect(-V, N);
     const float MAX_REFLECTION_LOD = 4.0;
     vec3 envColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb * iblIntensity;
-
     vec2 brdf = texture(brdfMap, vec2(max(dot(N, V), 0.0), roughness)).rg;
     vec3 specularIBL = envColor * (F_ibl * brdf.x + brdf.y);
 
-    vec3 ambient = (kD_ibl * diffuseIBL + specularIBL) * ao;
+    vec3 ambient = (kD_ibl * diffuseIBL + specularIBL) * finalAO;
 
-    // ==========================================================
-    // 6. OMBRES (CSM)
-    // ==========================================================
+    vec3 color = Lo + ambient;
 
-    float shadow = ShadowCalculation(fragWorldPos, N, L);
-    vec3 color = ambient + (1.0 - shadow) * Lo;
-
-    // 7. TONEMAPPING ET GAMMA
-    color = ACESFilm(color);
+    // HDR Tonemapping et Gamma
+    color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0/2.2));
 
-    outColor = vec4(color, albedoTex.a * ubo.baseColor.a);
+    outColor = vec4(color, ubo.baseColor.a);
 }

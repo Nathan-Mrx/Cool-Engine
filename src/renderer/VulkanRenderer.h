@@ -31,13 +31,15 @@ struct SwapChainSupportDetails {
 // --- LA STRUCTURE DU MATÉRIAU PBR ---
 struct MaterialUBO {
     glm::vec4 baseColor = glm::vec4(1.0f);
-    glm::vec4 cameraPos = glm::vec4(0.0f); // <--- NOUVEAU
+    glm::vec4 cameraPos = glm::vec4(0.0f);
     float metallic = 0.0f;
     float roughness = 1.0f;
     float ao = 1.0f;
     float padding = 0.0f;
-    glm::mat4 lightSpaceMatrices[4]; // Les 4 matrices solaires
-    glm::vec4 cascadeSplits;         // Les distances de séparation
+    glm::mat4 lightSpaceMatrices[4];
+    glm::vec4 cascadeSplits;
+    glm::vec4 ddgiStartPosition; // xyz = Position, w = Spacing
+    glm::ivec4 ddgiProbeCount;   // xyz = Count, w = padding
 };
 
 struct VulkanMaterial {

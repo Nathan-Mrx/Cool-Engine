@@ -108,6 +108,8 @@ void VulkanRenderer::Shutdown() {
         vkDeviceWaitIdle(m_Device);
     }
 
+    m_MainDeletionQueue.flush();
+
     // ==========================================================
     // 2. NETTOYAGE DES RESSOURCES DU JEU (Objets, Matériaux, Textures)
     // ==========================================================
@@ -1110,24 +1112,63 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
             }
             ubo.cascadeSplits = m_CurrentCascadeSplits;
 
+            // ON REMPLIT LES INFOS DE LA GRILLE
+            if (scene->GetDDGIVolume()) {
+                ubo.ddgiStartPosition = glm::vec4(scene->GetDDGIVolume()->GetStartPosition(), scene->GetDDGIVolume()->GetProbeSpacing().x);
+                ubo.ddgiProbeCount = glm::ivec4(scene->GetDDGIVolume()->GetProbeCount(), 0);
+            } else {
+                ubo.ddgiStartPosition = glm::vec4(0.0f);
+                ubo.ddgiProbeCount = glm::ivec4(0);
+            }
+
             memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));
 
             // NOUVEAU : On s'assure que le TLAS de ce Descriptor Set est à jour !
+            // --- NOUVEAU : ON MET A JOUR LE TLAS ET LA TEXTURE DDGI EN MEME TEMPS ---
+            std::vector<VkWriteDescriptorSet> dynamicWrites;
+
+            // 1. Le TLAS
+            VkWriteDescriptorSetAccelerationStructureKHR descriptorAS{};
+            VkWriteDescriptorSet writeTLAS{};
             if (m_TLAS[m_CurrentFrame].handle != VK_NULL_HANDLE) {
-                VkWriteDescriptorSetAccelerationStructureKHR descriptorAS{};
                 descriptorAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
                 descriptorAS.accelerationStructureCount = 1;
                 descriptorAS.pAccelerationStructures = &m_TLAS[m_CurrentFrame].handle;
 
-                VkWriteDescriptorSet write{};
-                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write.pNext = &descriptorAS;
-                write.dstSet = mat.DescriptorSets[m_CurrentFrame];
-                write.dstBinding = 11;
-                write.descriptorCount = 1;
-                write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+                writeTLAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writeTLAS.pNext = &descriptorAS;
+                writeTLAS.dstSet = mat.DescriptorSets[m_CurrentFrame];
+                writeTLAS.dstBinding = 11;
+                writeTLAS.descriptorCount = 1;
+                writeTLAS.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+                dynamicWrites.push_back(writeTLAS);
+            }
 
-                vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
+            // 2. La texture DDGI
+            VkDescriptorImageInfo ddgiInfo{};
+            if (scene->GetDDGIVolume() && scene->GetDDGIVolume()->GetIrradianceTexture()) {
+                // Attention : Elle est en layout GENERAL (à cause du Compute Shader)
+                ddgiInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                ddgiInfo.imageView = scene->GetDDGIVolume()->GetIrradianceTexture()->View;
+                ddgiInfo.sampler = scene->GetDDGIVolume()->GetIrradianceTexture()->Sampler;
+            } else {
+                ddgiInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                ddgiInfo.imageView = m_DefaultWhiteTexture->View;
+                ddgiInfo.sampler = m_DefaultWhiteTexture->Sampler;
+            }
+
+            VkWriteDescriptorSet writeDDGI{};
+            writeDDGI.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writeDDGI.dstSet = mat.DescriptorSets[m_CurrentFrame];
+            writeDDGI.dstBinding = 12;
+            writeDDGI.descriptorCount = 1;
+            writeDDGI.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writeDDGI.pImageInfo = &ddgiInfo;
+            dynamicWrites.push_back(writeDDGI);
+
+            // On envoie le colis !
+            if (!dynamicWrites.empty()) {
+                vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(dynamicWrites.size()), dynamicWrites.data(), 0, nullptr);
             }
 
             vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1599,7 +1640,7 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
     uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     // 2. On assemble le plan PBR (Maintenant 12 éléments !)
-    std::array<VkDescriptorSetLayoutBinding, 12> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 13> bindings{};
     bindings[0] = uboLayoutBinding;
 
     // Boucle de 1 à 10 pour les Textures
@@ -1618,6 +1659,13 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
     tlasLayoutBinding.descriptorCount = 1;
     tlasLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT; // On le lira dans triangle.frag
     bindings[11] = tlasLayoutBinding;
+
+    VkDescriptorSetLayoutBinding ddgiLayoutBinding{};
+    ddgiLayoutBinding.binding = 12;
+    ddgiLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ddgiLayoutBinding.descriptorCount = 1;
+    ddgiLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[12] = ddgiLayoutBinding;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1668,7 +1716,6 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
 
     VkDeviceSize bufferSize = sizeof(MaterialUBO);
 
-    // 1. Allocation des Buffers propres à CE matériau
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -1676,11 +1723,10 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         vkMapMemory(m_Device, mat.UniformBuffersMemory[i], 0, bufferSize, 0, &mat.UniformBuffersMapped[i]);
     }
 
-    // 2. Allocation de ses propres Descriptor Sets
     std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_DescriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = m_DescriptorPool; // On tire dans l'usine globale
+    allocInfo.descriptorPool = m_DescriptorPool;
     allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
     allocInfo.pSetLayouts = layouts.data();
 
@@ -1694,29 +1740,43 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MaterialUBO);
 
+        // On prépare les 10 textures classiques + les textures IBL
         std::array<VkDescriptorImageInfo, 10> imageInfos{};
         VulkanTexture* textures[] = {
             albedo, normal, metallic, roughness, ao,
             m_EnvironmentCubemap, m_BrdfLutTexture, m_IrradianceCubemap, m_PrefilterCubemap
         };
 
-        for(int t = 0; t < 9; t++) {
+        for (int t = 0; t < 9; t++) {
             imageInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfos[t].imageView = textures[t] ? textures[t]->View : m_DefaultWhiteTexture->View;
-            imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : m_DefaultWhiteTexture->Sampler;
+
+            // On choisit intelligemment la texture de remplacement selon le canal !
+            VulkanTexture* fallback = m_DefaultWhiteTexture;
+            if (t == 1) fallback = m_DefaultNormalTexture; // Normal Map -> Bleu neutre
+            if (t == 2) fallback = m_DefaultBlackTexture;  // Metallic -> Noir (Non-métal)
+            // L'Albedo (0), Roughness (3) et AO (4) restent Blancs par défaut.
+
+            imageInfos[t].imageView = textures[t] ? textures[t]->View : fallback->View;
+            imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : fallback->Sampler;
         }
 
         imageInfos[9].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         imageInfos[9].imageView = m_ShadowImageView;
         imageInfos[9].sampler = m_ShadowSampler;
 
-        // SEULEMENT 11 ÉCRITURES ! (On ne met PAS le TLAS ici)
-        std::array<VkWriteDescriptorSet, 11> descriptorWrites{};
+        // --- NOUVEAU : FALLBACK DDGI ---
+        VkDescriptorImageInfo ddgiFallbackInfo{};
+        ddgiFallbackInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        ddgiFallbackInfo.imageView = m_DefaultWhiteTexture->View;
+        ddgiFallbackInfo.sampler = m_DefaultWhiteTexture->Sampler;
+
+        // On passe à 12 écritures (Binding 0 + Bindings 1-10 + Binding 12)
+        // Note : Le binding 11 (TLAS) est géré dynamiquement dans RenderScene
+        std::array<VkWriteDescriptorSet, 12> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = mat.DescriptorSets[i];
         descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].dstArrayElement = 0;
         descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfo;
@@ -1725,14 +1785,22 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
             descriptorWrites[t + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[t + 1].dstSet = mat.DescriptorSets[i];
             descriptorWrites[t + 1].dstBinding = t + 1;
-            descriptorWrites[t + 1].dstArrayElement = 0;
             descriptorWrites[t + 1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[t + 1].descriptorCount = 1;
             descriptorWrites[t + 1].pImageInfo = &imageInfos[t];
         }
 
+        // Écriture du Binding 12 (DDGI)
+        descriptorWrites[11].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[11].dstSet = mat.DescriptorSets[i];
+        descriptorWrites[11].dstBinding = 12;
+        descriptorWrites[11].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[11].descriptorCount = 1;
+        descriptorWrites[11].pImageInfo = &ddgiFallbackInfo;
+
         vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
+
     return mat;
 }
 
@@ -3496,102 +3564,141 @@ void VulkanRenderer::RenderMaterialPreview(
 {
     if (!mesh || !target) return;
 
-    // 1. On lance un rendu isolé (Sécurité absolue contre les plantages de Frame)
-    VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
+    // 1. On s'assure que le carnet de commandes est ouvert
+    BeginFrame();
 
-    VkRenderPassBeginInfo rpBegin{};
-    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpBegin.renderPass = target->GetRenderPass();
-    rpBegin.framebuffer = target->GetVulkanFramebuffer();
-    rpBegin.renderArea.extent = { target->GetSpecification().Width, target->GetSpecification().Height };
+    // 2. Préparation de l'UBO pour la preview
+    MaterialUBO ubo{};
+    ubo.baseColor = colorVal;
+    ubo.cameraPos = glm::vec4(camPos, 1.0f);
+    ubo.metallic = metallicVal;
+    ubo.roughness = roughnessVal;
+    ubo.ao = aoVal;
 
-    std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.15f, 0.15f, 0.15f, 1.0f}};
-    clearValues[1].depthStencil = {1.0f, 0};
-    rpBegin.clearValueCount = 2;
-    rpBegin.pClearValues = clearValues.data();
+    // On neutralise le DDGI pour la prévisualisation
+    ubo.ddgiStartPosition = glm::vec4(0.0f);
+    ubo.ddgiProbeCount = glm::ivec4(0);
 
-    vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+    // On utilise un buffer temporaire pour la preview (gestion simplifiée via DeletionQueue)
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    VkDeviceSize bufferSize = sizeof(MaterialUBO);
 
-    VkViewport viewport{0.0f, 0.0f, (float)target->GetSpecification().Width, (float)target->GetSpecification().Height, 0.0f, 1.0f};
-    vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-    VkRect2D scissor{{0,0}, rpBegin.renderArea.extent};
-    vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
+    CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 stagingBuffer, stagingBufferMemory);
 
-    // 2. Matrices (Caméra)
-    struct PushConstants { glm::mat4 model; glm::mat4 viewProj; } push{};
-    push.model = model;
-    push.viewProj = proj * view;
-    vkCmdPushConstants(cmdBuf, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
+    void* data;
+    vkMapMemory(m_Device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, &ubo, bufferSize);
+    vkUnmapMemory(m_Device, stagingBufferMemory);
 
-    // 3. Fallbacks Textures
-    VulkanTexture* t_albedo = albedo ? albedo : m_DefaultWhiteTexture;
-    VulkanTexture* t_normal = normal ? normal : m_DefaultNormalTexture;
-    VulkanTexture* t_metallic = metallic ? metallic : m_DefaultBlackTexture;
-    VulkanTexture* t_roughness = roughness ? roughness : m_DefaultWhiteTexture;
-    VulkanTexture* t_ao = ao ? ao : m_DefaultWhiteTexture;
+    m_MainDeletionQueue.push_function([=, device = m_Device]() {
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    });
 
-    // 4. On gère l'Entité factice pour le "Colis" de Preview
-    entt::entity previewEntity = (entt::entity)999999;
-    if (m_EntityMaterials.find(previewEntity) == m_EntityMaterials.end()) {
-        // On le crée une seule fois !
-        m_EntityMaterials[previewEntity] = CreateVulkanMaterial(t_albedo, t_normal, t_metallic, t_roughness, t_ao);
-    }
+    // 3. Allocation d'un Descriptor Set temporaire pour la Preview
+    VkDescriptorSet previewSet;
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_DescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_DescriptorSetLayout;
 
-    VulkanMaterial& mat = m_EntityMaterials[previewEntity];
+    if (vkAllocateDescriptorSets(m_Device, &allocInfo, &previewSet) != VK_SUCCESS) return;
 
-    // MISE À JOUR DYNAMIQUE : On modifie les textures à la volée sans saturer la RAM !
+    // 4. Configuration des ressources (Textures + Fallbacks)
+    VkDescriptorBufferInfo bufferInfo{ stagingBuffer, 0, sizeof(MaterialUBO) };
+
     std::array<VkDescriptorImageInfo, 10> imageInfos{};
     VulkanTexture* textures[] = {
-        t_albedo, t_normal, t_metallic, t_roughness, t_ao,
+        albedo, normal, metallic, roughness, ao,
         m_EnvironmentCubemap, m_BrdfLutTexture, m_IrradianceCubemap, m_PrefilterCubemap
     };
 
-    for(int t = 0; t < 9; t++) {
+    for (int t = 0; t < 9; t++) {
         imageInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfos[t].imageView = textures[t] ? textures[t]->View : m_DefaultWhiteTexture->View;
-        imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : m_DefaultWhiteTexture->Sampler;
+
+        // On choisit intelligemment la texture de remplacement selon le canal !
+        VulkanTexture* fallback = m_DefaultWhiteTexture;
+        if (t == 1) fallback = m_DefaultNormalTexture; // Normal Map -> Bleu neutre
+        if (t == 2) fallback = m_DefaultBlackTexture;  // Metallic -> Noir (Non-métal)
+        // L'Albedo (0), Roughness (3) et AO (4) restent Blancs par défaut.
+
+        imageInfos[t].imageView = textures[t] ? textures[t]->View : fallback->View;
+        imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : fallback->Sampler;
     }
-    // L'Array de Shadow Maps
     imageInfos[9].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     imageInfos[9].imageView = m_ShadowImageView;
     imageInfos[9].sampler = m_ShadowSampler;
 
-    std::array<VkWriteDescriptorSet, 10> descriptorWrites{};
-    for(int t = 0; t < 10; t++) {
-        descriptorWrites[t].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[t].dstSet = mat.DescriptorSets[0]; // On met à jour le set de la preview
-        descriptorWrites[t].dstBinding = t + 1;
-        descriptorWrites[t].dstArrayElement = 0;
-        descriptorWrites[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptorWrites[t].descriptorCount = 1;
-        descriptorWrites[t].pImageInfo = &imageInfos[t];
+    // Fallback pour le canal DDGI (Binding 12)
+    VkDescriptorImageInfo ddgiFallback{};
+    ddgiFallback.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    ddgiFallback.imageView = m_DefaultWhiteTexture->View;
+    ddgiFallback.sampler = m_DefaultWhiteTexture->Sampler;
+
+    // 5. Écritures des descripteurs (12 écritures : UBO + 10 textures + DDGI)
+    std::array<VkWriteDescriptorSet, 12> descriptorWrites{};
+
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = previewSet;
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+    for (int t = 0; t < 10; t++) {
+        descriptorWrites[t + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[t + 1].dstSet = previewSet;
+        descriptorWrites[t + 1].dstBinding = t + 1;
+        descriptorWrites[t + 1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[t + 1].descriptorCount = 1;
+        descriptorWrites[t + 1].pImageInfo = &imageInfos[t];
     }
-    // On applique les nouveaux câbles instantanément !
+
+    descriptorWrites[11].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[11].dstSet = previewSet;
+    descriptorWrites[11].dstBinding = 12; // Le canal DDGI
+    descriptorWrites[11].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[11].descriptorCount = 1;
+    descriptorWrites[11].pImageInfo = &ddgiFallback;
+
     vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 
-    // Mise à jour des valeurs du PBR
-    MaterialUBO ubo{};
-    ubo.baseColor = colorVal;
-    ubo.cameraPos = glm::vec4(camPos, 1.0f);
-    ubo.metallic = metallic ? 1.0f : metallicVal;
-    ubo.roughness = roughness ? 1.0f : roughnessVal;
-    ubo.ao = ao ? 1.0f : aoVal;
+    // 6. Rendu Effectif
+    VkRenderPassBeginInfo rpInfo{};
+    rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpInfo.renderPass = target->GetRenderPass();
+    rpInfo.framebuffer = target->GetVulkanFramebuffer();
+    rpInfo.renderArea.extent = { target->GetSpecification().Width, target->GetSpecification().Height };
 
-    memcpy(mat.UniformBuffersMapped[0], &ubo, sizeof(ubo));
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clearValues[1].depthStencil = {1.0f, 0};
+    rpInfo.clearValueCount = 2;
+    rpInfo.pClearValues = clearValues.data();
 
-    vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &mat.DescriptorSets[0], 0, nullptr);
+    VkCommandBuffer cmd = m_CommandBuffers[m_CurrentFrame];
+    vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    // 5. On dessine !
-    VkBuffer vertexBuffers[] = { mesh->GetVertexBuffer() };
-    VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffers, offsets);
-    vkCmdBindIndexBuffer(cmdBuf, mesh->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
-    vkCmdDrawIndexed(cmdBuf, mesh->GetIndicesCount(), 1, 0, 0, 0);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
 
-    vkCmdEndRenderPass(cmdBuf);
-    EndSingleTimeCommands(cmdBuf);
+    VkViewport viewport{ 0, 0, (float)rpInfo.renderArea.extent.width, (float)rpInfo.renderArea.extent.height, 0, 1 };
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{ {0,0}, rpInfo.renderArea.extent };
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    glm::mat4 mvp = proj * view * model;
+    vkCmdPushConstants(cmd, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvp);
+    vkCmdPushConstants(cmd, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), sizeof(glm::mat4), &model);
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &previewSet, 0, nullptr);
+
+    mesh->Draw();
+
+    vkCmdEndRenderPass(cmd);
 }
 
 void VulkanRenderer::InvalidateEntityMaterial(entt::entity entityID) {
@@ -3914,12 +4021,16 @@ void VulkanRenderer::PreRender(Scene* scene) {
 }
 
 void VulkanRenderer::BeginFrame() {
-    if (m_IsFrameStarted) return; // Sécurité
+    if (m_IsFrameStarted) return;
 
     vkWaitForFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame], VK_TRUE, UINT64_MAX);
     vkAcquireNextImageKHR(m_Device, m_SwapChain, UINT64_MAX, m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &m_CurrentImageIndex);
     vkResetFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame]);
     vkResetCommandBuffer(m_CommandBuffers[m_CurrentFrame], 0);
+
+    // --- NOUVEAU : ON VIDE LA POUBELLE EN TOUTE SÉCURITÉ ---
+    // Le GPU a fini avec cette frame, on peut détruire les anciens ScratchBuffers et UniformBuffers
+    m_MainDeletionQueue.flush();
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
