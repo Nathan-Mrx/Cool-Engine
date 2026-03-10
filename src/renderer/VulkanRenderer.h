@@ -112,6 +112,7 @@ public:
 
     void RenderMaterialPreview(Mesh* mesh, VulkanFramebuffer* target, glm::mat4 model, glm::mat4 view, glm::mat4 proj, glm::vec3 camPos, VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao, glm::vec4 colorVal, float metallicVal, float roughnessVal, float aoVal);
 
+    void InvalidateEntityMaterial(entt::entity entityID);
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
@@ -264,6 +265,24 @@ private:
     const std::vector<const char*> m_ValidationLayers = {
         "VK_LAYER_KHRONOS_validation"
     };
+
+    struct DeletionQueue {
+        std::deque<std::function<void()>> deletors;
+
+        void push_function(std::function<void()>&& function) {
+            deletors.push_back(function);
+        }
+
+        void flush() {
+            // Reverse iterate pour détruire les objets dans le bon ordre (LIFO)
+            for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+                (*it)();
+            }
+            deletors.clear();
+        }
+    };
+
+    DeletionQueue m_MainDeletionQueue;
 
 #ifdef NDEBUG
     const bool m_EnableValidationLayers = false;

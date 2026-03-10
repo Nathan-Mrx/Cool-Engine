@@ -838,6 +838,8 @@ void VulkanRenderer::CreateSyncObjects() {
 void VulkanRenderer::Clear() {
     BeginFrameIfNeeded();
 
+    m_MainDeletionQueue.flush();
+
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 
@@ -3503,4 +3505,26 @@ void VulkanRenderer::RenderMaterialPreview(
 
     vkCmdEndRenderPass(cmdBuf);
     EndSingleTimeCommands(cmdBuf);
+}
+
+void VulkanRenderer::InvalidateEntityMaterial(entt::entity entityID) {
+    if (m_EntityMaterials.find(entityID) != m_EntityMaterials.end()) {
+
+        // On copie (capture) le matériel par valeur pour la lambda de destruction
+        VulkanMaterial oldMat = m_EntityMaterials[entityID];
+
+        // On efface l'entrée de la map pour que RenderScene() en recrée un neuf
+        m_EntityMaterials.erase(entityID);
+
+        // On met la destruction physique dans la file d'attente !
+        // Elle sera exécutée au début de la frame SUIVANTE (donc en toute sécurité)
+        m_MainDeletionQueue.push_function([=, device = m_Device]() {
+            for (size_t i = 0; i < oldMat.UniformBuffers.size(); i++) {
+                vkDestroyBuffer(device, oldMat.UniformBuffers[i], nullptr);
+                vkFreeMemory(device, oldMat.UniformBuffersMemory[i], nullptr);
+            }
+            // Note: Les Descriptor Sets de ce matériel spécifique ne sont pas détruits un par un,
+            // ils sont rattachés au m_DescriptorPool qui est détruit globalement à la fin.
+        });
+    }
 }

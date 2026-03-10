@@ -659,7 +659,15 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
     newMatPanel->OnMaterialSavedCallback = [this](const std::filesystem::path& savedPath) {
         if (!m_ActiveScene) return;
         for (const auto view = m_ActiveScene->m_Registry.view<MaterialComponent>(); const auto entityID : view) {
-            if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) mat.SetAndCompile(savedPath.string());
+            if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) {
+                // 1. On met à jour les données côté ECS (Ton code existant)
+                mat.SetAndCompile(savedPath.string());
+
+                // 2. NOUVEAU : On ordonne à Vulkan de détruire l'ancien "colis" en VRAM !
+                if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+                    VulkanRenderer::Get()->InvalidateEntityMaterial(entityID);
+                }
+            }
         }
     };
 
@@ -708,6 +716,7 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
     newMIPanel->Load(path);
 
     // --- LE HOT RELOAD POUR LES INSTANCES ---
+    // --- LE HOT RELOAD POUR LES INSTANCES ---
     newMIPanel->OnMaterialInstanceSavedCallback = [this](const std::filesystem::path& savedPath) {
         if (!m_ActiveScene) return;
 
@@ -716,9 +725,14 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
         for (auto entityID : view) {
             // Si l'entité utilise l'instance qu'on vient de sauvegarder...
             if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) {
-                // On force le rechargement depuis le disque !
+                // 1. On force le rechargement depuis le disque !
                 mat.SetAndCompile(savedPath.string());
                 std::cout << "[Editor] Hot-Reloaded Material Instance for Entity ID: " << static_cast<uint32_t>(entityID) << std::endl;
+
+                // 2. NOUVEAU : Invalidation Vulkan
+                if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+                    VulkanRenderer::Get()->InvalidateEntityMaterial(entityID);
+                }
             }
         }
     };
