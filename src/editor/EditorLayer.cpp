@@ -184,6 +184,7 @@ void EditorLayer::OnUpdate(float deltaTime) {
         Renderer::EndScene();
     } else {
         // --- VULKAN RENDERING ---
+        VulkanRenderer::Get()->PrepareShadows(m_ActiveScene.get());
         Renderer::Clear(); // Démarre le carnet de commandes du Framebuffer
 
         // Calcul de la caméra de l'éditeur

@@ -7,6 +7,7 @@ layout(location = 3) in vec3 fragTangent;
 
 layout(location = 0) out vec4 outColor;
 
+// 1. LE BON UBO (Avec les variables CSM !)
 layout(binding = 0) uniform MaterialUBO {
     vec4 baseColor;
     vec4 cameraPos;
@@ -14,21 +15,27 @@ layout(binding = 0) uniform MaterialUBO {
     float roughness;
     float ao;
     float padding;
+    mat4 lightSpaceMatrices[4]; // Nos 4 matrices solaires
+    vec4 cascadeSplits;         // Nos 4 distances
 } ubo;
 
+// 2. LES TEXTURES DU MATÉRIAU
 layout(binding = 1) uniform sampler2D albedoMap;
 layout(binding = 2) uniform sampler2D normalMap;
 layout(binding = 3) uniform sampler2D metallicMap;
 layout(binding = 4) uniform sampler2D roughnessMap;
 layout(binding = 5) uniform sampler2D aoMap;
 
+// 3. LES TEXTURES GLOBALES (IBL + Ombres)
 layout(binding = 6) uniform samplerCube environmentMap;
 layout(binding = 7) uniform sampler2D brdfMap;
 layout(binding = 8) uniform samplerCube irradianceMap;
 layout(binding = 9) uniform samplerCube prefilterMap;
+layout(binding = 10) uniform sampler2DArray shadowMap;
 
 const float PI = 3.14159265359;
 
+// --- MATHS DE LA LUMIÈRE (Cook-Torrance) ---
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float a = roughness*roughness;
     float a2 = a*a;
@@ -63,6 +70,46 @@ vec3 ACESFilm(vec3 x) {
     return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
 
+// --- CASCADED SHADOW MAPS ---
+float ShadowCalculation(vec3 fragWorldPos, vec3 N, vec3 L) {
+    // Distance exacte de la caméra au pixel
+    float depth = length(ubo.cameraPos.xyz - fragWorldPos);
+
+    // On cherche dans quelle tranche on se trouve
+    int cascadeIndex = 0;
+    for(int i = 0; i < 3; ++i) {
+        if(depth > ubo.cascadeSplits[i]) {
+            cascadeIndex = i + 1;
+        }
+    }
+
+    // Projection depuis les yeux du soleil pour CETTE cascade
+    vec4 fragPosLightSpace = ubo.lightSpaceMatrices[cascadeIndex] * vec4(fragWorldPos, 1.0);
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+
+    // Si on regarde au-delà du frustum du soleil
+    if(projCoords.z > 1.0) return 0.0;
+
+    float currentDepth = projCoords.z;
+
+    // Biais anti-acné progressif (plus la cascade est grande, plus l'erreur d'arrondi est forte)
+    float bias = max(0.005 * (1.0 - dot(N, L)), 0.001);
+    if (cascadeIndex > 0) bias *= 2.0;
+    if (cascadeIndex > 1) bias *= 2.0;
+
+    // PCF (Floutage) sur un tableau 2D (sampler2DArray utilise un vec3)
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0).xy;
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(shadowMap, vec3(projCoords.xy + vec2(x, y) * texelSize, cascadeIndex)).r;
+            shadow += currentDepth - bias > pcfDepth  ? 1.0 : 0.0;
+        }
+    }
+    return shadow / 9.0;
+}
+
 void main() {
     // 1. LECTURE DES TEXTURES
     vec4 albedoTex = texture(albedoMap, fragTexCoord);
@@ -95,12 +142,12 @@ void main() {
     F0 = mix(F0, albedo, metallic);
 
     // ==========================================================
-    // 4. L'ÉQUATION PBR DIRECTE (Le Soleil uniquement !)
+    // 4. L'ÉQUATION PBR DIRECTE (Le Soleil)
     // ==========================================================
     vec3 Lo = vec3(0.0);
     float NdotL = max(dot(N, L), 0.0);
 
-    if (NdotL > 0.0) { // On éclaire que si la face regarde le soleil !
+    if (NdotL > 0.0) {
         float NDF = DistributionGGX(N, H, roughness);
         float G   = GeometrySmith(N, V, L, roughness);
         vec3 F_dir = fresnelSchlick(max(dot(H, V), 0.0), F0);
@@ -117,38 +164,36 @@ void main() {
     }
 
     // ==========================================================
-    // 5. IMAGE BASED LIGHTING (L'Ambiance indépendante !)
+    // 5. IMAGE BASED LIGHTING (L'Ambiance)
     // ==========================================================
 
-    // Le Fresnel Ambiant (Il utilise N et V, pas le soleil !)
     vec3 F_ibl = fresnelSchlick(max(dot(N, V), 0.0), F0);
     vec3 kS_ibl = F_ibl;
     vec3 kD_ibl = vec3(1.0) - kS_ibl;
     kD_ibl *= 1.0 - metallic;
 
-    // Multiplicateur pour booster le ciel si le HDR est trop terne
     float iblIntensity = 2.0;
 
-    // Lumière diffuse ambiante
     vec3 irradiance = texture(irradianceMap, N).rgb;
     vec3 diffuseIBL = irradiance * albedo * iblIntensity;
 
-    // Lumière spéculaire (Reflets PBR avec Roughness !)
     vec3 R = reflect(-V, N);
-    const float MAX_REFLECTION_LOD = 4.0; // Nos 5 niveaux (0 à 4)
+    const float MAX_REFLECTION_LOD = 4.0;
     vec3 envColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb * iblIntensity;
 
     vec2 brdf = texture(brdfMap, vec2(max(dot(N, V), 0.0), roughness)).rg;
     vec3 specularIBL = envColor * (F_ibl * brdf.x + brdf.y);
 
-    // L'Ambiance n'est plus jamais détruite par le soleil !
     vec3 ambient = (kD_ibl * diffuseIBL + specularIBL) * ao;
 
     // ==========================================================
+    // 6. OMBRES (CSM)
+    // ==========================================================
 
-    vec3 color = ambient + Lo;
+    float shadow = ShadowCalculation(fragWorldPos, N, L);
+    vec3 color = ambient + (1.0 - shadow) * Lo;
 
-    // 6. TONEMAPPING ET GAMMA
+    // 7. TONEMAPPING ET GAMMA
     color = ACESFilm(color);
     color = pow(color, vec3(1.0/2.2));
 

@@ -51,6 +51,9 @@ void VulkanRenderer::Init() {
     CreateRenderPass();
     CreateSceneRenderPass();
     CreateDescriptorSetLayout();
+    CreateShadowResources();
+    CreateShadowRenderPass();
+    CreateShadowPipeline();
     CreateGraphicsPipeline();
     CreateFramebuffers();
     CreateDescriptorPool();
@@ -120,6 +123,42 @@ void VulkanRenderer::Shutdown() {
     m_DefaultNormalTexture = nullptr;
     m_SkyboxTexture = nullptr;
     m_BrdfLutTexture = nullptr;
+
+    // ==========================================================
+    // 3. NETTOYAGE DES OMBRES (CSM)
+    // ==========================================================
+    if (m_ShadowSampler != VK_NULL_HANDLE) {
+        vkDestroySampler(m_Device, m_ShadowSampler, nullptr);
+    }
+    for (auto view : m_ShadowCascadeViews) {
+        vkDestroyImageView(m_Device, view, nullptr);
+    }
+    m_ShadowCascadeViews.clear();
+
+    if (m_ShadowImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(m_Device, m_ShadowImageView, nullptr);
+    }
+    if (m_ShadowImage != VK_NULL_HANDLE) {
+        vkDestroyImage(m_Device, m_ShadowImage, nullptr);
+    }
+    if (m_ShadowImageMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(m_Device, m_ShadowImageMemory, nullptr);
+    }
+    for (auto fb : m_ShadowFramebuffers) {
+        vkDestroyFramebuffer(m_Device, fb, nullptr);
+    }
+    m_ShadowFramebuffers.clear();
+
+    if (m_ShadowRenderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(m_Device, m_ShadowRenderPass, nullptr);
+    }
+
+    if (m_ShadowPipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(m_Device, m_ShadowPipeline, nullptr);
+    }
+    if (m_ShadowPipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(m_Device, m_ShadowPipelineLayout, nullptr);
+    }
 
     // ==========================================================
     // 3. NETTOYAGE DES RENDER PASSES ET FRAMEBUFFERS
@@ -803,49 +842,38 @@ void VulkanRenderer::Clear() {
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 
     if (m_TargetFramebuffer) {
-        // --- 1. RENDU HORS-ÉCRAN (Viewport 3D) ---
         renderPassInfo.renderPass = m_TargetFramebuffer->GetRenderPass();
         renderPassInfo.framebuffer = m_TargetFramebuffer->GetVulkanFramebuffer();
         renderPassInfo.renderArea.offset = {0, 0};
         renderPassInfo.renderArea.extent = { m_TargetFramebuffer->GetSpecification().Width, m_TargetFramebuffer->GetSpecification().Height };
 
         std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{0.1f, 0.1f, 0.1f, 1.0f}}; // Gris très sombre pour l'éditeur
+        clearValues[0].color = {{0.1f, 0.1f, 0.1f, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 0};
         renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
         renderPassInfo.pClearValues = clearValues.data();
 
         vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport{};
-        viewport.width = (float)m_TargetFramebuffer->GetSpecification().Width;
-        viewport.height = (float)m_TargetFramebuffer->GetSpecification().Height;
-        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+        VkViewport viewport{0.0f, 0.0f, (float)m_TargetFramebuffer->GetSpecification().Width, (float)m_TargetFramebuffer->GetSpecification().Height, 0.0f, 1.0f};
         vkCmdSetViewport(m_CommandBuffers[m_CurrentFrame], 0, 1, &viewport);
-        VkRect2D scissor{};
-        scissor.extent = renderPassInfo.renderArea.extent;
+        VkRect2D scissor{{0,0}, renderPassInfo.renderArea.extent};
         vkCmdSetScissor(m_CommandBuffers[m_CurrentFrame], 0, 1, &scissor);
-
     } else {
-        // --- 2. RENDU PRINCIPAL (Swapchain) ---
         renderPassInfo.renderPass = m_RenderPass;
         renderPassInfo.framebuffer = m_SwapChainFramebuffers[m_CurrentImageIndex];
         renderPassInfo.renderArea.offset = {0, 0};
         renderPassInfo.renderArea.extent = m_SwapChainExtent;
 
-        VkClearValue clearColor = {{{0.1f, 0.2f, 0.4f, 1.0f}}}; // Le fond bleu !
+        VkClearValue clearColor = {{{0.1f, 0.2f, 0.4f, 1.0f}}};
         renderPassInfo.clearValueCount = 1;
         renderPassInfo.pClearValues = &clearColor;
 
         vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport{};
-        viewport.width = (float)m_SwapChainExtent.width;
-        viewport.height = (float)m_SwapChainExtent.height;
-        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+        VkViewport viewport{0.0f, 0.0f, (float)m_SwapChainExtent.width, (float)m_SwapChainExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(m_CommandBuffers[m_CurrentFrame], 0, 1, &viewport);
-        VkRect2D scissor{};
-        scissor.extent = m_SwapChainExtent;
+        VkRect2D scissor{{0,0}, m_SwapChainExtent};
         vkCmdSetScissor(m_CommandBuffers[m_CurrentFrame], 0, 1, &scissor);
     }
 }
@@ -909,18 +937,12 @@ void VulkanRenderer::EndScene() {
 void VulkanRenderer::BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
     if (!m_IsFrameStarted) return;
 
-    // --- SAUVEGARDE ET CORRECTION VULKAN ---
     m_SceneViewMatrix = view;
     m_SceneProjectionMatrix = projection;
-    m_SceneProjectionMatrix[1][1] *= -1.0f; // On inverse l'axe Y de la projection pour correspondre à Vulkan !
-
+    m_SceneProjectionMatrix[1][1] *= -1.0f;
     m_CameraPos = cameraPos;
 
-    VkRenderPassBeginInfo renderPassInfo{};
-
-    // On lie le pipeline global (notre configuration de shaders) au stylo !
-    vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
-
+    // On ne lie plus le Pipeline principal ici, car le RenderPass n'a pas encore commencé !
 }
 
 void VulkanRenderer::DrawGrid(bool enable) {
@@ -930,10 +952,72 @@ void VulkanRenderer::DrawGrid(bool enable) {
 void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
     if (!m_IsFrameStarted || !scene) return;
 
-    // On demande à EnTT de nous donner toutes les entités avec un Transform ET un Mesh
-    auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
+    // ==========================================================
+    // ÉTAPE A : LA PASSE DES OMBRES (CSM) !
+    // ==========================================================
+    // On calcule les 4 caméras solaires en fonction de TA caméra actuelle
+    auto shadowMatrices = CalculateCascadeMatrices();
+    // On dessine les 4 cascades hors-écran
+    RenderShadows(m_CommandBuffers[m_CurrentFrame], scene, shadowMatrices);
 
-    // --- 1. DESSIN DE LA SKYBOX ---
+
+    // ==========================================================
+    // ÉTAPE B : DÉMARRAGE DE LA SCÈNE PRINCIPALE (L'ancien Clear)
+    // ==========================================================
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+    if (m_TargetFramebuffer) {
+        renderPassInfo.renderPass = m_TargetFramebuffer->GetRenderPass();
+        renderPassInfo.framebuffer = m_TargetFramebuffer->GetVulkanFramebuffer();
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = { m_TargetFramebuffer->GetSpecification().Width, m_TargetFramebuffer->GetSpecification().Height };
+
+        std::array<VkClearValue, 2> clearValues{};
+        clearValues[0].color = {{0.1f, 0.1f, 0.1f, 1.0f}};
+        clearValues[1].depthStencil = {1.0f, 0};
+        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+        renderPassInfo.pClearValues = clearValues.data();
+
+        vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport viewport{};
+        viewport.width = (float)m_TargetFramebuffer->GetSpecification().Width;
+        viewport.height = (float)m_TargetFramebuffer->GetSpecification().Height;
+        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(m_CommandBuffers[m_CurrentFrame], 0, 1, &viewport);
+        VkRect2D scissor{};
+        scissor.extent = renderPassInfo.renderArea.extent;
+        vkCmdSetScissor(m_CommandBuffers[m_CurrentFrame], 0, 1, &scissor);
+
+    } else {
+        renderPassInfo.renderPass = m_RenderPass;
+        renderPassInfo.framebuffer = m_SwapChainFramebuffers[m_CurrentImageIndex];
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = m_SwapChainExtent;
+
+        VkClearValue clearColor = {{{0.1f, 0.2f, 0.4f, 1.0f}}};
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+
+        vkCmdBeginRenderPass(m_CommandBuffers[m_CurrentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport viewport{};
+        viewport.width = (float)m_SwapChainExtent.width;
+        viewport.height = (float)m_SwapChainExtent.height;
+        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(m_CommandBuffers[m_CurrentFrame], 0, 1, &viewport);
+        VkRect2D scissor{};
+        scissor.extent = m_SwapChainExtent;
+        vkCmdSetScissor(m_CommandBuffers[m_CurrentFrame], 0, 1, &scissor);
+    }
+
+
+    // ==========================================================
+    // ÉTAPE C : LE DESSIN CLASSIQUE (L'ancienne RenderScene)
+    // ==========================================================
+
+    // 1. La Skybox
     vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_SkyboxPipeline);
 
     struct SkyboxPush {
@@ -945,23 +1029,21 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
 
     vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_SkyboxPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SkyboxPush), &skyPush);
     vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_SkyboxPipelineLayout, 0, 1, &m_SkyboxDescriptorSet, 0, nullptr);
-
     m_SkyboxCube->Draw();
 
+    // 2. Les Entités PBR (On re-lie le pipeline PBR ici !)
     vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+
+    auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
 
     for (auto entityID : view) {
         Entity entity{ entityID, scene };
         auto& meshComp = entity.GetComponent<MeshComponent>();
 
-        // On vérifie que les données 3D sont bien chargées
         if (meshComp.MeshData) {
-
-            // 1. On récupère la Matrice de l'entité et la Matrice de la Caméra
             glm::mat4 modelMatrix = scene->GetWorldTransform(entity);
             glm::mat4 viewProjMatrix = m_SceneProjectionMatrix * m_SceneViewMatrix;
 
-            // 2. On les emballe dans une structure temporaire (exactement comme dans le shader .vert)
             struct PushConstants {
                 glm::mat4 model;
                 glm::mat4 viewProj;
@@ -970,10 +1052,8 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
             push.model = modelMatrix;
             push.viewProj = viewProjMatrix;
 
-            // 3. On envoie nos 128 octets directement dans le carnet de commandes !
             vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
 
-            // --- NOUVEAU : GESTION DU MATÉRIAU INDIVIDUEL ---
             if (m_EntityMaterials.find(entityID) == m_EntityMaterials.end()) {
                 VulkanTexture* t_albedo = m_DefaultWhiteTexture;
 
@@ -983,39 +1063,29 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
                         t_albedo = static_cast<VulkanTexture*>(matComp.Textures.begin()->second);
                     }
                 }
-
                 m_EntityMaterials[entityID] = CreateVulkanMaterial(t_albedo, m_DefaultNormalTexture, m_DefaultWhiteTexture, m_DefaultWhiteTexture, m_DefaultWhiteTexture);
             }
 
-            // On récupère le matériau de CE mesh
             VulkanMaterial& mat = m_EntityMaterials[entityID];
-
             MaterialUBO ubo{};
-            if (entity.HasComponent<ColorComponent>()) {
-                ubo.baseColor = glm::vec4(entity.GetComponent<ColorComponent>().Color, 1.0f);
-            } else {
-                ubo.baseColor = glm::vec4(0.8f, 0.2f, 0.3f, 1.0f);
-            }
+            if (entity.HasComponent<ColorComponent>()) ubo.baseColor = glm::vec4(entity.GetComponent<ColorComponent>().Color, 1.0f);
 
-            // --- ON ENVOIE LA CAMÉRA ---
             ubo.cameraPos = glm::vec4(m_CameraPos, 1.0f);
-
-            // Paramètres PBR
             ubo.metallic = 0.5f;
             ubo.roughness = 0.2f;
             ubo.ao = 1.0f;
 
-            // On copie la couleur dans le Buffer privé du matériau
+            // ON INJECTE LE CSM ICI !
+            for (int j = 0; j < 4; j++) {
+                ubo.lightSpaceMatrices[j] = m_CurrentShadowMatrices[j];
+            }
+            ubo.cascadeSplits = m_CurrentCascadeSplits;
+
             memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));
 
-            // On copie la couleur dans le Buffer privé du matériau
-            memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));
-
-            // On donne le Descriptor Set exclusif au GPU !
             vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     m_PipelineLayout, 0, 1, &mat.DescriptorSets[m_CurrentFrame], 0, nullptr);
 
-            // 4. Ordre de dessin Vulkan
             meshComp.MeshData->Draw();
         }
     }
@@ -1467,11 +1537,12 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     // 3. On assemble le plan PBR
-    std::array<VkDescriptorSetLayoutBinding, 10> bindings{};
-    bindings[0] = uboLayoutBinding; // UBO
+    // On passe à 11 éléments (UBO + 10 textures)
+    std::array<VkDescriptorSetLayoutBinding, 11> bindings{};
+    bindings[0] = uboLayoutBinding;
 
-    // Albedo(1), Normal(2), Metallic(3), Roughness(4), AO(5), EnvCube(6), BRDF(7), Irradiance(8), Prefilter(9)
-    for (int i = 1; i <= 9; i++) { // <--- LE FIX EST ICI (i <= 7 au lieu de 5)
+    // Boucle de 1 à 10 !
+    for (int i = 1; i <= 10; i++) {
         bindings[i].binding = i;
         bindings[i].descriptorCount = 1;
         bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1546,23 +1617,26 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MaterialUBO);
 
-        // On prépare les 8 infos d'images (On remplace m_SkyboxTexture par m_EnvironmentCubemap !)
-        std::array<VkDescriptorImageInfo, 9> imageInfos{};
+        // 10 Textures !
+        std::array<VkDescriptorImageInfo, 10> imageInfos{};
         VulkanTexture* textures[] = {
             albedo, normal, metallic, roughness, ao,
-            m_EnvironmentCubemap, // <--- Binding 6 : Le vrai cube 3D !
-            m_BrdfLutTexture,     // <--- Binding 7
-            m_IrradianceCubemap,  // <--- Binding 8 : Notre nouvelle lumière !
-            m_PrefilterCubemap    // <--- Binding 9 : Notre ciel flou !
+            m_EnvironmentCubemap, m_BrdfLutTexture, m_IrradianceCubemap, m_PrefilterCubemap
         };
 
-        for(int t = 0; t < 9; t++) { // <--- Boucle de 0 à 9
+        for(int t = 0; t < 9; t++) {
             imageInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             imageInfos[t].imageView = textures[t] ? textures[t]->View : m_DefaultWhiteTexture->View;
             imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : m_DefaultWhiteTexture->Sampler;
         }
 
-        std::array<VkWriteDescriptorSet, 10> descriptorWrites{}; // <--- Passe à 10 !
+        // Texture 10 (Index 9) : L'ARRAY DE SHADOW MAPS
+        imageInfos[9].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        imageInfos[9].imageView = m_ShadowImageView;
+        imageInfos[9].sampler = m_ShadowSampler;
+
+        // 11 Writes !
+        std::array<VkWriteDescriptorSet, 11> descriptorWrites{};
 
         // UBO (Binding 0)
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1573,8 +1647,8 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        // Textures (Bindings 1 à 9)
-        for(int t = 0; t < 9; t++) { // <--- Boucle de 0 à 8
+        // Textures (Bindings 1 à 10)
+        for(int t = 0; t < 10; t++) { // Boucle jusqu'à 9 (qui cible l'index 9, Binding 10)
             descriptorWrites[t + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[t + 1].dstSet = mat.DescriptorSets[i];
             descriptorWrites[t + 1].dstBinding = t + 1;
@@ -1583,6 +1657,8 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
             descriptorWrites[t + 1].descriptorCount = 1;
             descriptorWrites[t + 1].pImageInfo = &imageInfos[t];
         }
+
+        vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 
         vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -2959,4 +3035,384 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     for (auto view : tempViews) vkDestroyImageView(m_Device, view, nullptr);
 
     std::cout << "[Vulkan] Prefilter Cubemap genere avec succes !\n";
+}
+
+void VulkanRenderer::CreateShadowResources() {
+    std::cout << "[Vulkan] Creation des ressources CSM (" << SHADOW_MAP_CASCADE_COUNT << " cascades, " << SHADOW_MAP_RESOLUTION << "px)...\n";
+
+    VkFormat depthFormat = VK_FORMAT_D32_SFLOAT; // Précision maximale
+
+    // 1. IMAGE ARRAY (Une seule texture contenant les 4 cascades)
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = SHADOW_MAP_RESOLUTION;
+    imageInfo.extent.height = SHADOW_MAP_RESOLUTION;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = SHADOW_MAP_CASCADE_COUNT; // <--- C'est ici qu'on fait l'Array !
+    imageInfo.format = depthFormat;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    vkCreateImage(m_Device, &imageInfo, nullptr, &m_ShadowImage);
+
+    VkMemoryRequirements memReqs;
+    vkGetImageMemoryRequirements(m_Device, m_ShadowImage, &memReqs);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_ShadowImageMemory);
+    vkBindImageMemory(m_Device, m_ShadowImage, m_ShadowImageMemory, 0);
+
+    // 2. VUE GLOBALE (Pour le shader PBR : type 2D_ARRAY)
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = m_ShadowImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY; // <--- Vue Array
+    viewInfo.format = depthFormat;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = SHADOW_MAP_CASCADE_COUNT;
+    vkCreateImageView(m_Device, &viewInfo, nullptr, &m_ShadowImageView);
+
+    // 3. VUES INDIVIDUELLES (Pour écrire dedans face par face)
+    m_ShadowCascadeViews.resize(SHADOW_MAP_CASCADE_COUNT);
+    for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+        VkImageViewCreateInfo cascadeViewInfo = viewInfo;
+        cascadeViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; // <--- Vue 2D simple
+        cascadeViewInfo.subresourceRange.baseArrayLayer = i;
+        cascadeViewInfo.subresourceRange.layerCount = 1; // On ne cible qu'une seule couche !
+        vkCreateImageView(m_Device, &cascadeViewInfo, nullptr, &m_ShadowCascadeViews[i]);
+    }
+
+    // 4. SAMPLER HARDWARE (Avec comparaison native pour ombres douces)
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; // Hors champ = Pas d'ombre
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.maxAnisotropy = 1.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 1.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; // Blanc = Éclairé !
+    vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_ShadowSampler);
+}
+
+void VulkanRenderer::CreateShadowRenderPass() {
+    VkAttachmentDescription attachment{};
+    attachment.format = VK_FORMAT_D32_SFLOAT;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // On doit le garder pour le shader !
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL; // Prêt à être lu par le PBR
+
+    VkAttachmentReference depthRef{};
+    depthRef.attachment = 0;
+    depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 0; // Pas de couleur, que de la profondeur !
+    subpass.pDepthStencilAttachment = &depthRef;
+
+    // Dépendance cruciale : on doit avoir fini d'écrire l'ombre avant de lire dans le fragment shader
+    std::array<VkSubpassDependency, 2> dependencies;
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &attachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
+    renderPassInfo.pDependencies = dependencies.data();
+
+    vkCreateRenderPass(m_Device, &renderPassInfo, nullptr, &m_ShadowRenderPass);
+
+    // 5. CRÉATION DES 4 FRAMEBUFFERS
+    m_ShadowFramebuffers.resize(SHADOW_MAP_CASCADE_COUNT);
+    for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+        VkFramebufferCreateInfo fbInfo{};
+        fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass = m_ShadowRenderPass;
+        fbInfo.attachmentCount = 1;
+        fbInfo.pAttachments = &m_ShadowCascadeViews[i]; // On cible une couche spécifique
+        fbInfo.width = SHADOW_MAP_RESOLUTION;
+        fbInfo.height = SHADOW_MAP_RESOLUTION;
+        fbInfo.layers = 1;
+        vkCreateFramebuffer(m_Device, &fbInfo, nullptr, &m_ShadowFramebuffers[i]);
+    }
+}
+
+void VulkanRenderer::CreateShadowPipeline() {
+    std::cout << "[Vulkan] Creation du Pipeline des Ombres (Depth-Only)...\n";
+
+    auto vertCode = ReadFile("shaders/shadow_vert.spv");
+    VkShaderModule vertModule = CreateShaderModule(vertCode);
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertModule;
+    vertShaderStageInfo.pName = "main";
+
+    // Vertex Input : Seulement la Position ! Pas besoin d'UV, de Normales ou de Tangentes.
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(Vertex);
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attributeDescription{};
+    attributeDescription.binding = 0;
+    attributeDescription.location = 0;
+    attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescription.offset = offsetof(Vertex, Position);
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = 1;
+    vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    // RASTERIZER : Les "Hacks" physiques des ombres
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT; // <-- Anti Peter-Panning
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_TRUE;         // <-- Anti Shadow-Acne
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    // Push Constant pour envoyer la matrice du Soleil
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(glm::mat4);
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    if (vkCreatePipelineLayout(m_Device, &pipelineLayoutInfo, nullptr, &m_ShadowPipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur: Impossible de creer le Pipeline Layout des Ombres !");
+    }
+
+    // Paramètres dynamiques (Très pratique pour changer le biais et la zone de rendu à la volée)
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR,
+        VK_DYNAMIC_STATE_DEPTH_BIAS
+    };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    // On assemble le Pipeline complet !
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 1;                  // <--- SEULEMENT 1 SHADER (Vertex) !
+    pipelineInfo.pStages = &vertShaderStageInfo;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = nullptr;      // <--- ZÉRO GESTION DE COULEUR !
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = m_ShadowPipelineLayout;
+    pipelineInfo.renderPass = m_ShadowRenderPass;
+    pipelineInfo.subpass = 0;
+
+    if (vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_ShadowPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur: Impossible de creer le Pipeline des Ombres !");
+    }
+
+    vkDestroyShaderModule(m_Device, vertModule, nullptr);
+}
+
+std::array<glm::mat4, VulkanRenderer::SHADOW_MAP_CASCADE_COUNT> VulkanRenderer::CalculateCascadeMatrices() {
+    std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> matrices;
+
+    // Direction du soleil (Doit correspondre exactement à celle de ton triangle.frag !)
+    glm::vec3 lightDir = glm::normalize(glm::vec3(0.5f, 0.5f, 1.0f));
+
+    // Découpage manuel des cascades (en centimètres). Ajuste selon la taille de ton monde !
+    // Ex: Cascade 0 (0->10m), Cascade 1 (10m->30m), Cascade 2 (30m->70m), Cascade 3 (70m->150m)
+    float cascadeSplits[4] = { 1000.0f, 3000.0f, 7000.0f, 15000.0f };
+    float lastSplit = 10.0f; // Near plane de ta caméra
+
+    // Récupérer l'aspect ratio (Largeur / Hauteur de ton écran)
+    float aspect = (float)m_SwapChainExtent.width / (float)m_SwapChainExtent.height;
+
+    for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+        // 1. Matrice de projection de la caméra pour CETTE tranche spécifique
+        glm::mat4 camProj = glm::perspective(glm::radians(45.0f), aspect, lastSplit, cascadeSplits[i]);
+        camProj[1][1] *= -1.0f; // Correction Vulkan
+
+        // 2. Inverser la vue de la caméra pour trouver les coins dans l'espace 3D (World Space)
+        glm::mat4 invCam = glm::inverse(camProj * m_SceneViewMatrix);
+
+        glm::vec3 frustumCorners[8] = {
+            glm::vec3(-1.0f,  1.0f, 0.0f), glm::vec3( 1.0f,  1.0f, 0.0f), glm::vec3( 1.0f, -1.0f, 0.0f), glm::vec3(-1.0f, -1.0f, 0.0f),
+            glm::vec3(-1.0f,  1.0f, 1.0f), glm::vec3( 1.0f,  1.0f, 1.0f), glm::vec3( 1.0f, -1.0f, 1.0f), glm::vec3(-1.0f, -1.0f, 1.0f)
+        };
+
+        glm::vec3 frustumCenter = glm::vec3(0.0f);
+        for (int j = 0; j < 8; j++) {
+            glm::vec4 pt = invCam * glm::vec4(frustumCorners[j], 1.0f);
+            frustumCorners[j] = glm::vec3(pt) / pt.w; // Perspective divide
+            frustumCenter += frustumCorners[j];
+        }
+        frustumCenter /= 8.0f;
+
+        // 3. Créer une caméra Soleil qui regarde le centre de cette tranche
+        glm::mat4 lightView = glm::lookAt(frustumCenter + lightDir * cascadeSplits[i], frustumCenter, glm::vec3(0.0f, 0.0f, 1.0f));
+
+        // 4. Trouver la boîte englobante (Bounding Box) parfaite de ces 8 coins, vue depuis le Soleil
+        float minX = std::numeric_limits<float>::max();
+        float maxX = std::numeric_limits<float>::lowest();
+        float minY = std::numeric_limits<float>::max();
+        float maxY = std::numeric_limits<float>::lowest();
+        float minZ = std::numeric_limits<float>::max();
+        float maxZ = std::numeric_limits<float>::lowest();
+
+        for (int j = 0; j < 8; j++) {
+            glm::vec4 trf = lightView * glm::vec4(frustumCorners[j], 1.0f);
+            minX = std::min(minX, trf.x);
+            maxX = std::max(maxX, trf.x);
+            minY = std::min(minY, trf.y);
+            maxY = std::max(maxY, trf.y);
+            minZ = std::min(minZ, trf.z);
+            maxZ = std::max(maxZ, trf.z);
+        }
+
+        // 5. Z-Multiplier : On recule le plan lointain du soleil pour attraper les objets
+        // qui sont hors-champ de la caméra mais qui projettent une ombre DANS le champ de vision (ex: une tour derrière nous)
+        float zMultiplier = 10.0f;
+        minZ = minZ < 0 ? minZ * zMultiplier : minZ / zMultiplier;
+        maxZ = maxZ < 0 ? maxZ / zMultiplier : maxZ * zMultiplier;
+
+        glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, minZ, maxZ);
+        lightProj[1][1] *= -1.0f; // Correction Vulkan
+
+        matrices[i] = lightProj * lightView;
+        lastSplit = cascadeSplits[i];
+    }
+
+    return matrices;
+}
+
+void VulkanRenderer::RenderShadows(VkCommandBuffer cmdBuf, Scene* scene, const std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT>& cascadeMatrices) {
+    if (!scene) return;
+
+    VkViewport viewport{0.0f, 0.0f, (float)SHADOW_MAP_RESOLUTION, (float)SHADOW_MAP_RESOLUTION, 0.0f, 1.0f};
+    VkRect2D scissor{{0, 0}, {SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION}};
+
+    // On récupère toutes tes entités 3D
+    auto view = scene->m_Registry.view<TransformComponent, MeshComponent>();
+
+    for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+        VkRenderPassBeginInfo rpBegin{};
+        rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpBegin.renderPass = m_ShadowRenderPass;
+        rpBegin.framebuffer = m_ShadowFramebuffers[i]; // On cible la cascade N°i
+        rpBegin.renderArea.extent = { SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION };
+
+        VkClearValue clearDepth;
+        clearDepth.depthStencil = { 1.0f, 0 }; // 1.0f = le plus loin possible
+        rpBegin.clearValueCount = 1;
+        rpBegin.pClearValues = &clearDepth;
+
+        vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_ShadowPipeline);
+        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+        vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
+
+        // Hack AAA : Le biais dynamique (Evite le Shadow Acne sur les faces éclairées)
+        vkCmdSetDepthBias(cmdBuf, 1.25f, 0.0f, 1.75f);
+
+        // --- LA BOUCLE DE DESSIN ---
+        for (auto entityID : view) {
+            Entity entity{ entityID, scene };
+            auto& meshComp = entity.GetComponent<MeshComponent>();
+
+            if (meshComp.MeshData) {
+                // 1. Matrice Modèle et Calcul MVP pour le Soleil
+                glm::mat4 modelMatrix = scene->GetWorldTransform(entity);
+                glm::mat4 mvp = cascadeMatrices[i] * modelMatrix;
+
+                // 2. On envoie la matrice au Vertex Shader d'ombre
+                vkCmdPushConstants(cmdBuf, m_ShadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvp);
+
+                // 3. Dessin pur ! (Ton MeshData->Draw() marche ici car il va utiliser le m_ShadowPipeline actif !)
+                meshComp.MeshData->Draw();
+            }
+        }
+
+        vkCmdEndRenderPass(cmdBuf);
+    }
+}
+
+void VulkanRenderer::PrepareShadows(Scene* scene) {
+    if (!scene) return;
+    BeginFrameIfNeeded(); // On s'assure d'avoir un stylo (cmdBuf) prêt
+
+    // On calcule les boîtes
+    m_CurrentShadowMatrices = CalculateCascadeMatrices();
+    // On sauvegarde les distances (les mêmes que dans CalculateCascadeMatrices)
+    m_CurrentCascadeSplits = glm::vec4(1000.0f, 3000.0f, 7000.0f, 15000.0f);
+
+    // On exécute la passe d'ombre OFFSCREEN
+    RenderShadows(m_CommandBuffers[m_CurrentFrame], scene, m_CurrentShadowMatrices);
 }

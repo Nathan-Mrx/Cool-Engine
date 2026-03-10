@@ -29,6 +29,8 @@ struct MaterialUBO {
     float roughness = 1.0f;
     float ao = 1.0f;
     float padding = 0.0f;
+    glm::mat4 lightSpaceMatrices[4]; // Les 4 matrices solaires
+    glm::vec4 cascadeSplits;         // Les distances de séparation
 };
 
 struct VulkanMaterial {
@@ -103,6 +105,11 @@ public:
 
     void TrackTexture(VulkanTexture* tex) { m_TrackedTextures.push_back(tex); }
 
+    static constexpr uint32_t SHADOW_MAP_CASCADE_COUNT = 4;
+    static constexpr uint32_t SHADOW_MAP_RESOLUTION = 4096;
+
+    void PrepareShadows(Scene* scene);
+
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
@@ -148,6 +155,13 @@ private:
     void GenerateEnvironmentCubemap();
     void GenerateIrradianceCubemap();
     void GeneratePrefilterCubemap();
+
+    void CreateShadowResources();
+    void CreateShadowPipeline();
+    void CreateShadowRenderPass();
+
+    std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> CalculateCascadeMatrices();
+    void RenderShadows(VkCommandBuffer cmdBuf, Scene* scene, const std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT>& cascadeMatrices);
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -228,6 +242,21 @@ private:
     VulkanTexture* m_EnvironmentCubemap = nullptr;
     VulkanTexture* m_IrradianceCubemap = nullptr;
     VulkanTexture* m_PrefilterCubemap = nullptr;
+
+    VkImage m_ShadowImage = VK_NULL_HANDLE;
+    VkDeviceMemory m_ShadowImageMemory = VK_NULL_HANDLE;
+    VkImageView m_ShadowImageView = VK_NULL_HANDLE;             // Vue globale (Array) pour le Shader PBR
+    std::vector<VkImageView> m_ShadowCascadeViews;              // Vues individuelles pour écrire dedans
+    VkSampler m_ShadowSampler = VK_NULL_HANDLE;
+
+    VkRenderPass m_ShadowRenderPass = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> m_ShadowFramebuffers;            // Un Framebuffer par cascade
+
+    VkPipelineLayout m_ShadowPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_ShadowPipeline = VK_NULL_HANDLE;
+
+    std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> m_CurrentShadowMatrices;
+    glm::vec4 m_CurrentCascadeSplits;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {
