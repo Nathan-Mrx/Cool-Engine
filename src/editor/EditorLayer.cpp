@@ -184,26 +184,32 @@ void EditorLayer::OnUpdate(float deltaTime) {
         Renderer::EndScene();
     } else {
         // --- VULKAN RENDERING ---
-        // 1. PHASE DE CALCUL / PRÉPARATION (Hors RenderPass)
-        VulkanRenderer::Get()->PreRender(m_ActiveScene.get());
+
+        // 1. RENDU DES OMBRES
+        // Cela va ouvrir le carnet de commandes (s'il ne l'est pas), ouvrir le RenderPass d'ombres,
+        // dessiner, puis FERMER le RenderPass d'ombres.
         VulkanRenderer::Get()->PrepareShadows(m_ActiveScene.get());
 
-        // 2. PHASE DE DESSIN (Ouvre le RenderPass via vkCmdBeginRenderPass interne)
+        // 2. DÉMARRAGE DE LA FRAME ET CALCULS GLOBAUX
+        // Maintenant qu'aucun RenderPass n'est actif, le TLAS peut se construire !
+        // Puis, la fonction va ouvrir le RenderPass principal pour la suite.
         Renderer::Clear(m_ActiveScene.get());
 
+        // 3. RENDU DE LA SCÈNE PRINCIPALE
         // Calcul de la caméra de l'éditeur
         glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
         float aspect = m_ViewportSize.x / m_ViewportSize.y;
         if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
 
-        // On lance la scène !
+        // Enregistre les commandes de dessin
         Renderer::BeginScene(view, projection, m_EditorCamera.Position);
         Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
 
         // (On désactive la grille pour l'instant car elle utilise des shaders OpenGL)
         // if (m_ShowGrid) Renderer::DrawGrid(true);
 
+        // Ferme le RenderPass de la scène (mais NE SOUMET PAS LA QUEUE)
         Renderer::EndScene();
     }
 

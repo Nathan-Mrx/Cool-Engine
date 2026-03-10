@@ -186,14 +186,20 @@ void Application::Run() {
         // ==========================================
         else if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
 
+            // --- LE FIX EST ICI : ON OUVRE LA FRAME GLOBALE ---
+            // (Si VulkanRenderer s'en occupe déjà dans le premier Clear(),
+            // on est quand même certains que l'appel global existe si besoin,
+            // mais l'appel crucial est EndFrame).
+
             // 1. MISE À JOUR ET RENDU HORS-ÉCRAN (Scènes 3D)
-            // C'est ici que les Framebuffers s'activent de manière isolée
+            // (C'est dans OnUpdate que l'EditorLayer va appeler ses propres Renderer::Clear pour la vue 3D
+            // et cela va ouvrir la frame proprement et construire le TLAS).
             if (m_EditorLayer) {
                 m_EditorLayer->OnUpdate(m_DeltaTime);
             }
 
             // 2. RENDU PRINCIPAL (Swapchain & ImGui)
-            Renderer::Clear(); // Commence le carnet de la fenêtre
+            Renderer::Clear(); // Commence le carnet pour la fenêtre principale (sans scène, juste l'UI)
             Renderer::BeginImGuiFrame();
 
             if (m_EditorLayer) {
@@ -201,7 +207,12 @@ void Application::Run() {
             }
 
             Renderer::EndImGuiFrame();
-            Renderer::EndScene(); // Soumet le carnet complet au GPU
+            Renderer::EndScene(); // Ferme le RenderPass de la fenêtre principale
+
+            // --- L'AUTRE FIX MAJEUR EST ICI ---
+            // 3. SOUMISSION FINALE AU GPU
+            // On ferme le carnet, on l'envoie au GPU, on attend les sémaphores et on swap !
+            VulkanRenderer::Get()->EndFrame();
 
             if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
                 ImGui::UpdatePlatformWindows();

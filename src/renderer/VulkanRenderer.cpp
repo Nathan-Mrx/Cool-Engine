@@ -147,6 +147,11 @@ void VulkanRenderer::Shutdown() {
             vkDestroyBuffer(m_Device, m_TLASInstancesBuffer[i], nullptr);
             vkFreeMemory(m_Device, m_TLASInstancesMemory[i], nullptr);
         }
+        // NOUVEAU
+        if (m_TLASScratchBuffer[i] != VK_NULL_HANDLE) {
+            vkDestroyBuffer(m_Device, m_TLASScratchBuffer[i], nullptr);
+            vkFreeMemory(m_Device, m_TLASScratchMemory[i], nullptr);
+        }
         DestroyAccelerationStructure(m_TLAS[i]);
     }
 
@@ -891,9 +896,14 @@ void VulkanRenderer::CreateSyncObjects() {
 // --- ÉTAPE 10 : LA BOUCLE DE RENDU (Le dessin !) ---
 // ==============================================================================
 void VulkanRenderer::Clear(Scene* scene) {
-    BeginFrameIfNeeded(scene);
+    // Si la frame n'est pas ouverte, on l'ouvre (utile pour le tout premier appel)
+    BeginFrame();
 
-    m_MainDeletionQueue.flush();
+    // Le TLAS est mis à jour ici car on est sûr que le carnet est ouvert,
+    // et qu'aucun RenderPass n'a encore commencé (car on est au début de Clear).
+    if (scene) {
+        UpdateTLAS(scene);
+    }
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -935,8 +945,7 @@ void VulkanRenderer::Clear(Scene* scene) {
     }
 }
 
-// Tu devras rajouter le paramètre (Scene* scene) dans le .h et ici
-void VulkanRenderer::BeginFrameIfNeeded(Scene* scene) {
+void VulkanRenderer::BeginFrameIfNeeded() {
     if (!m_IsFrameStarted) {
         vkWaitForFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame], VK_TRUE, UINT64_MAX);
         vkAcquireNextImageKHR(m_Device, m_SwapChain, UINT64_MAX, m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &m_CurrentImageIndex);
@@ -948,55 +957,15 @@ void VulkanRenderer::BeginFrameIfNeeded(Scene* scene) {
         vkBeginCommandBuffer(m_CommandBuffers[m_CurrentFrame], &beginInfo);
 
         m_IsFrameStarted = true;
-
-        // ====================================================================
-        // --- LE FIX MAGIQUE : LE TLAS EST CONSTRUIT ICI, SUR UN CARNET VIERGE
-        // ====================================================================
-        if (scene) {
-            UpdateTLAS(scene);
-        }
     }
 }
 
 void VulkanRenderer::EndScene() {
     vkCmdEndRenderPass(m_CommandBuffers[m_CurrentFrame]);
 
-    // Si le target est nul, cela veut dire qu'on vient de finir la Swapchain Principale !
-    // Il est donc temps d'envoyer tout le carnet à la carte graphique.
-    if (!m_TargetFramebuffer) {
-        vkEndCommandBuffer(m_CommandBuffers[m_CurrentFrame]);
-
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        VkSemaphore waitSemaphores[] = {m_ImageAvailableSemaphores[m_CurrentFrame]};
-        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = waitSemaphores;
-        submitInfo.pWaitDstStageMask = waitStages;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &m_CommandBuffers[m_CurrentFrame];
-
-        // --- LE FIX : On utilise l'Index de l'Image Swapchain ! ---
-        VkSemaphore signalSemaphores[] = {m_RenderFinishedSemaphores[m_CurrentImageIndex]};
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = signalSemaphores;
-
-        vkQueueSubmit(m_GraphicsQueue, 1, &submitInfo, m_InFlightFences[m_CurrentFrame]);
-
-        VkPresentInfoKHR presentInfo{};
-        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = signalSemaphores;
-        VkSwapchainKHR swapChains[] = {m_SwapChain};
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = swapChains;
-        presentInfo.pImageIndices = &m_CurrentImageIndex;
-
-        vkQueuePresentKHR(m_PresentQueue, &presentInfo);
-
-        m_IsFrameStarted = false; // On reset pour la frame suivante !
-        m_CurrentFrame = (m_CurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-    }
+    // On retire toute la soumission de la queue d'ici !
+    // Si c'est un panneau ImGui ou la scène principale, ça ne fait que fermer le RenderPass actuel.
+    // L'envoi global (Submit) se fera dans EndFrame().
 }
 
 void VulkanRenderer::BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
@@ -1708,7 +1677,6 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MaterialUBO);
 
-        // 10 Textures !
         std::array<VkDescriptorImageInfo, 10> imageInfos{};
         VulkanTexture* textures[] = {
             albedo, normal, metallic, roughness, ao,
@@ -1721,15 +1689,13 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
             imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : m_DefaultWhiteTexture->Sampler;
         }
 
-        // Texture 10 (Index 9) : L'ARRAY DE SHADOW MAPS
         imageInfos[9].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         imageInfos[9].imageView = m_ShadowImageView;
         imageInfos[9].sampler = m_ShadowSampler;
 
-        // 12 Writes !
-        std::array<VkWriteDescriptorSet, 12> descriptorWrites{};
+        // SEULEMENT 11 ÉCRITURES ! (On ne met PAS le TLAS ici)
+        std::array<VkWriteDescriptorSet, 11> descriptorWrites{};
 
-        // UBO (Binding 0)
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].dstSet = mat.DescriptorSets[i];
         descriptorWrites[0].dstBinding = 0;
@@ -1738,8 +1704,7 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        // Textures (Bindings 1 à 10)
-        for(int t = 0; t < 10; t++) { // Boucle jusqu'à 9 (qui cible l'index 9, Binding 10)
+        for(int t = 0; t < 10; t++) {
             descriptorWrites[t + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[t + 1].dstSet = mat.DescriptorSets[i];
             descriptorWrites[t + 1].dstBinding = t + 1;
@@ -1748,21 +1713,6 @@ VulkanMaterial VulkanRenderer::CreateVulkanMaterial(VulkanTexture* albedo, Vulka
             descriptorWrites[t + 1].descriptorCount = 1;
             descriptorWrites[t + 1].pImageInfo = &imageInfos[t];
         }
-
-        // Écriture 11 : LE TLAS
-        VkWriteDescriptorSetAccelerationStructureKHR descriptorAS{};
-        descriptorAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-        descriptorAS.accelerationStructureCount = 1;
-        // On donne l'adresse du TLAS global !
-        descriptorAS.pAccelerationStructures = &m_TLAS[i].handle;
-
-        descriptorWrites[11].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        // Obligatoire pour attacher une structure spéciale
-        descriptorWrites[11].pNext = &descriptorAS;
-        descriptorWrites[11].dstSet = mat.DescriptorSets[i];
-        descriptorWrites[11].dstBinding = 11; // La prise 11 !
-        descriptorWrites[11].descriptorCount = 1;
-        descriptorWrites[11].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 
         vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -3770,15 +3720,31 @@ void VulkanRenderer::DestroyAccelerationStructure(AccelerationStructure& as) {
 void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstanceKHR>& instances) {
     if (instances.empty()) return;
 
-    uint32_t frame = m_CurrentFrame; // L'astuce magique : On isole le travail de cette frame !
+    uint32_t frame = m_CurrentFrame;
+
+    // ====================================================================
+    // --- FIX DU CRASH : INITIALISATION SÉCURISÉE DES VECTEURS ---
+    // Si les tableaux n'ont pas encore été redimensionnés, on le fait ici !
+    // ====================================================================
+    if (m_TLAS.size() != MAX_FRAMES_IN_FLIGHT) {
+        m_TLAS.resize(MAX_FRAMES_IN_FLIGHT);
+        m_TLASInstancesBuffer.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+        m_TLASInstancesMemory.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+    }
+    if (m_TLASScratchBuffer.size() != MAX_FRAMES_IN_FLIGHT) {
+        m_TLASScratchBuffer.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+        m_TLASScratchMemory.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+    }
+
     VkDeviceSize bufferSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
 
-    // 1. Plus besoin de WaitIdle ! La "Fence" de cette frame a déjà été validée par le moteur.
+    // 1. On nettoie l'ancien buffer d'instances de CETTE frame s'il existe
     if (m_TLASInstancesBuffer[frame] != VK_NULL_HANDLE) {
         vkDestroyBuffer(m_Device, m_TLASInstancesBuffer[frame], nullptr);
         vkFreeMemory(m_Device, m_TLASInstancesMemory[frame], nullptr);
     }
 
+    // 2. Création du buffer d'instances visible par le CPU
     CreateBuffer(
         bufferSize,
         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
@@ -3786,11 +3752,13 @@ void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstance
         m_TLASInstancesBuffer[frame], m_TLASInstancesMemory[frame]
     );
 
+    // 3. Copie des instances
     void* data;
     vkMapMemory(m_Device, m_TLASInstancesMemory[frame], 0, bufferSize, 0, &data);
     memcpy(data, instances.data(), bufferSize);
     vkUnmapMemory(m_Device, m_TLASInstancesMemory[frame]);
 
+    // 4. Configuration de la géométrie RT
     VkAccelerationStructureGeometryKHR geometry{};
     geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
@@ -3812,10 +3780,12 @@ void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstance
     buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
     vkGetAccelerationStructureBuildSizesKHR(m_Device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &primitiveCount, &buildSizesInfo);
 
+    // 5. Destruction de l'ancien TLAS de la frame courante
     if (m_TLAS[frame].handle != VK_NULL_HANDLE) {
         DestroyAccelerationStructure(m_TLAS[frame]);
     }
 
+    // 6. Allocation du nouveau TLAS
     CreateBuffer(
         buildSizesInfo.accelerationStructureSize,
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -3830,18 +3800,24 @@ void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstance
     createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     vkCreateAccelerationStructureKHR(m_Device, &createInfo, nullptr, &m_TLAS[frame].handle);
 
-    VkBuffer scratchBuffer;
-    VkDeviceMemory scratchMemory;
+    // ==============================================================================
+    // 7. LE FAMEUX SCRATCH BUFFER (Brouillon) DE LA FRAME COURANTE
+    // ==============================================================================
+    if (m_TLASScratchBuffer[frame] != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_Device, m_TLASScratchBuffer[frame], nullptr);
+        vkFreeMemory(m_Device, m_TLASScratchMemory[frame], nullptr);
+    }
+
     CreateBuffer(
         buildSizesInfo.buildScratchSize,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        scratchBuffer, scratchMemory
+        m_TLASScratchBuffer[frame], m_TLASScratchMemory[frame]
     );
 
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.dstAccelerationStructure = m_TLAS[frame].handle;
-    buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(scratchBuffer);
+    buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(m_TLASScratchBuffer[frame]);
 
     VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
     buildRangeInfo.primitiveCount = primitiveCount;
@@ -3851,32 +3827,23 @@ void VulkanRenderer::BuildTLAS(const std::vector<VkAccelerationStructureInstance
 
     const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[1] = { &buildRangeInfo };
 
-    // =================================================================================
-    // L'APPROCHE AAA : On injecte directement dans le flux du GPU en temps réel !
-    // Plus de SingleTimeCommands, le CPU ne s'arrête plus jamais d'avancer.
-    // =================================================================================
+    // 8. Construction via le Command Buffer asynchrone (Pas d'attente CPU !)
     VkCommandBuffer cmdBuf = m_CommandBuffers[frame];
     vkCmdBuildAccelerationStructuresKHR(cmdBuf, 1, &buildInfo, pBuildRangeInfos);
 
-    // Barrière de mémoire : on dit au Shader PBR "Attends que l'arbre soit construit avant de tirer un rayon !"
+    // 9. Barrière de mémoire : on protège le Shader pour qu'il attende la fin du build
     VkMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 
-    // On délègue la destruction du brouillon au "Garbage Collector" car le GPU s'en sert encore !
-    m_MainDeletionQueue.push_function([=, device = m_Device]() {
-        vkDestroyBuffer(device, scratchBuffer, nullptr);
-        vkFreeMemory(device, scratchMemory, nullptr);
-    });
-
+    // 10. Sauvegarde de l'adresse de l'arbre
     VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
     addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     addressInfo.accelerationStructure = m_TLAS[frame].handle;
     m_TLAS[frame].deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_Device, &addressInfo);
 }
-
 // ==============================================================================
 // RAY TRACING : MISE À JOUR DU TLAS AVEC LA SCÈNE
 // ==============================================================================
@@ -3927,4 +3894,57 @@ void VulkanRenderer::UpdateTLAS(Scene* scene) {
 
 void VulkanRenderer::PreRender(Scene* scene) {
     // On ne fait plus rien ici, on a trouvé une meilleure place.
+}
+
+void VulkanRenderer::BeginFrame() {
+    if (m_IsFrameStarted) return; // Sécurité
+
+    vkWaitForFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame], VK_TRUE, UINT64_MAX);
+    vkAcquireNextImageKHR(m_Device, m_SwapChain, UINT64_MAX, m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &m_CurrentImageIndex);
+    vkResetFences(m_Device, 1, &m_InFlightFences[m_CurrentFrame]);
+    vkResetCommandBuffer(m_CommandBuffers[m_CurrentFrame], 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vkBeginCommandBuffer(m_CommandBuffers[m_CurrentFrame], &beginInfo);
+
+    m_IsFrameStarted = true;
+}
+
+void VulkanRenderer::EndFrame() {
+    if (!m_IsFrameStarted) return; // Sécurité
+
+    vkEndCommandBuffer(m_CommandBuffers[m_CurrentFrame]);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    VkSemaphore waitSemaphores[] = {m_ImageAvailableSemaphores[m_CurrentFrame]};
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_CommandBuffers[m_CurrentFrame];
+
+    VkSemaphore signalSemaphores[] = {m_RenderFinishedSemaphores[m_CurrentImageIndex]};
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(m_GraphicsQueue, 1, &submitInfo, m_InFlightFences[m_CurrentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur : Impossible de soumettre le Command Buffer !");
+    }
+
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+    VkSwapchainKHR swapChains[] = {m_SwapChain};
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &m_CurrentImageIndex;
+
+    vkQueuePresentKHR(m_PresentQueue, &presentInfo);
+
+    m_IsFrameStarted = false;
+    m_CurrentFrame = (m_CurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }

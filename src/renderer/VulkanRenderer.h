@@ -82,7 +82,7 @@ public:
     void ShutdownImGui() override;
 
     void SetTargetFramebuffer(VulkanFramebuffer* fb) { m_TargetFramebuffer = fb; }
-    void BeginFrameIfNeeded(Scene* scene = nullptr);
+    void BeginFrameIfNeeded();
 
     static VulkanRenderer* Get();
 
@@ -137,6 +137,9 @@ public:
 
     void UpdateTLAS(Scene* scene);
     void PreRender(Scene* scene);
+
+    void BeginFrame();
+    void EndFrame();
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
@@ -319,6 +322,10 @@ private:
     std::vector<AccelerationStructure> m_TLAS;
     std::vector<VkBuffer> m_TLASInstancesBuffer;
     std::vector<VkDeviceMemory> m_TLASInstancesMemory;
+
+    std::vector<VkBuffer> m_TLASScratchBuffer;
+    std::vector<VkDeviceMemory> m_TLASScratchMemory;
+
 #ifdef NDEBUG
     const bool m_EnableValidationLayers = false;
 #else
