@@ -14,6 +14,7 @@
 #include "TextureLoader.h"
 #include "VulkanFramebuffer.h"
 #include "ecs/Components.h"
+#include "DDGIVolume.h"
 
 static std::vector<char> ReadFile(const std::string& filename) {
     // On lit à la fin (ate) et en binaire (binary) pour avoir la taille exacte direct
@@ -1619,8 +1620,8 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
 }
 
 void VulkanRenderer::CreateDescriptorPool() {
-    // L'usine a maintenant 3 rayons : Buffers, Textures, et Acceleration Structures
-    std::array<VkDescriptorPoolSize, 3> poolSizes{};
+    // L'usine a maintenant 4 rayons ! (On ajoute les Storage Images pour le Compute)
+    std::array<VkDescriptorPoolSize, 4> poolSizes{};
 
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = 1000;
@@ -1629,11 +1630,15 @@ void VulkanRenderer::CreateDescriptorPool() {
     poolSizes[1].descriptorCount = 5000;
 
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    poolSizes[2].descriptorCount = 1000; // Un TLAS par Set
+    poolSizes[2].descriptorCount = 1000;
+
+    // --- NOUVEAU ---
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[3].descriptorCount = 1000;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // Taille passe à 3 !
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size()); // Passe à 4 !
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = 1000;
 
@@ -3947,4 +3952,249 @@ void VulkanRenderer::EndFrame() {
 
     m_IsFrameStarted = false;
     m_CurrentFrame = (m_CurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+VulkanTexture* VulkanRenderer::CreateStorageTexture(uint32_t width, uint32_t height, VkFormat format) {
+    VulkanTexture* tex = new VulkanTexture();
+
+    // 1. Création de l'Image
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // L'astuce est ici : STORAGE pour y écrire via Compute, SAMPLED pour la lire dans triangle.frag !
+    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    vkCreateImage(m_Device, &imageInfo, nullptr, &tex->Image);
+
+    // 2. Allocation de la VRAM
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(m_Device, tex->Image, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    vkAllocateMemory(m_Device, &allocInfo, nullptr, &tex->Memory);
+    vkBindImageMemory(m_Device, tex->Image, tex->Memory, 0);
+
+    // 3. Création de la Vue (ImageView)
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = tex->Image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    vkCreateImageView(m_Device, &viewInfo, nullptr, &tex->View);
+
+    // 4. Création du Sampler Linéaire
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+    vkCreateSampler(m_Device, &samplerInfo, nullptr, &tex->Sampler);
+
+    // 5. Transition de l'image vers LAYOUT_GENERAL (Obligatoire pour les Compute Shaders)
+    VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = tex->Image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    EndSingleTimeCommands(cmdBuf);
+
+    return tex;
+}
+
+void VulkanRenderer::DestroyTexture(VulkanTexture* tex) {
+    if (tex) {
+        vkDestroySampler(m_Device, tex->Sampler, nullptr);
+        vkDestroyImageView(m_Device, tex->View, nullptr);
+        vkDestroyImage(m_Device, tex->Image, nullptr);
+        vkFreeMemory(m_Device, tex->Memory, nullptr);
+        delete tex;
+    }
+}
+
+void VulkanRenderer::CreateDDGIPipeline() {
+    // 1. Le Contrat (Descriptor Set Layout)
+    // Binding 0 : La texture d'Irradiance (Storage Image, Write Only)
+    VkDescriptorSetLayoutBinding storageBinding{};
+    storageBinding.binding = 0;
+    storageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    storageBinding.descriptorCount = 1;
+    storageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // Binding 1 : La Skybox ou texture d'environnement (Sampler classique)
+    VkDescriptorSetLayoutBinding envMapBinding{};
+    envMapBinding.binding = 1;
+    envMapBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    envMapBinding.descriptorCount = 1;
+    envMapBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {storageBinding, envMapBinding};
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+
+    vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_DDGIDescriptorSetLayout);
+
+    // 2. Le Pipeline Layout (Push Constants pour uProbeCount)
+    VkPushConstantRange pushConstant{};
+    pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushConstant.offset = 0;
+    pushConstant.size = sizeof(glm::ivec3); // On envoie ivec3(x, y, z)
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &m_DDGIDescriptorSetLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstant;
+
+    vkCreatePipelineLayout(m_Device, &pipelineLayoutInfo, nullptr, &m_DDGIPipelineLayout);
+
+    // 3. Le Compute Pipeline
+    // Note : Ton script CompileShaders.py transforme sûrement .comp en _comp.spv
+    auto compShaderCode = ReadFile("shaders/ddgi_update_comp.spv");
+    VkShaderModule compShaderModule = CreateShaderModule(compShaderCode);
+
+    VkPipelineShaderStageCreateInfo compShaderStageInfo{};
+    compShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    compShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    compShaderStageInfo.module = compShaderModule;
+    compShaderStageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = m_DDGIPipelineLayout;
+    pipelineInfo.stage = compShaderStageInfo;
+
+    if (vkCreateComputePipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_DDGIPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale : Impossible de creer le DDGI Compute Pipeline !");
+    }
+
+    vkDestroyShaderModule(m_Device, compShaderModule, nullptr);
+    std::cout << "[Vulkan] DDGI Compute Pipeline cree avec succes.\n";
+}
+
+void VulkanRenderer::ComputeDDGI(DDGIVolume* volume) {
+    if (!volume || !m_IsFrameStarted) return;
+
+    // 1. Initialisation paresseuse du Descriptor Set (Une seule fois !)
+    if (m_DDGIDescriptorSet == VK_NULL_HANDLE) {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = m_DescriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &m_DDGIDescriptorSetLayout;
+
+        vkAllocateDescriptorSets(m_Device, &allocInfo, &m_DDGIDescriptorSet);
+
+        // On branche nos images !
+        VkDescriptorImageInfo storageImageInfo{};
+        storageImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // Obligatoire pour Storage
+        storageImageInfo.imageView = volume->GetIrradianceTexture()->View;
+        storageImageInfo.sampler = volume->GetIrradianceTexture()->Sampler;
+
+        VkWriteDescriptorSet writeStorage{};
+        writeStorage.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeStorage.dstSet = m_DDGIDescriptorSet;
+        writeStorage.dstBinding = 0;
+        writeStorage.dstArrayElement = 0;
+        writeStorage.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writeStorage.descriptorCount = 1;
+        writeStorage.pImageInfo = &storageImageInfo;
+
+        VkDescriptorImageInfo envMapInfo{};
+        envMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        envMapInfo.imageView = m_EnvironmentCubemap ? m_EnvironmentCubemap->View : m_DefaultWhiteTexture->View;
+        envMapInfo.sampler = m_EnvironmentCubemap ? m_EnvironmentCubemap->Sampler : m_DefaultWhiteTexture->Sampler;
+
+        VkWriteDescriptorSet writeEnv{};
+        writeEnv.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeEnv.dstSet = m_DDGIDescriptorSet;
+        writeEnv.dstBinding = 1;
+        writeEnv.dstArrayElement = 0;
+        writeEnv.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writeEnv.descriptorCount = 1;
+        writeEnv.pImageInfo = &envMapInfo;
+
+        std::array<VkWriteDescriptorSet, 2> writes = {writeStorage, writeEnv};
+        vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+
+    // 2. LE LANCEMENT DU CALCUL
+    VkCommandBuffer cmdBuf = m_CommandBuffers[m_CurrentFrame];
+
+    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_DDGIPipeline);
+    vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_DDGIPipelineLayout, 0, 1, &m_DDGIDescriptorSet, 0, nullptr);
+
+    glm::ivec3 probes = volume->GetProbeCount();
+    vkCmdPushConstants(cmdBuf, m_DDGIPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(glm::ivec3), &probes);
+
+    // Dans le shader, on a mis local_size = (8, 8, 1). Ce qui correspond à un "carré" de sonde.
+    // Donc on demande au GPU de lancer autant de groupes qu'il y a de sondes !
+    vkCmdDispatch(cmdBuf, probes.x, probes.y, probes.z);
+
+    // 3. LA BARRIÈRE DE SÉCURITÉ (Crucial en AAA)
+    // On dit au GPU : "Attends que le Compute Shader ait fini d'écrire dans l'Irradiance avant que le Fragment Shader le lise !"
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL; // On le laisse en General pour la prochaine frame
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = volume->GetIrradianceTexture()->Image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    vkCmdPipelineBarrier(
+        cmdBuf,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, // Le producteur
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // Le consommateur
+        0, 0, nullptr, 0, nullptr, 1, &barrier
+    );
 }

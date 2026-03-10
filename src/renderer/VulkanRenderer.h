@@ -141,6 +141,10 @@ public:
     void BeginFrame();
     void EndFrame();
 
+    // --- DDGI & COMPUTE ---
+    VulkanTexture* CreateStorageTexture(uint32_t width, uint32_t height, VkFormat format);
+    void DestroyTexture(VulkanTexture* tex);
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
@@ -192,6 +196,9 @@ private:
 
     std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> CalculateCascadeMatrices();
     void RenderShadows(VkCommandBuffer cmdBuf, Scene* scene, const std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT>& cascadeMatrices);
+
+    void CreateDDGIPipeline();
+    void ComputeDDGI(class DDGIVolume* volume);
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -325,6 +332,12 @@ private:
 
     std::vector<VkBuffer> m_TLASScratchBuffer;
     std::vector<VkDeviceMemory> m_TLASScratchMemory;
+
+    // --- DDGI COMPUTE PIPELINE ---
+    VkDescriptorSetLayout m_DDGIDescriptorSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout m_DDGIPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_DDGIPipeline = VK_NULL_HANDLE;
+    VkDescriptorSet m_DDGIDescriptorSet = VK_NULL_HANDLE;
 
 #ifdef NDEBUG
     const bool m_EnableValidationLayers = false;

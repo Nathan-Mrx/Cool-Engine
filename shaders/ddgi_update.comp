@@ -1,14 +1,19 @@
 #version 460 core
+// VULKAN
 
-// On définit des "groupes de travail".
-// Ici, on dit qu'un groupe = 8x8 pixels = 1 sonde de notre grille d'Irradiance !
+// 1 groupe de travail = 8x8 pixels = 1 sonde
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-// C'est ici qu'on va écrire notre Atlas 2D géant
-layout(rgba16f, binding = 0) uniform writeonly image2D outIrradiance;
+// Set 0, Binding 0 : Notre texture d'Irradiance en mode "Storage"
+layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outIrradiance;
 
-uniform samplerCube uEnvironmentMap; // Notre source de lumière temporaire
-uniform ivec3 uProbeCount;           // (16, 8, 16)
+// Set 0, Binding 1 : La Skybox (pour le premier test de DDGI)
+layout(set = 0, binding = 1) uniform samplerCube uEnvironmentMap;
+
+// Push Constants : Le moyen ultra-rapide d'envoyer des petites données en Vulkan
+layout(push_constant) uniform DDGIPushConstants {
+    ivec3 uProbeCount;
+} pc;
 
 // =========================================================================
 // --- MATHÉMATIQUES DDGI : LE DÉPLIAGE OCTAÉDRIQUE ---
@@ -24,12 +29,12 @@ vec3 OctDecode(vec2 f) {
 }
 
 void main() {
-    // 1. Quelle sonde est-on en train de calculer ? (ex: Sonde X=5, Y=2, Z=10)
+    // 1. Quelle sonde est-on en train de calculer ?
     ivec3 probeCoord = ivec3(gl_WorkGroupID.x, gl_WorkGroupID.y, gl_WorkGroupID.z);
 
-    // 2. Conversion en index 1D (de 0 à 2047)
-    int probesPerRow = uProbeCount.x * uProbeCount.y;
-    int probeIndex = probeCoord.x + probeCoord.y * uProbeCount.x + probeCoord.z * probesPerRow;
+    // 2. Conversion en index 1D
+    int probesPerRow = pc.uProbeCount.x * pc.uProbeCount.y;
+    int probeIndex = probeCoord.x + probeCoord.y * pc.uProbeCount.x + probeCoord.z * probesPerRow;
 
     // 3. Où se trouve le coin de cette sonde dans notre image géante 2D ?
     int gridX = probeIndex % probesPerRow;
@@ -41,16 +46,13 @@ void main() {
     // =========================================================================
     // --- LE CALCUL DE LA LUMIÈRE ---
     // =========================================================================
-    // On convertit le pixel local (0 à 7) en UV (0.0 à 1.0)
     vec2 octUV = (vec2(gl_LocalInvocationID.xy) + 0.5) / 8.0;
-
-    // Dans quelle direction ce pixel regarde-t-il ?
     vec3 rayDir = OctDecode(octUV);
 
-    // POUR L'INSTANT : Au lieu de faire un vrai raytracing sur les murs de la scène,
-    // on capture simplement le ciel ambiant dans cette direction.
-    vec3 color = texture(uEnvironmentMap, rayDir).rgb;
+    // POUR L'INSTANT (Étape 1 du test Vulkan) : On lit juste la Skybox !
+    // Plus tard, on lira les résultats du vrai Ray Tracing ici.
+    vec3 incomingLight = texture(uEnvironmentMap, rayDir).rgb;
 
-    // On stocke le résultat brutalement dans la mémoire de la carte graphique !
-    imageStore(outIrradiance, pixelCoord, vec4(color, 1.0));
+    // On écrit le résultat dans l'image géante !
+    imageStore(outIrradiance, pixelCoord, vec4(incomingLight, 1.0));
 }

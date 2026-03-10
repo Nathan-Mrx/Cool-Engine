@@ -26,12 +26,13 @@ def main():
             source_path = os.path.join(shader_dir, file)
 
             # --- LE FILTRE INTELLIGENT ---
-            # On lit la première ligne. Si ce n'est pas un shader Vulkan (450), on l'ignore !
             try:
                 with open(source_path, 'r', encoding='utf-8') as f:
-                    first_line = f.readline()
-                    if "#version 450" not in first_line:
-                        continue # Ce n'est pas du Vulkan, on passe au fichier suivant !
+                    # On lit les premières lignes pour être rapide
+                    head = f.read(512)
+                    # Si c'est du 450, ou si ça contient le tag VULKAN, on compile !
+                    if "#version 450" not in head and "// VULKAN" not in head:
+                        continue
             except Exception:
                 continue
             # -----------------------------

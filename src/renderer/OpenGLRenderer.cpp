@@ -338,7 +338,7 @@ void OpenGLRenderer::RenderScene(Scene* scene, int renderMode) {
             glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)(uintptr_t)m_Data->ShadowFramebuffer->GetDepthAttachmentRendererID());
             activeShader->SetInt("uShadowMap", 15);
 
-            // ==========================================================
+            /*// ==========================================================
             // --- INJECTION DE LA DDGI (LUMIÈRE GLOBALE DYNAMIQUE) ---
             // ==========================================================
             glActiveTexture(GL_TEXTURE14);
@@ -361,7 +361,7 @@ void OpenGLRenderer::RenderScene(Scene* scene, int renderMode) {
                 activeShader->SetFloat("uDDGISpaceZ", spacing.z);
 
                 activeShader->SetInt3("uDDGIProbeCount", counts.x, counts.y, counts.z);
-            }
+            }*/
 
             // --- INJECTION DES REFLETS SPÉCULAIRES (IBL COMPLET) ---
             glActiveTexture(GL_TEXTURE12);
@@ -787,7 +787,7 @@ void OpenGLRenderer::UpdateSkybox(const std::string& hdrPath) {
 
         // On connecte la texture de notre volume en mode "Ecriture Pure" (Image Load/Store)
         // Format GL_RGBA16F, Unité d'image 0
-        glBindImageTexture(0, m_Data->GlobalDDGIVolume->GetIrradianceTexture(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        //glBindImageTexture(0, m_Data->GlobalDDGIVolume->GetIrradianceTexture(), 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
         // BOUM ! On lance 2048 groupes de travail en parallèle !
         // (La carte graphique va traiter plus de 130 000 pixels quasi-instantanément)
