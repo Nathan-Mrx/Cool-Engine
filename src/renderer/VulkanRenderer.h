@@ -114,6 +114,14 @@ public:
 
     void InvalidateEntityMaterial(entt::entity entityID);
 
+
+    const std::vector<const char*> m_DeviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,   // Pour construire les BVH (TLAS / BLAS)
+        VK_KHR_RAY_QUERY_EXTENSION_NAME,                // Pour tirer des rayons depuis le Compute Shader
+        VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME  // Requis par l'Acceleration Structure
+    };
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();

@@ -446,15 +446,61 @@ void VulkanRenderer::CreateLogicalDevice() {
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
-    // 3. Fonctionnalités matérielles (Laissé vide pour l'instant)
+    // 1. Tes features de base classiques (Garde ce que tu as déjà activé ici, ex: Anisotropy)
     VkPhysicalDeviceFeatures deviceFeatures{};
+    deviceFeatures.samplerAnisotropy = VK_TRUE;
+    // deviceFeatures.fillModeNonSolid = VK_TRUE; // (Si tu as le Wireframe d'activé)
 
-    // 4. Création du Device
+    // 2. Les Features Ray Query
+    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+    rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    rayQueryFeatures.rayQuery = VK_TRUE;
+
+    // 3. Les Features d'Acceleration Structure (Relié à Ray Query via pNext)
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelStructFeatures{};
+    accelStructFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    accelStructFeatures.accelerationStructure = VK_TRUE;
+    accelStructFeatures.pNext = &rayQueryFeatures;
+
+    // 4. Les Features Vulkan 1.2 (Vital : Buffer Device Address)
+    // Le RT a besoin d'adresses mémoires brutes (pointeurs GPU) pour trouver les vertices
+    VkPhysicalDeviceVulkan12Features vulkan12Features{};
+    vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    vulkan12Features.bufferDeviceAddress = VK_TRUE;
+    vulkan12Features.descriptorIndexing = VK_TRUE; // La DDGI adorera le Descriptor Indexing
+    vulkan12Features.pNext = &accelStructFeatures;
+
+    // 5. La capsule globale qui contient TOUTES les features
+    VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
+    physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    physicalDeviceFeatures2.features = deviceFeatures;
+    physicalDeviceFeatures2.pNext = &vulkan12Features;
+
+    // 6. Création du Device
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
-    createInfo.pEnabledFeatures = &deviceFeatures;
+
+    // ATTENTION : pEnabledFeatures DOIT être à nullptr quand on utilise pNext pour les features !
+    createInfo.pEnabledFeatures = nullptr;
+    createInfo.pNext = &physicalDeviceFeatures2; // <--- On branche la chaîne ici !
+
+    // On active les extensions (qui contiennent maintenant le RT)
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(m_DeviceExtensions.size());
+    createInfo.ppEnabledExtensionNames = m_DeviceExtensions.data();
+
+    // Layers de validation (si applicables)
+    if (m_EnableValidationLayers) {
+        createInfo.enabledLayerCount = static_cast<uint32_t>(m_ValidationLayers.size());
+        createInfo.ppEnabledLayerNames = m_ValidationLayers.data();
+    } else {
+        createInfo.enabledLayerCount = 0;
+    }
+
+    if (vkCreateDevice(m_PhysicalDevice, &createInfo, nullptr, &m_Device) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur: Impossible de créer le Logical Device avec Ray Tracing !");
+    }
 
     const std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
