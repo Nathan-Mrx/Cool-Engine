@@ -13,7 +13,14 @@
 #include <unordered_map>
 #include <entt/entt.hpp>
 
-#include "Mesh.h"
+class Mesh;
+
+struct AccelerationStructure {
+    VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceAddress deviceAddress = 0;
+};
 
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -122,6 +129,9 @@ public:
         VK_KHR_RAY_QUERY_EXTENSION_NAME,
         VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME
     };
+
+    AccelerationStructure CreateBLAS(VkBuffer vertexBuffer, uint32_t vertexCount, VkBuffer indexBuffer, uint32_t indexCount);
+    void DestroyAccelerationStructure(AccelerationStructure& as);
 
 private:
     // --- LES ÉTAPES D'INITIALISATION ---

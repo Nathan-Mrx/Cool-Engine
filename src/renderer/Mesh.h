@@ -4,6 +4,8 @@
 #include <string>
 #include <vulkan/vulkan.h>
 
+struct AccelerationStructure;
+
 struct Vertex {
     glm::vec3 Position;
     glm::vec3 Normal;
@@ -19,11 +21,13 @@ public:
     void Draw();
 
     // --- NOUVEAU : Les getters pour la preview ---
-    unsigned int GetVAO() const { return m_VAO; }
-    unsigned int GetIndicesCount() const { return (unsigned int)m_Indices.size(); }
+    [[nodiscard]] unsigned int GetVAO() const { return m_VAO; }
+    [[nodiscard]] unsigned int GetIndicesCount() const { return (unsigned int)m_Indices.size(); }
 
-    VkBuffer GetVertexBuffer() const { return m_VertexBuffer; }
-    VkBuffer GetIndexBuffer() const { return m_IndexBuffer; }
+    [[nodiscard]] VkBuffer GetVertexBuffer() const { return m_VertexBuffer; }
+    [[nodiscard]] VkBuffer GetIndexBuffer() const { return m_IndexBuffer; }
+
+    [[nodiscard]] AccelerationStructure* GetBLAS() const { return m_BLAS; }
 
 private:
     void SetupMesh();
@@ -39,4 +43,6 @@ private:
     VkDeviceMemory m_VertexBufferMemory = VK_NULL_HANDLE;
     VkBuffer m_IndexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_IndexBufferMemory = VK_NULL_HANDLE;
+
+    AccelerationStructure* m_BLAS = nullptr;
 };

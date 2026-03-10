@@ -125,6 +125,11 @@ void Mesh::SetupVulkanMesh() {
 
     vkDestroyBuffer(device, stagingIndexBuffer, nullptr);
     vkFreeMemory(device, stagingIndexMemory, nullptr);
+
+    // --- RAY TRACING : ON CONSTRUIT LE BLAS ---
+    m_BLAS = new AccelerationStructure();
+    *m_BLAS = vkRenderer->CreateBLAS(m_VertexBuffer, m_Vertices.size(), m_IndexBuffer, m_Indices.size());
+    std::cout << "[Mesh] BLAS genere pour un modele avec " << m_Indices.size() / 3 << " triangles.\n";
 }
 
 void Mesh::CleanupVulkanMesh() {
@@ -134,6 +139,12 @@ void Mesh::CleanupVulkanMesh() {
         if (m_IndexBufferMemory) vkFreeMemory(device, m_IndexBufferMemory, nullptr);
         if (m_VertexBuffer) vkDestroyBuffer(device, m_VertexBuffer, nullptr);
         if (m_VertexBufferMemory) vkFreeMemory(device, m_VertexBufferMemory, nullptr);
+    }
+
+    if (m_BLAS) {
+        VulkanRenderer::Get()->DestroyAccelerationStructure(*m_BLAS);
+        delete m_BLAS;
+        m_BLAS = nullptr;
     }
 }
 

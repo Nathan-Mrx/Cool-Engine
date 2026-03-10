@@ -46,6 +46,21 @@ void VulkanRenderer::Init() {
     CreateSurface();
     PickPhysicalDevice();
     CreateLogicalDevice();
+
+    // =========================================================================
+    // LE FIX EST ICI : On charge les fonctions RT dès que le Device est prêt !
+    // =========================================================================
+    vkCreateAccelerationStructureKHR = (PFN_vkCreateAccelerationStructureKHR)vkGetDeviceProcAddr(m_Device, "vkCreateAccelerationStructureKHR");
+    vkDestroyAccelerationStructureKHR = (PFN_vkDestroyAccelerationStructureKHR)vkGetDeviceProcAddr(m_Device, "vkDestroyAccelerationStructureKHR");
+    vkGetAccelerationStructureBuildSizesKHR = (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetDeviceProcAddr(m_Device, "vkGetAccelerationStructureBuildSizesKHR");
+    vkGetAccelerationStructureDeviceAddressKHR = (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetDeviceProcAddr(m_Device, "vkGetAccelerationStructureDeviceAddressKHR");
+    vkCmdBuildAccelerationStructuresKHR = (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetDeviceProcAddr(m_Device, "vkCmdBuildAccelerationStructuresKHR");
+
+    if (!vkCreateAccelerationStructureKHR || !vkCmdBuildAccelerationStructuresKHR) {
+        throw std::runtime_error("Erreur fatale: Impossible de charger les fonctions KHR pour le Ray Tracing !");
+    }
+    // =========================================================================
+
     CreateSwapChain();
     CreateImageViews();
     CreateRenderPass();
@@ -71,22 +86,8 @@ void VulkanRenderer::Init() {
     GenerateEnvironmentCubemap();
     GenerateIrradianceCubemap();
     GeneratePrefilterCubemap();
-
     CreateSkyboxPipeline();
-
     CreateCommandBuffer();
-
-    // Chargement des fonctions KHR pour l'Acceleration Structure
-    vkCreateAccelerationStructureKHR = (PFN_vkCreateAccelerationStructureKHR)vkGetDeviceProcAddr(m_Device, "vkCreateAccelerationStructureKHR");
-    vkDestroyAccelerationStructureKHR = (PFN_vkDestroyAccelerationStructureKHR)vkGetDeviceProcAddr(m_Device, "vkDestroyAccelerationStructureKHR");
-    vkGetAccelerationStructureBuildSizesKHR = (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetDeviceProcAddr(m_Device, "vkGetAccelerationStructureBuildSizesKHR");
-    vkGetAccelerationStructureDeviceAddressKHR = (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetDeviceProcAddr(m_Device, "vkGetAccelerationStructureDeviceAddressKHR");
-    vkCmdBuildAccelerationStructuresKHR = (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetDeviceProcAddr(m_Device, "vkCmdBuildAccelerationStructuresKHR");
-
-    if (!vkCreateAccelerationStructureKHR || !vkCmdBuildAccelerationStructuresKHR) {
-        throw std::runtime_error("Erreur fatale: Impossible de charger les fonctions KHR pour le Ray Tracing !");
-    }
-
     CreateSyncObjects();
 }
 
@@ -3598,4 +3599,112 @@ VkDeviceAddress VulkanRenderer::GetBufferDeviceAddress(VkBuffer buffer) {
     info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
     info.buffer = buffer;
     return vkGetBufferDeviceAddress(m_Device, &info);
+}
+
+// ==============================================================================
+// RAY TRACING : CONSTRUCTION DU BLAS (Bottom-Level Acceleration Structure)
+// ==============================================================================
+AccelerationStructure VulkanRenderer::CreateBLAS(VkBuffer vertexBuffer, uint32_t vertexCount, VkBuffer indexBuffer, uint32_t indexCount) {
+    AccelerationStructure as{};
+
+    // 1. On décrit où sont les triangles dans la VRAM
+    VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
+    triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    triangles.vertexData.deviceAddress = GetBufferDeviceAddress(vertexBuffer);
+    triangles.vertexStride = sizeof(Vertex);
+    triangles.maxVertex = vertexCount;
+    triangles.indexType = VK_INDEX_TYPE_UINT32;
+    triangles.indexData.deviceAddress = GetBufferDeviceAddress(indexBuffer);
+
+    // 2. On emballe ça dans une géométrie
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geometry.geometry.triangles = triangles;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR; // Aide le GPU (pas de canal alpha à tester)
+
+    // 3. On configure la construction
+    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
+    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR; // Optimisé pour le rendu
+    buildInfo.geometryCount = 1;
+    buildInfo.pGeometries = &geometry;
+
+    uint32_t maxPrimitiveCount = indexCount / 3;
+
+    // 4. On demande au GPU "De quelle taille de buffer as-tu besoin pour ce BLAS ?"
+    VkAccelerationStructureBuildSizesInfoKHR buildSizesInfo{};
+    buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    vkGetAccelerationStructureBuildSizesKHR(m_Device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &maxPrimitiveCount, &buildSizesInfo);
+
+    // 5. On crée le Buffer qui va contenir l'arbre binaire
+    CreateBuffer(
+        buildSizesInfo.accelerationStructureSize,
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        as.buffer, as.memory
+    );
+
+    // 6. On crée l'objet vulkan BLAS par-dessus le buffer
+    VkAccelerationStructureCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    createInfo.buffer = as.buffer;
+    createInfo.size = buildSizesInfo.accelerationStructureSize;
+    createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    vkCreateAccelerationStructureKHR(m_Device, &createInfo, nullptr, &as.handle);
+
+    // 7. Un buffer "brouillon" temporaire requis par le GPU pour faire ses calculs d'arbre
+    VkBuffer scratchBuffer;
+    VkDeviceMemory scratchMemory;
+    CreateBuffer(
+        buildSizesInfo.buildScratchSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        scratchBuffer, scratchMemory
+    );
+
+    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    buildInfo.dstAccelerationStructure = as.handle;
+    buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(scratchBuffer);
+
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.primitiveCount = maxPrimitiveCount;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.transformOffset = 0;
+
+    const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[1] = { &buildRangeInfo };
+
+    // 8. ON ORDONNE LA CONSTRUCTION ! (Sur la queue graphique)
+    VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
+    vkCmdBuildAccelerationStructuresKHR(cmdBuf, 1, &buildInfo, pBuildRangeInfos);
+    EndSingleTimeCommands(cmdBuf);
+
+    // 9. Nettoyage du brouillon et récupération de l'adresse finale
+    vkDestroyBuffer(m_Device, scratchBuffer, nullptr);
+    vkFreeMemory(m_Device, scratchMemory, nullptr);
+
+    VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
+    addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    addressInfo.accelerationStructure = as.handle;
+    as.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(m_Device, &addressInfo);
+
+    return as;
+}
+
+void VulkanRenderer::DestroyAccelerationStructure(AccelerationStructure& as) {
+    if (as.handle != VK_NULL_HANDLE) {
+        vkDestroyAccelerationStructureKHR(m_Device, as.handle, nullptr);
+        as.handle = VK_NULL_HANDLE;
+    }
+    if (as.buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(m_Device, as.buffer, nullptr);
+        as.buffer = VK_NULL_HANDLE;
+    }
+    if (as.memory != VK_NULL_HANDLE) {
+        vkFreeMemory(m_Device, as.memory, nullptr);
+        as.memory = VK_NULL_HANDLE;
+    }
 }
