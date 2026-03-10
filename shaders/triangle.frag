@@ -25,6 +25,7 @@ layout(binding = 5) uniform sampler2D aoMap;
 layout(binding = 6) uniform samplerCube environmentMap;
 layout(binding = 7) uniform sampler2D brdfMap;
 layout(binding = 8) uniform samplerCube irradianceMap;
+layout(binding = 9) uniform samplerCube prefilterMap;
 
 const float PI = 3.14159265359;
 
@@ -132,9 +133,11 @@ void main() {
     vec3 irradiance = texture(irradianceMap, N).rgb;
     vec3 diffuseIBL = irradiance * albedo * iblIntensity;
 
-    // Lumière spéculaire (Reflets bruts temporaires)
+    // Lumière spéculaire (Reflets PBR avec Roughness !)
     vec3 R = reflect(-V, N);
-    vec3 envColor = texture(environmentMap, R).rgb * iblIntensity;
+    const float MAX_REFLECTION_LOD = 4.0; // Nos 5 niveaux (0 à 4)
+    vec3 envColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb * iblIntensity;
+
     vec2 brdf = texture(brdfMap, vec2(max(dot(N, V), 0.0), roughness)).rg;
     vec3 specularIBL = envColor * (F_ibl * brdf.x + brdf.y);
 

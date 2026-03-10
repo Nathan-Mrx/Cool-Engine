@@ -147,6 +147,7 @@ private:
 
     void GenerateEnvironmentCubemap();
     void GenerateIrradianceCubemap();
+    void GeneratePrefilterCubemap();
 
     // --- VARIABLES VULKAN ---
     VkInstance m_Instance = VK_NULL_HANDLE;
@@ -226,6 +227,7 @@ private:
 
     VulkanTexture* m_EnvironmentCubemap = nullptr;
     VulkanTexture* m_IrradianceCubemap = nullptr;
+    VulkanTexture* m_PrefilterCubemap = nullptr;
 
     // --- VALIDATION LAYERS ---
     const std::vector<const char*> m_ValidationLayers = {
