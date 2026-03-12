@@ -102,6 +102,8 @@ private:
     std::shared_ptr<Framebuffer> m_PreviewFramebuffer;
     std::shared_ptr<Mesh> m_PreviewMesh;
     std::shared_ptr<Shader> m_PreviewShader;
+    
+    VkPipeline m_CustomVulkanPipeline = VK_NULL_HANDLE;
 
     void CompilePreviewShader();
 

@@ -91,6 +91,10 @@ set(SOURCES
         src/renderer/Framebuffer.cpp
         src/renderer/VulkanFramebuffer.cpp
         src/renderer/VulkanFramebuffer.h
+        src/editor/materials/MaterialCompiler.cpp
+        src/editor/materials/MaterialCompiler.h
+        src/renderer/ShaderCompiler.cpp
+        src/renderer/ShaderCompiler.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---

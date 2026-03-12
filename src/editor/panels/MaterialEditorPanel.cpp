@@ -18,6 +18,9 @@
 #include "renderer/Renderer.h"
 #include "renderer/VulkanRenderer.h"
 
+#include "editor/materials/MaterialCompiler.h"
+#include "renderer/ShaderCompiler.h"
+
 static void DrawPinIcon(PinType type, bool connected) {
     ImVec2 size(24, 14); // Plus large pour la marge
 
@@ -361,7 +364,7 @@ void MaterialEditorPanel::RenderPreview3D() {
                 m_PreviewMesh.get(), (VulkanFramebuffer*)m_PreviewFramebuffer.get(),
                 model, view, proj, camPos,
                 t_albedo, t_normal, t_metallic, t_roughness, t_ao,
-                c_color, v_met, v_rough, v_ao
+                c_color, v_met, v_rough, v_ao, m_CustomVulkanPipeline
             );
         }
     }
@@ -1274,426 +1277,8 @@ MaterialNode* MaterialEditorPanel::FindNode(ed::NodeId id) {
 
 // --- LE CHEF D'ORCHESTRE ---
 std::string MaterialEditorPanel::CompileMaterial() {
-    MaterialNode* rootNode = nullptr;
-    for (auto& node : m_Nodes) {
-        if (node.Name == "Base Material") { rootNode = &node; break; }
-    }
-    if (!rootNode) return "";
-
-    std::stringstream shaderCode;
-    shaderCode << "#version 460 core\n\n";
-
-    // --- VARIABLES DE SORTIE ---
-    shaderCode << "layout(location = 0) out vec4 FragColor;\n";
-    shaderCode << "layout(location = 1) out int EntityID;\n\n";
-
-    // --- VARIABLES D'ENTRÉE ---
-    shaderCode << "in vec3 vFragPos;\n";
-    shaderCode << "in vec3 vNormal;\n";
-    shaderCode << "in vec2 vTexCoords;\n";
-    shaderCode << "in vec3 vTangent;\n";
-    shaderCode << "in float vViewDepth;\n\n";
-
-    // --- UNIFORMS STANDARDS ---
-    shaderCode << "uniform int uEntityID;\n";
-    shaderCode << "uniform int uRenderMode;\n\n";
-
-    // --- UNIFORMS CSM (NOUVEAU) ---
-    shaderCode << "uniform sampler2DArray uShadowMap;\n";
-    shaderCode << "uniform mat4 uLightSpaceMatrices[3];\n";
-    shaderCode << "uniform float uCascadeDistances[3];\n\n";
-
-    // --- UNIFORMS IBL ---
-    shaderCode << "uniform sampler2D uDDGIIrradiance;\n";
-    shaderCode << "uniform int uDDGIProbeCount[3];\n"; // Transféré via SetInt3
-
-    shaderCode << "uniform float uDDGIStartX, uDDGIStartY, uDDGIStartZ;\n";
-    shaderCode << "uniform float uDDGISpaceX, uDDGISpaceY, uDDGISpaceZ;\n";
-
-    shaderCode << "uniform float u_SkyboxIntensity = 0.5;\n";
-    shaderCode << "uniform float u_SkyboxRotation = 0.0;\n\n";
-
-    shaderCode << "uniform samplerCube uPrefilterMap;\n";
-    shaderCode << "uniform sampler2D uBRDFLUT;\n";
-
-    // --- PARAMÈTRES (INSTANCES) ET TEXTURES ---
-    for (auto& node : m_Nodes) {
-        if (node.IsParameter) {
-            if (node.Name == "Float") {
-                // On injecte la valeur par défaut ! (ex: uniform float u_Tiling = 1.0;)
-                shaderCode << "uniform float u_" << node.ParameterName << " = " << node.FloatValue << ";\n";
-            }
-            else if (node.Name == "Color") {
-                // Pareil pour les couleurs
-                shaderCode << "uniform vec4 u_" << node.ParameterName << " = vec4("
-                           << node.ColorValue.r << ", " << node.ColorValue.g << ", "
-                           << node.ColorValue.b << ", " << node.ColorValue.a << ");\n";
-            }
-            else if (node.Name == "Texture2D") {
-                shaderCode << "uniform sampler2D u_" << node.ParameterName << ";\n";
-            }
-        } else if (node.Name == "Texture2D" && !node.TexturePath.empty()) {
-            shaderCode << "uniform sampler2D u_Tex_" << node.ID.Get() << ";\n";
-        }
-    }
-
-    // --- UNIFORMS PBR ---
-    shaderCode << "uniform vec3 uViewPos;\n";
-    shaderCode << "uniform vec3 uLightDir;\n"; // <-- Remplacé uLightPos par uLightDir !
-    shaderCode << "uniform vec3 uLightColor;\n\n";
-
-    // --- FONCTIONS MATHÉMATIQUES PBR & OMBRES ---
-    // (J'utilise un raw string R"()" pour ne pas avoir à échapper chaque ligne, c'est bien plus propre)
-    shaderCode << R"(
-const float PI = 3.14159265359;
-
-vec3 ACESFilm(vec3 x) {
-    float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
-    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+    return MaterialCompiler::CompileToGLSL(m_Nodes, m_Links);
 }
-
-// --- MATHÉMATIQUES DDGI ---
-vec2 OctEncode(vec3 v) {
-    float l = abs(v.x) + abs(v.y) + abs(v.z);
-    vec2 oct = v.xy / l;
-    if (v.z < 0.0) {
-        vec2 signOct = vec2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
-        oct = (1.0 - abs(oct.yx)) * signOct;
-    }
-    return oct * 0.5 + 0.5;
-}
-
-vec3 SampleDDGIIrradiance(vec3 worldPos, vec3 normal) {
-    vec3 startPos = vec3(uDDGIStartX, uDDGIStartY, uDDGIStartZ);
-    vec3 spacing = vec3(uDDGISpaceX, uDDGISpaceY, uDDGISpaceZ);
-    ivec3 probeCount = ivec3(uDDGIProbeCount[0], uDDGIProbeCount[1], uDDGIProbeCount[2]);
-
-    // 1. Position exacte dans la grille
-    vec3 gridPos = (worldPos - startPos) / spacing;
-    ivec3 baseProbeCoords = ivec3(floor(gridPos));
-    vec3 alpha = fract(gridPos);
-
-    vec3 sumIrradiance = vec3(0.0);
-    float sumWeight = 0.0;
-    int probesPerRow = probeCount.x * probeCount.y;
-    vec2 texSize = vec2(float(probesPerRow * 8), float(probeCount.z * 8));
-
-    // 2. Interpolation des 8 sondes autour de l'objet
-    for (int i = 0; i < 8; ++i) {
-        ivec3 offset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-        ivec3 probeCoords = clamp(baseProbeCoords + offset, ivec3(0), probeCount - ivec3(1));
-
-        int probeIndex = probeCoords.x + probeCoords.y * probeCount.x + probeCoords.z * probesPerRow;
-        int gridX = probeIndex % probesPerRow;
-        int gridY = probeIndex / probesPerRow;
-
-        vec2 octUV = OctEncode(normal);
-        vec2 pixelPos = vec2(gridX * 8.0, gridY * 8.0) + (octUV * 8.0);
-
-        vec3 probeIrradiance = texture(uDDGIIrradiance, pixelPos / texSize).rgb;
-
-        vec3 trilinear = mix(1.0 - alpha, alpha, vec3(offset));
-        float weight = trilinear.x * trilinear.y * trilinear.z;
-
-        sumIrradiance += probeIrradiance * weight;
-        sumWeight += weight;
-    }
-    return sumIrradiance / max(sumWeight, 0.0001);
-}
-
-float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness*roughness; float a2 = a*a; float NdotH = max(dot(N, H), 0.0);
-    float denom = (NdotH*NdotH * (a2 - 1.0) + 1.0);
-    return a2 / (PI * denom * denom);
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float r = (roughness + 1.0); float k = (r*r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) * GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
-}
-
-vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-// --- LE FIX DE LA SURBRILLANCE (HALO LUMINEUX) ---
-vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-vec3 getNormalFromMap(vec3 normalMapColor, vec3 fragPos, vec3 normal, vec2 uv) {
-    vec3 tangentNormal = normalize(normalMapColor * 2.0 - 1.0);
-    vec3 N = normalize(normal);
-    vec3 T;
-
-    // Utiliser la tangente par vertex si disponible
-    if (length(vTangent) > 0.001) {
-        T = normalize(vTangent);
-    } else {
-        // Fallback screen-space pour les meshes sans tangentes
-        vec3 Q1 = dFdx(fragPos);
-        vec3 Q2 = dFdy(fragPos);
-        vec2 st1 = dFdx(uv);
-        vec2 st2 = dFdy(uv);
-        float det = (st1.x * st2.y - st2.x * st1.y);
-        if (abs(det) > 0.0001) {
-            T = normalize((Q1 * st2.y - Q2 * st1.y) / det);
-        } else {
-            T = cross(abs(N.z) > 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0), N);
-        }
-    }
-
-    // Orthogonalisation de Gram-Schmidt
-    T = normalize(T - dot(T, N) * N);
-    vec3 B = cross(N, T);
-    mat3 TBN = mat3(T, B, N);
-    return normalize(TBN * tangentNormal);
-}
-
-// ========================================================
-// --- SYSTEME D'OMBRE PCSS (Nouveau) ---
-// ========================================================
-const float GOLDEN_ANGLE = 2.39996323;
-
-vec2 VogelDiskSample(int i, int numSamples, float noiseAngle) {
-    float r = sqrt(float(i) + 0.5) / sqrt(float(numSamples));
-    float theta = float(i) * GOLDEN_ANGLE + noiseAngle;
-    return vec2(r * cos(theta), r * sin(theta));
-}
-
-float InterleavedGradientNoise(vec2 position_screen) {
-    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(position_screen, magic.xy)));
-}
-
-vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
-    int layer = -1;
-    for (int i = 0; i < 3; ++i) {
-        if (vViewDepth < uCascadeDistances[i]) { layer = i; break; }
-    }
-    if (layer == -1) layer = 2;
-
-    float normalBiasOffset = 2.0;
-    if (layer == 1) normalBiasOffset = 6.0;
-    if (layer == 2) normalBiasOffset = 20.0;
-
-    vec3 biasedFragPos = fragPosWorld + normal * normalBiasOffset;
-    vec4 fragPosLightSpace = uLightSpaceMatrices[layer] * vec4(biasedFragPos, 1.0);
-
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords = projCoords * 0.5 + 0.5;
-
-    if(projCoords.z > 1.0) return vec2(0.0, layer);
-
-    float currentDepth = projCoords.z;
-    float bias = max(0.0005 * (1.0 - dot(normal, lightDir)), 0.00005);
-
-    float noise = InterleavedGradientNoise(gl_FragCoord.xy);
-    float angle = noise * 6.28318530718;
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
-
-    // PCSS - ÉTAPE 1 : Blocker Search
-    int blockers = 0;
-    float avgBlockerDepth = 0.0;
-    float searchRadius = 4.0;
-    if (layer == 1) searchRadius = 2.0;
-    if (layer == 2) searchRadius = 1.0;
-
-    int blockerSamples = 16;
-    for(int i = 0; i < blockerSamples; i++) {
-        vec2 offset = VogelDiskSample(i, blockerSamples, angle) * searchRadius * texelSize;
-        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
-        if (pcfDepth < currentDepth - bias) {
-            blockers++;
-            avgBlockerDepth += pcfDepth;
-        }
-    }
-
-    if (blockers == 0) return vec2(0.0, layer);
-    avgBlockerDepth /= float(blockers);
-
-    // PCSS - ÉTAPE 2 : Penumbra Estimation
-    float distanceToBlocker = currentDepth - avgBlockerDepth;
-    float sunSize = 150.0;
-    float penumbraRadius = distanceToBlocker * sunSize;
-
-    float maxBlur = 6.0;
-    if (layer == 1) maxBlur = 4.0;
-    if (layer == 2) maxBlur = 2.0;
-    float filterRadiusUV = clamp(penumbraRadius, 1.0, maxBlur);
-
-    // PCSS - ÉTAPE 3 : Variable PCF
-    float shadow = 0.0;
-    int pcfSamples = 32;
-    for(int i = 0; i < pcfSamples; i++) {
-        vec2 offset = VogelDiskSample(i, pcfSamples, angle) * filterRadiusUV * texelSize;
-        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
-        shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
-    }
-    shadow /= float(pcfSamples);
-
-    return vec2(shadow, layer);
-}
-)";
-
-    // ========================================================
-    // --- EVALUATION DU GRAPHE ---
-    // ========================================================
-    std::unordered_set<int> visitedNodes;
-    std::stringstream bodyBuilder;
-
-    // LE FIX ABSOLU DES PINS DÉBRANCHÉS
-    auto getRootPin = [&](int index, const std::string& fallback) {
-        if (index >= rootNode->Inputs.size()) return fallback;
-        bool hasLink = false;
-        for (auto& l : m_Links) {
-            if (l.EndPinID == rootNode->Inputs[index].ID) { hasLink = true; break; }
-        }
-        if (hasLink) return EvaluatePinGLSL(rootNode->Inputs[index].ID, visitedNodes, bodyBuilder);
-        return fallback;
-    };
-
-    std::string v_baseColor = getRootPin(0, "vec3(1.0)");
-
-    // Si la normale est débranchée, on force un bleu flat parfait (0.5, 0.5, 1.0) !
-    std::string v_normal    = getRootPin(1, "vec3(0.5, 0.5, 1.0)");
-
-    std::string v_metallic  = getRootPin(2, "0.0");
-    std::string v_roughness = getRootPin(3, "0.5");
-    std::string v_specular  = getRootPin(4, "0.5");
-    std::string v_ao        = getRootPin(5, "1.0");
-
-    // --- LE FIX DE COMPILATION : On remet le détecteur disparu ! ---
-    bool normalConnected = false;
-    if (rootNode->Inputs.size() > 1) {
-        for (auto& link : m_Links) {
-            if (link.EndPinID == rootNode->Inputs[1].ID) { normalConnected = true; break; }
-        }
-    }
-
-    // ========================================================
-    // --- MAIN ---
-    // ========================================================
-    shaderCode << "void main() {\n";
-
-    shaderCode << bodyBuilder.str();
-
-    shaderCode << "    vec3 albedo = pow(vec3(" << v_baseColor << "), vec3(2.2));\n";
-    shaderCode << "    float metallic = float(" << v_metallic << ");\n";
-    shaderCode << "    float roughness = clamp(float(" << v_roughness << "), 0.05, 1.0);\n";
-    shaderCode << "    float specularValue = clamp(float(" << v_specular << "), 0.0, 1.0);\n";
-    shaderCode << "    float ao = float(" << v_ao << ");\n\n";
-
-    if (normalConnected) {
-        shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
-    } else {
-        shaderCode << "    vec3 N = normalize(vNormal);\n";
-    }
-    shaderCode << "    if (uRenderMode == 1 || uRenderMode == 2) {\n";
-    shaderCode << "        FragColor = vec4(albedo, 1.0);\n";
-    shaderCode << "        EntityID = uEntityID;\n";
-    shaderCode << "        return;\n";
-    shaderCode << "    }\n";
-
-    // --- LE BOUCLIER ANTI-DIVISION PAR ZÉRO ---
-    shaderCode << "    roughness = clamp(roughness, 0.05, 1.0);\n";
-    shaderCode << "    ao = clamp(ao, 0.05, 1.0);\n\n";
-
-    // J'ai supprimé l'AA Spéculaire qui détruisait tes Normal Maps !
-
-    // --- LE CÂBLAGE FINAL OMBRE + PBR ---
-    shaderCode << R"(
-    roughness = clamp(roughness, 0.05, 1.0);
-    ao = clamp(ao, 0.01, 1.0);
-
-    vec3 V = normalize(uViewPos - vFragPos);
-    vec3 L = normalize(-uLightDir);
-    vec3 H = normalize(V + L + vec3(0.000001));
-
-    vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo, metallic);
-    vec3 radiance = uLightColor;
-
-    float NDF = DistributionGGX(N, H, roughness);
-    float G   = GeometrySmith(N, V, L, roughness);
-    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
-
-    vec3 numerator    = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-    vec3 specular = numerator / denominator;
-
-    specular = clamp(specular, vec3(0.0), vec3(10.0));
-
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
-
-    float NdotL = max(dot(N, L), 0.0);
-    vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
-
-    #ifndef IS_PREVIEW_VIEWPORT
-        vec2 shadowData = ShadowCalculation(vFragPos, N, L);
-        float shadow = shadowData.x;
-    #else
-        float shadow = 0.0;
-    #endif
-
-    // ========================================================
-    // --- APPLICATION RÉALISTE DU CIEL (IBL COMPLET) ---
-    // ========================================================
-    float skyC = cos(u_SkyboxRotation); float skyS = sin(u_SkyboxRotation);
-
-    // --- LE FIX DES MESHES BLANCS (Séparation Fond / Lumière) ---
-    // On bride artificiellement la lumière du ciel HDR pour qu'elle agisse
-    // comme une ombre douce de jeu vidéo, sans éclipser le Soleil !
-    float iblExposure = 0.02;
-
-    // 1. DIFFUSE DDGI
-    vec3 irradiance = SampleDDGIIrradiance(vFragPos, N) * iblExposure;
-
-    // 2. SPECULAR IBL (Les reflets dynamiques !)
-    vec3 R = reflect(-V, N);
-    vec3 rotR = vec3(R.x * skyC - R.y * skyS, R.x * skyS + R.y * skyC, R.z);
-
-    const float MAX_REFLECTION_LOD = 4.0;
-    vec3 iblReflect = vec3(rotR.x, rotR.z, -rotR.y);
-    vec3 prefilteredColor = textureLod(uPrefilterMap, iblReflect, roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity * iblExposure;
-
-    vec2 envBRDF = texture(uBRDFLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
-
-    vec3 F_ambient = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
-    vec3 kD_ambient = 1.0 - F_ambient;
-    kD_ambient *= 1.0 - metallic;
-
-    vec3 diffuseIBL = irradiance * albedo;
-    vec3 specularIBL = prefilteredColor * (F_ambient * envBRDF.x + envBRDF.y);
-
-    vec3 ambient = (kD_ambient * diffuseIBL + specularIBL) * ao;
-
-    // ========================================================
-    vec3 color = ambient + (1.0 - shadow) * Lo;
-
-    // --- LE BOUCLIER ANTI-INVISIBILITÉ LINUX ---
-    if (isnan(color.x) || isnan(color.y) || isnan(color.z) || isinf(color.x)) {
-        color = vec3(0.0);
-    }
-
-    // Tonemapping ACES
-    color = ACESFilm(color);
-    color = pow(color, vec3(1.0/2.2));
-
-    FragColor = vec4(color, 1.0);
-    EntityID = uEntityID;
-}
-)";
-
-    return shaderCode.str();
-}
-
 
 // --- L'ALGORITHME MAGIQUE (Récursif) ---
 std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder) {
@@ -1714,7 +1299,7 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
         if (expectedType == PinType::Float) { ss << myInputPin->FloatValue; return ss.str(); }
         if (expectedType == PinType::Vec2)  { ss << "vec2(" << myInputPin->Vec2Value.x << ", " << myInputPin->Vec2Value.y << ")"; return ss.str(); }
         if (expectedType == PinType::Vec3)  { ss << "vec3(" << myInputPin->Vec3Value.r << ", " << myInputPin->Vec3Value.g << ", " << myInputPin->Vec3Value.b << ")"; return ss.str(); }
-        if (expectedType == PinType::Vec4)  return "vec4(0.0)";
+        if (expectedType == PinType::Vec4)  { return "vec4(0.0)"; }
         return "0.0";
     }
 
@@ -1784,39 +1369,36 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
 }
 
 void MaterialEditorPanel::CompilePreviewShader() {
-    // --- SÉCURITÉ : On ne compile pas de Shader OpenGL en Vulkan ---
-    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return;
-
     std::string fragCode = CompileMaterial();
     if (fragCode.empty()) return;
 
-    // --- INJECTION DES SWITCHES ET DE LA MACRO PREVIEW ---
-    std::string defines = "\n#define IS_PREVIEW_VIEWPORT\n"; // <-- NOUVEAU
-
-    for (auto& node : m_Nodes) {
-        if (node.Name == "StaticSwitchParameter" && node.BoolValue) {
-            defines += "#define " + node.ParameterName + "\n";
-        }
-    }
-
-    size_t pos = fragCode.find("#version");
-    if (pos != std::string::npos) pos = fragCode.find('\n', pos) + 1;
-    else pos = 0;
-
-    fragCode.insert(pos, defines);
-
-    std::filesystem::path cacheDir = Project::GetCacheDirectory();
+    std::filesystem::path cacheDir = Project::GetCacheDirectory() / "materials";
     if (!std::filesystem::exists(cacheDir)) {
         std::filesystem::create_directories(cacheDir);
     }
 
-    std::filesystem::path tempPath = cacheDir / "preview_material.frag";
+    // Le cache global a besoin de clés uniques : Utilisons le chemin du fichier courant pour le nom (ou un hash)
+    std::string matName = m_CurrentPath.empty() ? "preview_material" : m_CurrentPath.stem().string();
+    std::filesystem::path glslPath = cacheDir / (matName + ".frag");
+    std::filesystem::path spvPath = cacheDir / (matName + ".spv");
 
-    std::ofstream out(tempPath);
+    std::ofstream out(glslPath);
     out << fragCode;
     out.close();
 
-    m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.string().c_str());
+    // SÉPARATION DES DEUX RENDERERS
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", glslPath.string().c_str());
+    } else {
+        // --- MODE VULKAN : Compilation SPIR-V & Pipeline ---
+        std::string outLog;
+        if (ShaderCompiler::CompileGLSLToSPIRV(glslPath.string(), spvPath.string(), outLog)) {
+            // Success ! Compile et met en cache la Pipeline
+            m_CustomVulkanPipeline = VulkanRenderer::Get()->CreateCustomPipeline(spvPath.string());
+        } else {
+            std::cerr << "[MaterialEditor] Vulkan Shader Compilation Failed:\n" << outLog << std::endl;
+        }
+    }
 }
 
 void MaterialEditorPanel::UpdateWildcardPins() {

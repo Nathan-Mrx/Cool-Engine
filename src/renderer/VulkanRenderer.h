@@ -114,12 +114,15 @@ public:
 
     void TrackTexture(VulkanTexture* tex) { m_TrackedTextures.push_back(tex); }
 
+    // Create or retrieve a custom pipeline using a compiled SPIR-V fragment shader
+    VkPipeline CreateCustomPipeline(const std::string& spvPath);
+
     static constexpr uint32_t SHADOW_MAP_CASCADE_COUNT = 4;
     static constexpr uint32_t SHADOW_MAP_RESOLUTION = 4096;
 
     void PrepareShadows(Scene* scene);
 
-    void RenderMaterialPreview(Mesh* mesh, VulkanFramebuffer* target, glm::mat4 model, glm::mat4 view, glm::mat4 proj, glm::vec3 camPos, VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao, glm::vec4 colorVal, float metallicVal, float roughnessVal, float aoVal);
+    void RenderMaterialPreview(Mesh* mesh, VulkanFramebuffer* target, glm::mat4 model, glm::mat4 view, glm::mat4 proj, glm::vec3 camPos, VulkanTexture* albedo, VulkanTexture* normal, VulkanTexture* metallic, VulkanTexture* roughness, VulkanTexture* ao, glm::vec4 colorVal, float metallicVal, float roughnessVal, float aoVal, VkPipeline customPipeline = VK_NULL_HANDLE);
 
     void InvalidateEntityMaterial(entt::entity entityID);
     VkDeviceAddress GetBufferDeviceAddress(VkBuffer buffer);
@@ -249,6 +252,9 @@ private:
     // --- LE PIPELINE ---
     VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE; // Pour envoyer des variables globales plus tard
     VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;     // L'état complet de la carte graphique
+
+    std::unordered_map<std::string, VkPipeline> m_CustomPipelines; // Cache for dynamically compiled materials
+
 
     bool m_IsFrameStarted = false;
     VulkanFramebuffer* m_TargetFramebuffer = nullptr;
