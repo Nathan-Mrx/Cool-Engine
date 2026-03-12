@@ -85,6 +85,18 @@ private:
     std::unordered_map<std::string, MIParameter> m_Parameters;
     std::vector<MIStaticTexture> m_StaticTextures;
 
+    // --- Cached Parent Defaults ---
+    void* m_DefaultAlbedoTex = nullptr;
+    void* m_DefaultNormalTex = nullptr;
+    void* m_DefaultMetallicTex = nullptr;
+    void* m_DefaultRoughnessTex = nullptr;
+    void* m_DefaultAOTex = nullptr;
+
+    glm::vec4 m_DefaultColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    float m_DefaultMetallic = 0.0f;
+    float m_DefaultRoughness = 0.5f;
+    float m_DefaultAO = 1.0f;
+
     // --- Preview 3D ---
     std::shared_ptr<Framebuffer> m_PreviewFramebuffer;
     std::shared_ptr<Mesh> m_PreviewMesh;

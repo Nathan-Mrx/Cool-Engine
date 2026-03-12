@@ -9,6 +9,8 @@
 #include "renderer/Renderer.h"
 #include "renderer/PrimitiveFactory.h"
 #include "renderer/TextureLoader.h"
+#include "renderer/VulkanRenderer.h"
+#include "renderer/VulkanFramebuffer.h"
 
 #include "editor/EditorCommands.h"
 #include "editor/UndoManager.h"
@@ -103,6 +105,17 @@ void MaterialInstanceEditorPanel::OpenAsset(const std::filesystem::path& path) {
 
 void MaterialInstanceEditorPanel::LoadParentParameters() {
     m_Parameters.clear(); m_StaticTextures.clear();
+
+    m_DefaultAlbedoTex = nullptr;
+    m_DefaultNormalTex = nullptr;
+    m_DefaultMetallicTex = nullptr;
+    m_DefaultRoughnessTex = nullptr;
+    m_DefaultAOTex = nullptr;
+    m_DefaultColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    m_DefaultMetallic = 0.0f;
+    m_DefaultRoughness = 0.5f;
+    m_DefaultAO = 1.0f;
+
     if (m_ParentMaterialPath.empty()) return;
 
     std::ifstream file(Project::GetProjectDirectory() / m_ParentMaterialPath);
@@ -138,8 +151,37 @@ void MaterialInstanceEditorPanel::LoadParentParameters() {
                 }
             }
         }
+
+        // --- FIX 1 FPS: Cache Default PBR Textures / Values ---
+        if (m_ParentGraphJson.contains("PBR_ColorVal")) {
+            auto arr = m_ParentGraphJson["PBR_ColorVal"];
+            m_DefaultColor = glm::vec4((float)arr[0], (float)arr[1], (float)arr[2], (float)arr[3]);
+        }
+        if (m_ParentGraphJson.contains("PBR_MetallicVal")) m_DefaultMetallic = m_ParentGraphJson["PBR_MetallicVal"].get<float>();
+        if (m_ParentGraphJson.contains("PBR_RoughnessVal")) m_DefaultRoughness = m_ParentGraphJson["PBR_RoughnessVal"].get<float>();
+        if (m_ParentGraphJson.contains("PBR_AOVal")) m_DefaultAO = m_ParentGraphJson["PBR_AOVal"].get<float>();
+
+        auto tryLoadTex = [&](const std::string& key) -> void* {
+            if (m_ParentGraphJson.contains(key)) {
+                std::string p = m_ParentGraphJson[key].get<std::string>();
+                if (!p.empty()) {
+                    std::filesystem::path tp(p);
+                    std::string fullPath = tp.is_absolute() ? tp.string() : (Project::GetProjectDirectory() / tp).string();
+                    return TextureLoader::LoadTexture(fullPath.c_str());
+                }
+            }
+            return nullptr;
+        };
+
+        m_DefaultAlbedoTex = tryLoadTex("PBR_Albedo");
+        m_DefaultNormalTex = tryLoadTex("PBR_Normal");
+        m_DefaultMetallicTex = tryLoadTex("PBR_Metallic");
+        m_DefaultRoughnessTex = tryLoadTex("PBR_Roughness");
+        m_DefaultAOTex = tryLoadTex("PBR_AO");
+
         file.close();
     }
+
     EvaluateParameterVisibility();
 }
 
@@ -332,36 +374,54 @@ void MaterialInstanceEditorPanel::RenderPreview3D() {
             m_PreviewMesh->Draw();
         }
     } else {
-        /*
-        // Mode Vulkan
-        Renderer::Clear();
-        Renderer::BeginScene(glm::mat4(1.0f), glm::mat4(1.0f), glm::vec3(0.0f));
-
-        if (m_PreviewMesh) {
+        // --- MODE VULKAN (Isolé et Sécurisé) ---
+        if (m_PreviewMesh && m_PreviewFramebuffer) {
             float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
             float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
             float aspect = (height > 0.0f) ? (width / height) : 1.0f;
 
-            // 1. PROJECTION (Avec le fix d'inversion Vulkan !)
             glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
-            proj[1][1] *= -1.0f; // Crucial : Vulkan a l'axe Y inversé par rapport à OpenGL !
+            proj[1][1] *= -1.0f;
 
-            // 2. VUE Z-UP CENTIMÉTRIQUE (On recule sur l'axe X, le Z pointe en haut)
             glm::vec3 camPos = glm::vec3(m_CameraDistance, 0.0f, 0.0f);
             glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-            // 3. MODÈLE (Rotation)
             m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
             glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+            model = glm::scale(model, glm::vec3(0.8f));
 
-            // On envoie le paquet final au GPU !
-            Renderer::SubmitPushConstant(proj * view * model);
+            VulkanRenderer* vkRenderer = VulkanRenderer::Get();
+            VulkanTexture* t_albedo = m_DefaultAlbedoTex ? (VulkanTexture*)m_DefaultAlbedoTex : vkRenderer->GetDefaultWhiteTexture();
+            VulkanTexture* t_normal = m_DefaultNormalTex ? (VulkanTexture*)m_DefaultNormalTex : vkRenderer->GetDefaultNormalTexture();
+            VulkanTexture* t_metallic = m_DefaultMetallicTex ? (VulkanTexture*)m_DefaultMetallicTex : vkRenderer->GetDefaultBlackTexture();
+            VulkanTexture* t_roughness = m_DefaultRoughnessTex ? (VulkanTexture*)m_DefaultRoughnessTex : vkRenderer->GetDefaultWhiteTexture();
+            VulkanTexture* t_ao = m_DefaultAOTex ? (VulkanTexture*)m_DefaultAOTex : vkRenderer->GetDefaultWhiteTexture();
 
-            m_PreviewMesh->Draw();
+            glm::vec4 c_color = m_DefaultColor;
+            float v_met = m_DefaultMetallic;
+            float v_rough = m_DefaultRoughness;
+            float v_ao = m_DefaultAO;
+
+            // 2. Appliquer les Overrides de m_Parameters
+            if (m_Parameters.count("Albedo") && m_Parameters["Albedo"].TextureID) t_albedo = (VulkanTexture*)m_Parameters["Albedo"].TextureID;
+            if (m_Parameters.count("Normal") && m_Parameters["Normal"].TextureID) t_normal = (VulkanTexture*)m_Parameters["Normal"].TextureID;
+            if (m_Parameters.count("Metallic") && m_Parameters["Metallic"].TextureID) t_metallic = (VulkanTexture*)m_Parameters["Metallic"].TextureID;
+            if (m_Parameters.count("Roughness") && m_Parameters["Roughness"].TextureID) t_roughness = (VulkanTexture*)m_Parameters["Roughness"].TextureID;
+            if (m_Parameters.count("AO") && m_Parameters["AO"].TextureID) t_ao = (VulkanTexture*)m_Parameters["AO"].TextureID;
+
+            if (m_Parameters.count("BaseColor") && m_Parameters["BaseColor"].IsOverridden) c_color = m_Parameters["BaseColor"].ColorVal;
+            if (m_Parameters.count("Metallic") && m_Parameters["Metallic"].IsOverridden) v_met = m_Parameters["Metallic"].FloatVal;
+            if (m_Parameters.count("Roughness") && m_Parameters["Roughness"].IsOverridden) v_rough = m_Parameters["Roughness"].FloatVal;
+            if (m_Parameters.count("AO") && m_Parameters["AO"].IsOverridden) v_ao = m_Parameters["AO"].FloatVal;
+
+            vkRenderer->RenderMaterialPreview(
+                m_PreviewMesh.get(),
+                (VulkanFramebuffer*)m_PreviewFramebuffer.get(),
+                model, view, proj, camPos,
+                t_albedo, t_normal, t_metallic, t_roughness, t_ao,
+                c_color, v_met, v_rough, v_ao
+            );
         }
-
-        Renderer::EndScene();
-        */
     }
 
     m_PreviewFramebuffer->Unbind();

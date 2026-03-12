@@ -147,6 +147,10 @@ public:
     VulkanTexture* CreateStorageTexture(uint32_t width, uint32_t height, VkFormat format);
     void DestroyTexture(VulkanTexture* tex);
 
+    VulkanTexture* GetDefaultWhiteTexture() const { return m_DefaultWhiteTexture; }
+    VulkanTexture* GetDefaultBlackTexture() const { return m_DefaultBlackTexture; }
+    VulkanTexture* GetDefaultNormalTexture() const { return m_DefaultNormalTexture; }
+
 private:
     // --- LES ÉTAPES D'INITIALISATION ---
     void CreateInstance();
