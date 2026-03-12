@@ -1456,7 +1456,7 @@ VkPipeline VulkanRenderer::CreateCustomPipeline(const std::string& spvPath) {
         return m_CustomPipelines[spvPath];
     }
 
-    std::vector<char> vertShaderCode = ReadFile((Project::GetProjectDirectory() / "shaders" / "main_vert.spv").string());
+    std::vector<char> vertShaderCode = ReadFile((Project::GetProjectDirectory() / "shaders" / "triangle_vert.spv").string());
     std::vector<char> fragShaderCode = ReadFile(spvPath);
 
     VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);

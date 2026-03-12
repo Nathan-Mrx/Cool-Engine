@@ -102,27 +102,82 @@ std::string MaterialCompiler::CompileToGLSL(const std::vector<MaterialNode>& nod
     std::string uniformsCode = "";
     std::string logicCode = "";
 
-    // 2. Extraire les Uniforms nécessaires (Textures définies)
+    // 2. Associer les noeuds Texture2D aux 5 bindings standards de l'engine
+    std::vector<std::string> availableSamplers = {"albedoMap", "normalMap", "metallicMap", "roughnessMap", "aoMap"};
+    std::unordered_map<int, std::string> textureMap;
+    int texCount = 0;
+    
     for (const auto& node : nodes) {
         if (node.Name == "Texture2D") {
-            std::string samplerName = "u_Tex_" + std::to_string((int)node.ID.Get());
-            // On les place dans le Set 2 (Le Set 0 est UBO, le Set 1 est pour PBR Environnement)
-            uniformsCode += "layout(set = 2, binding = " + std::to_string(((int)node.ID.Get()) % 10) + ") uniform sampler2D " + samplerName + ";\n";
+            if (texCount < 5) {
+                textureMap[(int)node.ID.Get()] = availableSamplers[texCount];
+                texCount++;
+            }
         }
     }
+    
+    // Mettre à jour la logique interne (lambda) pour les shaders
+    std::function<std::string(int)> GenerateExpressionWithContext = [&](int destPinId) -> std::string {
+        for (const auto& link : links) {
+            if ((int)link.EndPinID.Get() == destPinId) {
+                MaterialPin* srcPin = FindPin((int)link.StartPinID.Get(), nodes);
+                if (!srcPin) continue;
+
+                MaterialNode* srcNode = FindNode((int)srcPin->NodeID.Get(), nodes);
+                if (!srcNode) continue;
+
+                if (srcNode->Name == "Float") return std::to_string(srcNode->FloatValue);
+                if (srcNode->Name == "Color") {
+                    return "vec4(" + std::to_string(srcNode->ColorValue.r) + ", " +
+                                     std::to_string(srcNode->ColorValue.g) + ", " +
+                                     std::to_string(srcNode->ColorValue.b) + ", " +
+                                     std::to_string(srcNode->ColorValue.a) + ")";
+                }
+                if (srcNode->Name == "TextureCoord") return "fragTexCoord";
+                if (srcNode->Name == "Time") return "ubo.cameraPos.w"; // Pas de Time dans ubo pour l'instant
+
+                if (srcNode->Name == "Multiply") {
+                    std::string A = GenerateExpressionWithContext((int)srcNode->Inputs[0].ID.Get());
+                    std::string B = GenerateExpressionWithContext((int)srcNode->Inputs[1].ID.Get());
+                    if (A.empty()) A = "1.0"; if (B.empty()) B = "1.0";
+                    return "(" + A + " * " + B + ")";
+                }
+                if (srcNode->Name == "Add") {
+                    std::string A = GenerateExpressionWithContext((int)srcNode->Inputs[0].ID.Get());
+                    std::string B = GenerateExpressionWithContext((int)srcNode->Inputs[1].ID.Get());
+                    if (A.empty()) A = "0.0"; if (B.empty()) B = "0.0";
+                    return "(" + A + " + " + B + ")";
+                }
+                if (srcNode->Name == "Sine") {
+                    std::string A = GenerateExpressionWithContext((int)srcNode->Inputs[0].ID.Get());
+                    if (A.empty()) A = "0.0";
+                    return "sin(" + A + ")";
+                }
+                
+                if (srcNode->Name == "Texture2D") {
+                    std::string uv = GenerateExpressionWithContext((int)srcNode->Inputs[0].ID.Get());
+                    if (uv.empty()) uv = "fragTexCoord";
+                    std::string samplerName = textureMap.count((int)srcNode->ID.Get()) ? textureMap[(int)srcNode->ID.Get()] : "albedoMap";
+                    return "texture(" + samplerName + ", " + uv + ")";
+                }
+
+                return "vec4(1.0)"; 
+            }
+        }
+        return ""; 
+    };
 
     // 3. Générer la logique du Base Material
-    std::string c_albedo = GenerateExpression((int)baseNode->Inputs[0].ID.Get(), nodes, links);
-    std::string c_normal = GenerateExpression((int)baseNode->Inputs[1].ID.Get(), nodes, links);
-    std::string c_metallic = GenerateExpression((int)baseNode->Inputs[2].ID.Get(), nodes, links);
-    std::string c_roughness = GenerateExpression((int)baseNode->Inputs[3].ID.Get(), nodes, links);
-    std::string c_ao = GenerateExpression((int)baseNode->Inputs[4].ID.Get(), nodes, links);
-    std::string c_emissive = GenerateExpression((int)baseNode->Inputs[5].ID.Get(), nodes, links);
+    std::string c_albedo = GenerateExpressionWithContext((int)baseNode->Inputs[0].ID.Get());
+    std::string c_normal = GenerateExpressionWithContext((int)baseNode->Inputs[1].ID.Get());
+    std::string c_metallic = GenerateExpressionWithContext((int)baseNode->Inputs[2].ID.Get());
+    std::string c_roughness = GenerateExpressionWithContext((int)baseNode->Inputs[3].ID.Get());
+    std::string c_ao = GenerateExpressionWithContext((int)baseNode->Inputs[4].ID.Get());
+    std::string c_emissive = GenerateExpressionWithContext((int)baseNode->Inputs[5].ID.Get());
 
-    if (!c_albedo.empty()) logicCode += "    Albedo = (" + c_albedo + ").rgb * inColor;\n";
+    if (!c_albedo.empty()) logicCode += "    Albedo = (" + c_albedo + ").rgb;\n";
     if (!c_normal.empty()) {
-        // Simple normal map decoding : xyz * 2.0 - 1.0 (TODO: TBN Matrix with per-vertex tangents)
-        logicCode += "    Normal = normalize((" + c_normal + ").xyz * 2.0 - 1.0);\n";
+        logicCode += "    Normal = getNormalFromMap((" + c_normal + ").xyz);\n";
     }
     if (!c_metallic.empty()) logicCode += "    Metallic = (" + c_metallic + ").r;\n";
     if (!c_roughness.empty()) logicCode += "    Roughness = (" + c_roughness + ").r;\n";

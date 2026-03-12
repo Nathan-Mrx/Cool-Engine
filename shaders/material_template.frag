@@ -4,13 +4,10 @@
 // =========================================================================================
 // PIPELINE INPUTS (Vertex -> Fragment)
 // =========================================================================================
-layout(location = 0) in vec2 inTexCoord;
-layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec3 inViewPos;
-layout(location = 3) in vec3 inFragPos;
-layout(location = 4) in vec3 inColor;
-layout(location = 5) in vec4 inFragPosLightSpace[4];
-layout(location = 9) in float inClipSpaceZ;
+layout(location = 0) in vec3 fragWorldPos;
+layout(location = 1) in vec3 fragNormal;
+layout(location = 2) in vec2 fragTexCoord;
+layout(location = 3) in vec3 fragTangent;
 
 // =========================================================================================
 // PIPELINE OUTPUTS
@@ -21,29 +18,31 @@ layout(location = 1) out vec4 outBrightColor;
 // =========================================================================================
 // STANDARD UNIFORMS (UBO)
 // =========================================================================================
-layout(set = 0, binding = 0) uniform MaterialUBO {
+layout(binding = 0) uniform MaterialUBO {
     vec4 baseColor;
     vec4 cameraPos;
-    vec4 cascadingSplits;
-    
-    mat4 lightSpaceMatrices[4];
-
     float metallic;
     float roughness;
     float ao;
-    float _pad;
-
+    float padding;
+    mat4 lightSpaceMatrices[4];
+    vec4 cascadeSplits;
     vec4 ddgiStartPosition;
     ivec4 ddgiProbeCount;
 } ubo;
 
-// =========================================================================================
-// PBR & ENVIRONMENT SAMPLERS (Set 1)
-// =========================================================================================
-layout(set = 1, binding = 0) uniform samplerCube uPrefilterMap;   // HDR Reflections
-layout(set = 1, binding = 1) uniform sampler2D uBRDFLUT;          // BRDF LookUp
-layout(set = 1, binding = 2) uniform samplerCube uIrradianceMap;  // Ambient Lighting
-layout(set = 1, binding = 3) uniform sampler2DArray uShadowMap;   // Cascaded Shadows
+layout(binding = 1) uniform sampler2D albedoMap;
+layout(binding = 2) uniform sampler2D normalMap;
+layout(binding = 3) uniform sampler2D metallicMap;
+layout(binding = 4) uniform sampler2D roughnessMap;
+layout(binding = 5) uniform sampler2D aoMap;
+
+layout(binding = 6) uniform samplerCube environmentMap;
+layout(binding = 7) uniform sampler2D brdfMap;
+layout(binding = 8) uniform samplerCube irradianceMap;
+layout(binding = 9) uniform samplerCube prefilterMap;
+layout(binding = 10) uniform sampler2DArray shadowMap;
+layout(binding = 12) uniform sampler2D ddgiIrradianceMap;
 
 // =========================================================================================
 // @INSERT_MATERIAL_UNIFORMS@
@@ -90,40 +89,39 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// TBN Matrix calculation for normal mapping
+vec3 getNormalFromMap(vec3 normalMapColor) {
+    vec3 tangentNormal = normalMapColor * 2.0 - 1.0;
+    vec3 N = normalize(fragNormal);
+    vec3 T;
+
+    if (length(fragTangent) > 0.1) {
+        T = normalize(fragTangent);
+    } else {
+        // Fallback pour mesh sans tangentes
+        vec3 Q1 = dFdx(fragWorldPos);
+        vec3 Q2 = dFdy(fragWorldPos);
+        vec2 st1 = dFdx(fragTexCoord);
+        vec2 st2 = dFdy(fragTexCoord);
+        float det = (st1.x * st2.y - st2.x * st1.y);
+        if (abs(det) > 0.0001) {
+            T = normalize((Q1 * st2.y - Q2 * st1.y) / det);
+        } else {
+            T = cross(abs(N.z) > 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0), N);
+        }
+    }
+
+    T = normalize(T - dot(T, N) * N);
+    vec3 B = cross(N, T);
+    mat3 TBN = mat3(T, B, N);
+    return normalize(TBN * tangentNormal);
+}
+
 // =========================================================================================
 // SHADOW MAPPING
 // =========================================================================================
-float ShadowCalculation(vec3 fragPosWorldSpace, vec3 normal, vec3 lightDir) {
-    int cascadeIndex = 0;
-    for(int i = 0; i < 4 - 1; ++i) {
-        if(inClipSpaceZ <= ubo.cascadingSplits[i]) cascadeIndex = i + 1;
-    }
-
-    vec4 fragPosLightSpace = inFragPosLightSpace[cascadeIndex];
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords.xy = projCoords.xy * 0.5 + 0.5;
-
-    if(projCoords.z > 1.0) return 0.0;
-
-    float currentDepth = projCoords.z;
-    float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.0005);
-    if (cascadeIndex == 1) bias *= 1.5;
-    if (cascadeIndex == 2) bias *= 2.0;
-
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
-    const int PCF_RANGE = 2;
-    float samples = 0.0;
-    for(int x = -PCF_RANGE; x <= PCF_RANGE; ++x) {
-        for(int y = -PCF_RANGE; y <= PCF_RANGE; ++y) {
-            float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + vec2(x, y) * texelSize, cascadeIndex)).r;
-            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
-            samples += 1.0;
-        }
-    }
-    shadow /= samples;
-    return shadow;
-}
+// Shadow mapping is currently omitted in custom materials to keep them fast.
+// TODO: Port the Vogel PCSS properly.
 
 // =========================================================================================
 // MAIN ENTRY POINT
@@ -132,8 +130,8 @@ void main() {
     // --------------------------------------------------------------------------
     // DEFAULT MATERIAL PROPERTIES
     // --------------------------------------------------------------------------
-    vec3  Albedo    = ubo.baseColor.rgb * inColor;
-    vec3  Normal    = inNormal;
+    vec3  Albedo    = ubo.baseColor.rgb;
+    vec3  Normal    = fragNormal;
     float Metallic  = ubo.metallic;
     float Roughness = ubo.roughness;
     float AO        = ubo.ao;
@@ -147,7 +145,7 @@ void main() {
     // PBR LIGHTING CALCULATION
     // --------------------------------------------------------------------------
     vec3 N = normalize(Normal);
-    vec3 V = normalize(ubo.cameraPos.xyz - inFragPos);
+    vec3 V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3 R = reflect(-V, N);
 
     vec3 F0 = vec3(0.04);
@@ -173,7 +171,8 @@ void main() {
     vec3 kD = vec3(1.0) - kS;
     kD *= 1.0 - Metallic;
 
-    float shadow = ShadowCalculation(inFragPos, N, L);
+    // TODO: PCSS integration
+    float shadow = 0.0;
     Lo += (1.0 - shadow) * (kD * Albedo / PI + specular) * radiance * NdotL;
 
     // --- IBL (IMAGE-BASED LIGHTING / AMBIENT) ---
@@ -182,12 +181,12 @@ void main() {
     vec3 kD_IBL = 1.0 - kS_IBL;
     kD_IBL *= 1.0 - Metallic;
 
-    vec3 irradiance = texture(uIrradianceMap, N).rgb;
+    vec3 irradiance = texture(irradianceMap, N).rgb;
     vec3 diffuse    = irradiance * Albedo;
 
     const float MAX_REFLECTION_LOD = 4.0;
-    vec3 prefilteredColor = textureLod(uPrefilterMap, R, Roughness * MAX_REFLECTION_LOD).rgb;
-    vec2 brdf  = texture(uBRDFLUT, vec2(max(dot(N, V), 0.0), Roughness)).rg;
+    vec3 prefilteredColor = textureLod(prefilterMap, R, Roughness * MAX_REFLECTION_LOD).rgb;
+    vec2 brdf  = texture(brdfMap, vec2(max(dot(N, V), 0.0), Roughness)).rg;
     vec3 specularIBL = prefilteredColor * (F_IBL * brdf.x + brdf.y);
 
     vec3 ambient = (kD_IBL * diffuse + specularIBL) * AO;
