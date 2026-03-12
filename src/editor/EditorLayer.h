@@ -149,6 +149,7 @@ private:
     };
 
     std::vector<EditorTab> m_Tabs;
+    std::vector<int> m_TabsToClose;
     int m_ActiveTabIndex = 0;
     bool m_ForceTabSelection = false;
 

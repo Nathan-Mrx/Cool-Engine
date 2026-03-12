@@ -75,22 +75,37 @@ void VulkanRenderer::Init() {
     CreateDescriptorPool();
     CreateCommandPool();
 
+    std::cout << "[VkInit::Textures] Creation des textures par defaut (blanc, noir, normal)...\n";
     m_DefaultWhiteTexture = CreateSolidColorTexture(255, 255, 255, 255);
     m_DefaultBlackTexture = CreateSolidColorTexture(0, 0, 0, 255);
     m_DefaultNormalTexture = CreateSolidColorTexture(128, 128, 255, 255);
+    std::cout << "[VkInit::Textures] Textures par defaut creees avec succes.\n";
 
+    std::cout << "[VkInit::IBL] Demarrage de la generation IBL...\n";
     GenerateBRDFLUT();
 
+    std::cout << "[VkInit::Skybox] Creation du cube unitaire pour le skybox...\n";
     m_SkyboxCube = PrimitiveFactory::CreateCube();
+    std::cout << "[VkInit::Skybox] Cube cree. Chargement de la texture HDR (assets/textures/sky.hdr)...\n";
     m_SkyboxTexture = static_cast<VulkanTexture*>(TextureLoader::LoadHDR("assets/textures/sky.hdr"));
+    std::cout << "[VkInit::Skybox] Texture HDR chargee : " << (m_SkyboxTexture ? "OK" : "ECHEC (nullptr)") << "\n";
 
+    std::cout << "[VkInit::IBL] Generation de l'Environment Cubemap...\n";
     GenerateEnvironmentCubemap();
+    std::cout << "[VkInit::IBL] Generation de l'Irradiance Cubemap...\n";
     GenerateIrradianceCubemap();
+    std::cout << "[VkInit::IBL] Generation du Prefilter Cubemap...\n";
     GeneratePrefilterCubemap();
+    std::cout << "[VkInit::IBL] Pipeline IBL complete.\n";
+
+    std::cout << "[VkInit::DDGI] Creation du pipeline DDGI...\n";
     CreateDDGIPipeline();
+    std::cout << "[VkInit::Skybox] Creation du pipeline Skybox...\n";
     CreateSkyboxPipeline();
+    std::cout << "[VkInit::CmdBuf] Allocation des Command Buffers...\n";
     CreateCommandBuffer();
 
+    std::cout << "[VkInit::TLAS] Allocation des buffers TLAS (" << MAX_FRAMES_IN_FLIGHT << " frames)...\n";
     m_TLAS.resize(MAX_FRAMES_IN_FLIGHT);
     m_TLASInstancesBuffer.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
     m_TLASInstancesMemory.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
@@ -1889,6 +1904,7 @@ VulkanTexture* VulkanRenderer::CreateSolidColorTexture(uint8_t r, uint8_t g, uin
 }
 
 void VulkanRenderer::CreateSkyboxPipeline() {
+    std::cout << "[VkSkybox::Pipeline] Etape 1 : Creation du Descriptor Set Layout...\n";
     // 1. Le Plan (Layout) : Uniquement notre texture HDR !
     VkDescriptorSetLayoutBinding samplerBinding{};
     samplerBinding.binding = 0;
@@ -1901,7 +1917,9 @@ void VulkanRenderer::CreateSkyboxPipeline() {
     layoutInfo.bindingCount = 1;
     layoutInfo.pBindings = &samplerBinding;
     vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_SkyboxDescriptorSetLayout);
+    std::cout << "[VkSkybox::Pipeline] Descriptor Set Layout cree.\n";
 
+    std::cout << "[VkSkybox::Pipeline] Etape 2 : Allocation du Descriptor Set et branchement texture HDR...\n";
     // 2. Allocation de la mémoire et branchement de la texture HDR
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1909,11 +1927,13 @@ void VulkanRenderer::CreateSkyboxPipeline() {
     allocInfo.descriptorSetCount = 1;
     allocInfo.pSetLayouts = &m_SkyboxDescriptorSetLayout;
     vkAllocateDescriptorSets(m_Device, &allocInfo, &m_SkyboxDescriptorSet);
+    std::cout << "[VkSkybox::Pipeline]   -> Descriptor Set alloue depuis le pool.\n";
 
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     imageInfo.imageView = m_SkyboxTexture ? m_SkyboxTexture->View : m_DefaultWhiteTexture->View;
     imageInfo.sampler = m_SkyboxTexture ? m_SkyboxTexture->Sampler : m_DefaultWhiteTexture->Sampler;
+    std::cout << "[VkSkybox::Pipeline]   -> Texture utilisee : " << (m_SkyboxTexture ? "Cubemap HDR" : "Texture blanche par defaut") << "\n";
 
     VkWriteDescriptorSet descriptorWrite{};
     descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1923,7 +1943,9 @@ void VulkanRenderer::CreateSkyboxPipeline() {
     descriptorWrite.descriptorCount = 1;
     descriptorWrite.pImageInfo = &imageInfo;
     vkUpdateDescriptorSets(m_Device, 1, &descriptorWrite, 0, nullptr);
+    std::cout << "[VkSkybox::Pipeline]   -> Descriptor Set mis a jour avec la texture.\n";
 
+    std::cout << "[VkSkybox::Pipeline] Etape 3 : Creation du Pipeline Layout (Push Constants: 2 matrices)...\n";
     // 3. Configuration du Pipeline Layout (Pour les 2 matrices)
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -1937,12 +1959,17 @@ void VulkanRenderer::CreateSkyboxPipeline() {
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
     vkCreatePipelineLayout(m_Device, &pipelineLayoutInfo, nullptr, &m_SkyboxPipelineLayout);
+    std::cout << "[VkSkybox::Pipeline]   -> Pipeline Layout cree (taille push constants: " << sizeof(glm::mat4) * 2 << " octets).\n";
 
+    std::cout << "[VkSkybox::Pipeline] Etape 4 : Chargement des shaders skybox...\n";
     // 4. Les Shaders
     auto vertCode = ReadFile("shaders/skybox_vert.spv");
+    std::cout << "[VkSkybox::Pipeline]   -> skybox_vert.spv lu (" << vertCode.size() << " octets).\n";
     auto fragCode = ReadFile("shaders/skybox_frag.spv");
+    std::cout << "[VkSkybox::Pipeline]   -> skybox_frag.spv lu (" << fragCode.size() << " octets).\n";
     VkShaderModule vertModule = CreateShaderModule(vertCode);
     VkShaderModule fragModule = CreateShaderModule(fragCode);
+    std::cout << "[VkSkybox::Pipeline]   -> Modules shaders compiles.\n";
 
     VkPipelineShaderStageCreateInfo vertStageInfo{};
     vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1957,6 +1984,7 @@ void VulkanRenderer::CreateSkyboxPipeline() {
     fragStageInfo.pName = "main";
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertStageInfo, fragStageInfo};
 
+    std::cout << "[VkSkybox::Pipeline] Etape 5 : Configuration des etats fixes (Vertex Input, Rasterizer, DepthStencil)...\n";
     // 5. États Fixes (Culling & Depth spécifiques au Ciel !)
     VkVertexInputBindingDescription bindingDescription{};
     bindingDescription.binding = 0;
@@ -2049,21 +2077,26 @@ void VulkanRenderer::CreateSkyboxPipeline() {
     pipelineInfo.renderPass = m_SceneRenderPass;
     pipelineInfo.subpass = 0;
 
+    std::cout << "[VkSkybox::Pipeline] Etape 6 : Creation du Pipeline Graphique Skybox...\n";
     if (vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_SkyboxPipeline) != VK_SUCCESS) {
         throw std::runtime_error("Erreur: Impossible de creer le pipeline Skybox !");
     }
+    std::cout << "[VkSkybox::Pipeline] Pipeline Skybox cree avec succes ! Nettoyage des modules shaders...\n";
 
     vkDestroyShaderModule(m_Device, fragModule, nullptr);
     vkDestroyShaderModule(m_Device, vertModule, nullptr);
+    std::cout << "[VkSkybox::Pipeline] Modules shaders detruits. Pipeline pret.\n";
 }
 
 void VulkanRenderer::GenerateBRDFLUT() {
-    std::cout << "[Vulkan] Generation de la BRDF LUT en cours...\n";
+    std::cout << "[VkIBL::BRDF] === Demarrage de la generation BRDF LUT ==="  << "\n";
 
     const uint32_t dim = 512;
     VkFormat format = VK_FORMAT_R16G16_SFLOAT;
+    std::cout << "[VkIBL::BRDF] Parametres : resolution=" << dim << "x" << dim << ", format=R16G16_SFLOAT\n";
 
     // 1. L'Image de destination (Elle va servir d'Attachment puis de Texture)
+    std::cout << "[VkIBL::BRDF] Etape 1 : Creation de l'image de destination...\n";
     m_BrdfLutTexture = new VulkanTexture();
     m_TrackedTextures.push_back(m_BrdfLutTexture);
 
@@ -2090,6 +2123,7 @@ void VulkanRenderer::GenerateBRDFLUT() {
     allocInfo.memoryTypeIndex = FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_BrdfLutTexture->Memory);
     vkBindImageMemory(m_Device, m_BrdfLutTexture->Image, m_BrdfLutTexture->Memory, 0);
+    std::cout << "[VkIBL::BRDF]   -> Image creee et memoire GPU allouee (" << memReqs.size << " octets).\n";
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -2100,6 +2134,7 @@ void VulkanRenderer::GenerateBRDFLUT() {
     viewInfo.subresourceRange.layerCount = 1;
     viewInfo.image = m_BrdfLutTexture->Image;
     vkCreateImageView(m_Device, &viewInfo, nullptr, &m_BrdfLutTexture->View);
+    std::cout << "[VkIBL::BRDF]   -> Image View creee.\n";
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2109,8 +2144,9 @@ void VulkanRenderer::GenerateBRDFLUT() {
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_BrdfLutTexture->Sampler);
+    std::cout << "[VkIBL::BRDF]   -> Sampler cree (filtrage lineaire, clamp-to-edge).\n";
 
-    // 2. Le Render Pass Offscreen
+    std::cout << "[VkIBL::BRDF] Etape 2 : Creation du Render Pass offscreen...\n";
     VkAttachmentDescription attachment{};
     attachment.format = format;
     attachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2220,6 +2256,7 @@ void VulkanRenderer::GenerateBRDFLUT() {
     VkPipeline pipeline;
     vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
 
+    std::cout << "[VkIBL::BRDF] Etape 5 : Execution du rendu (triangle plein ecran)...\n";
     // 5. Exécution de l'enregistrement !
     VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
 
@@ -2245,6 +2282,7 @@ void VulkanRenderer::GenerateBRDFLUT() {
     vkCmdEndRenderPass(cmdBuf);
     EndSingleTimeCommands(cmdBuf);
 
+    std::cout << "[VkIBL::BRDF] Etape 6 : Nettoyage des ressources temporaires...\n";
     // 6. Nettoyage de l'usine éphémère (On garde juste l'image générée)
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -2253,16 +2291,18 @@ void VulkanRenderer::GenerateBRDFLUT() {
     vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
     vkDestroyRenderPass(m_Device, renderPass, nullptr);
 
-    std::cout << "[Vulkan] BRDF LUT generee avec succes !\n";
+    std::cout << "[VkIBL::BRDF] === BRDF LUT generee avec succes ! ==="  << "\n";
 }
 
 void VulkanRenderer::GenerateEnvironmentCubemap() {
-    std::cout << "[Vulkan] Generation de l'Environment Cubemap (6 faces)...\n";
+    std::cout << "[VkIBL::EnvCubemap] === Demarrage de la generation Environment Cubemap ==="  << "\n";
 
     const uint32_t dim = 512; // Résolution de notre ciel
     VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    std::cout << "[VkIBL::EnvCubemap] Parametres : resolution=" << dim << "x" << dim << ", format=R32G32B32A32_SFLOAT, 6 faces\n";
 
     // 1. CRÉATION DE L'IMAGE CUBEMAP
+    std::cout << "[VkIBL::EnvCubemap] Etape 1 : Creation de l'image cubemap (6 layers)...\n";
     m_EnvironmentCubemap = new VulkanTexture();
     m_TrackedTextures.push_back(m_EnvironmentCubemap);
 
@@ -2289,6 +2329,7 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
     allocInfo.memoryTypeIndex = FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_EnvironmentCubemap->Memory);
     vkBindImageMemory(m_Device, m_EnvironmentCubemap->Image, m_EnvironmentCubemap->Memory, 0);
+    std::cout << "[VkIBL::EnvCubemap]   -> Image cubemap creee et memoire GPU allouee (" << memReqs.size << " octets).\n";
 
     // Vue globale en tant que CUBE pour les shaders
     VkImageViewCreateInfo viewInfo{};
@@ -2302,6 +2343,7 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
     viewInfo.subresourceRange.layerCount = 6; // On englobe les 6 faces
     viewInfo.image = m_EnvironmentCubemap->Image;
     vkCreateImageView(m_Device, &viewInfo, nullptr, &m_EnvironmentCubemap->View);
+    std::cout << "[VkIBL::EnvCubemap]   -> Image View (CUBE) creee pour les 6 faces.\n";
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2311,7 +2353,9 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_EnvironmentCubemap->Sampler);
+    std::cout << "[VkIBL::EnvCubemap]   -> Sampler cree.\n";
 
+    std::cout << "[VkIBL::EnvCubemap] Etape 2 : Creation des vues individuelles, render pass et framebuffers...\n";
     // 2. VUES INDIVIDUELLES ET RENDER PASS (Pour dessiner face par face)
     VkAttachmentDescription attachment{};
     attachment.format = format;
@@ -2488,7 +2532,7 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
     vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
 
     // 4. LES 6 CAMÉRAS ET LE RENDU
-    glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+    glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.001f, 10.0f);
     captureProjection[1][1] *= -1.0f; // Correction Vulkan
 
     // Matrices Z-Up (X, -X, Y, -Y, Z, -Z)
@@ -2501,12 +2545,14 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
         glm::lookAt(glm::vec3(0.0f), glm::vec3( 0.0f,  0.0f, -1.0f), glm::vec3(0.0f, -1.0f,  0.0f))
     };
 
+    std::cout << "[VkIBL::EnvCubemap] Etape 4 : Rendu des 6 faces du cubemap...\n";
     VkCommandBuffer cmdBuf = BeginSingleTimeCommands();
 
     VkViewport viewport{0.0f, 0.0f, (float)dim, (float)dim, 0.0f, 1.0f};
     VkRect2D scissor{{0,0}, {dim, dim}};
 
     for (int i = 0; i < 6; i++) {
+        std::cout << "[VkIBL::EnvCubemap]   -> Rendu face " << i << "/5...\n";
         VkRenderPassBeginInfo rpBegin{};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpBegin.renderPass = renderPass;
@@ -2536,7 +2582,7 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
         VkDeviceSize offsets[] = { 0 };
         vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffers, offsets);
 
-        vkCmdBindIndexBuffer(cmdBuf, m_SkyboxCube->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(cmdBuf, m_SkyboxCube->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT16);
 
         // On utilise la bonne fonction GetIndicesCount() !
         vkCmdDrawIndexed(cmdBuf, m_SkyboxCube->GetIndicesCount(), 1, 0, 0, 0);
@@ -2546,6 +2592,7 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
 
     EndSingleTimeCommands(cmdBuf);
 
+    std::cout << "[VkIBL::EnvCubemap] Etape 5 : Nettoyage des ressources temporaires...\n";
     // 5. NETTOYAGE DES DÉCHETS DE CONSTRUCTION
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -2559,15 +2606,17 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
         vkDestroyImageView(m_Device, faceViews[i], nullptr);
     }
 
-    std::cout << "[Vulkan] Cubemap genere avec succes !\n";
+    std::cout << "[VkIBL::EnvCubemap] === Environment Cubemap genere avec succes ! ==="  << "\n";
 }
 
 void VulkanRenderer::GenerateIrradianceCubemap() {
-    std::cout << "[Vulkan] Generation de l'Irradiance Cubemap (32x32)...\n";
+    std::cout << "[VkIBL::Irradiance] === Demarrage de la generation Irradiance Cubemap ==="  << "\n";
 
     const uint32_t dim = 32; // <--- Résolution minuscule, parfaite pour la lumière ambiante
     VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    std::cout << "[VkIBL::Irradiance] Parametres : resolution=" << dim << "x" << dim << ", format=R32G32B32A32_SFLOAT, 6 faces\n";
 
+    std::cout << "[VkIBL::Irradiance] Etape 1 : Creation de l'image cubemap...\n";
     m_IrradianceCubemap = new VulkanTexture();
     m_TrackedTextures.push_back(m_IrradianceCubemap);
 
@@ -2595,6 +2644,7 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
     allocInfo.memoryTypeIndex = FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_IrradianceCubemap->Memory);
     vkBindImageMemory(m_Device, m_IrradianceCubemap->Image, m_IrradianceCubemap->Memory, 0);
+    std::cout << "[VkIBL::Irradiance]   -> Image cubemap creee et memoire GPU allouee (" << memReqs.size << " octets).\n";
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -2607,6 +2657,7 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
     viewInfo.subresourceRange.layerCount = 6;
     viewInfo.image = m_IrradianceCubemap->Image;
     vkCreateImageView(m_Device, &viewInfo, nullptr, &m_IrradianceCubemap->View);
+    std::cout << "[VkIBL::Irradiance]   -> Image View (CUBE) creee.\n";
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2616,7 +2667,9 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_IrradianceCubemap->Sampler);
+    std::cout << "[VkIBL::Irradiance]   -> Sampler cree.\n";
 
+    std::cout << "[VkIBL::Irradiance] Etape 2 : Creation du Render Pass et des Framebuffers...\n";
     // 2. RENDER PASS ET FRAMEBUFFERS
     VkAttachmentDescription attachment{};
     attachment.format = format;
@@ -2792,7 +2845,7 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
     vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
 
     // 4. RENDU DES 6 FACES
-    glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+    glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.001f, 10.0f);
     captureProjection[1][1] *= -1.0f;
 
     glm::mat4 captureViews[] = {
@@ -2833,7 +2886,7 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
         VkBuffer vertexBuffers[] = { m_SkyboxCube->GetVertexBuffer() };
         VkDeviceSize offsets[] = { 0 };
         vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(cmdBuf, m_SkyboxCube->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(cmdBuf, m_SkyboxCube->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT16);
         vkCmdDrawIndexed(cmdBuf, m_SkyboxCube->GetIndicesCount(), 1, 0, 0, 0);
 
         vkCmdEndRenderPass(cmdBuf);
@@ -2841,6 +2894,7 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
 
     EndSingleTimeCommands(cmdBuf);
 
+    std::cout << "[VkIBL::Irradiance] Etape 5 : Nettoyage des ressources temporaires...\n";
     // 5. NETTOYAGE
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -2853,16 +2907,18 @@ void VulkanRenderer::GenerateIrradianceCubemap() {
         vkDestroyImageView(m_Device, faceViews[i], nullptr);
     }
 
-    std::cout << "[Vulkan] Irradiance Cubemap (Diffuse) generée avec succes !\n";
+    std::cout << "[VkIBL::Irradiance] === Irradiance Cubemap (Diffuse) generee avec succes ! ==="  << "\n";
 }
 
 void VulkanRenderer::GeneratePrefilterCubemap() {
-    std::cout << "[Vulkan] Generation du Prefilter Cubemap (5 MipMaps)...\n";
+    std::cout << "[VkIBL::Prefilter] === Demarrage de la generation Prefilter Cubemap ==="  << "\n";
 
     const uint32_t dim = 128; // La résolution de base de notre reflets nets
     const uint32_t mipLevels = 5;
     VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    std::cout << "[VkIBL::Prefilter] Parametres : resolution=" << dim << "x" << dim << ", mipLevels=" << mipLevels << ", format=R32G32B32A32_SFLOAT\n";
 
+    std::cout << "[VkIBL::Prefilter] Etape 1 : Creation de l'image cubemap avec " << mipLevels << " niveaux de mipmap...\n";
     m_PrefilterCubemap = new VulkanTexture();
     m_TrackedTextures.push_back(m_PrefilterCubemap);
 
@@ -2890,6 +2946,7 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     allocInfo.memoryTypeIndex = FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     vkAllocateMemory(m_Device, &allocInfo, nullptr, &m_PrefilterCubemap->Memory);
     vkBindImageMemory(m_Device, m_PrefilterCubemap->Image, m_PrefilterCubemap->Memory, 0);
+    std::cout << "[VkIBL::Prefilter]   -> Image cubemap creee et memoire GPU allouee (" << memReqs.size << " octets).\n";
 
     // Vue globale Cubemap
     VkImageViewCreateInfo viewInfo{};
@@ -2903,6 +2960,7 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     viewInfo.subresourceRange.layerCount = 6;
     viewInfo.image = m_PrefilterCubemap->Image;
     vkCreateImageView(m_Device, &viewInfo, nullptr, &m_PrefilterCubemap->View);
+    std::cout << "[VkIBL::Prefilter]   -> Image View (CUBE) creee avec " << mipLevels << " mip levels.\n";
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2915,7 +2973,9 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = (float)mipLevels;
     vkCreateSampler(m_Device, &samplerInfo, nullptr, &m_PrefilterCubemap->Sampler);
+    std::cout << "[VkIBL::Prefilter]   -> Sampler cree (filtrage lineaire, mipmap lineaire, maxLod=" << mipLevels << ").\n";
 
+    std::cout << "[VkIBL::Prefilter] Etape 2 : Creation du Render Pass...\n";
     // 2. RENDER PASS
     VkAttachmentDescription attachment{};
     attachment.format = format;
@@ -3077,7 +3137,7 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
 
     // 4. RENDU DES 5 NIVEAUX x 6 FACES
-    glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+    glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.001f, 10.0f);
     captureProjection[1][1] *= -1.0f;
 
     glm::mat4 captureViews[] = {
@@ -3103,6 +3163,8 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
         VkRect2D scissor{{0,0}, {mipWidth, mipHeight}};
 
         float roughness = (float)mip / (float)(mipLevels - 1);
+
+        if (roughness < 0.001f) roughness = 0.001f;
 
         for (uint32_t i = 0; i < 6; ++i) {
             // Création d'une vue et d'un framebuffer éphémères pour CE mipmap et CETTE face
@@ -3153,7 +3215,7 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
             VkBuffer vertexBuffers[] = { m_SkyboxCube->GetVertexBuffer() };
             VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffers, offsets);
-            vkCmdBindIndexBuffer(cmdBuf, m_SkyboxCube->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindIndexBuffer(cmdBuf, m_SkyboxCube->GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT16);
             vkCmdDrawIndexed(cmdBuf, m_SkyboxCube->GetIndicesCount(), 1, 0, 0, 0);
 
             vkCmdEndRenderPass(cmdBuf);
@@ -3162,6 +3224,7 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
 
     EndSingleTimeCommands(cmdBuf);
 
+    std::cout << "[VkIBL::Prefilter] Etape 5 : Nettoyage des ressources temporaires...\n";
     // 5. NETTOYAGE
     vkDestroyPipeline(m_Device, pipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, pipelineLayout, nullptr);
@@ -3173,7 +3236,7 @@ void VulkanRenderer::GeneratePrefilterCubemap() {
     for (auto fb : tempFramebuffers) vkDestroyFramebuffer(m_Device, fb, nullptr);
     for (auto view : tempViews) vkDestroyImageView(m_Device, view, nullptr);
 
-    std::cout << "[Vulkan] Prefilter Cubemap genere avec succes !\n";
+    std::cout << "[VkIBL::Prefilter] === Prefilter Cubemap genere avec succes ! ==="  << "\n";
 }
 
 void VulkanRenderer::CreateShadowResources() {
@@ -3567,7 +3630,13 @@ void VulkanRenderer::RenderMaterialPreview(
     // 1. On s'assure que le carnet de commandes est ouvert
     BeginFrame();
 
-    // 2. Préparation de l'UBO pour la preview
+    // 2. Création du matériau de preview UNE SEULE FOIS (puis on le réutilise)
+    if (!m_PreviewMaterialInitialized) {
+        m_PreviewMaterial = CreateVulkanMaterial(nullptr, nullptr, nullptr, nullptr, nullptr);
+        m_PreviewMaterialInitialized = true;
+    }
+
+    // 3. Mise à jour de l'UBO via le pointeur mappé (pas de nouveau buffer !)
     MaterialUBO ubo{};
     ubo.baseColor = colorVal;
     ubo.cameraPos = glm::vec4(camPos, 1.0f);
@@ -3579,38 +3648,9 @@ void VulkanRenderer::RenderMaterialPreview(
     ubo.ddgiStartPosition = glm::vec4(0.0f);
     ubo.ddgiProbeCount = glm::ivec4(0);
 
-    // On utilise un buffer temporaire pour la preview (gestion simplifiée via DeletionQueue)
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    VkDeviceSize bufferSize = sizeof(MaterialUBO);
+    memcpy(m_PreviewMaterial.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(MaterialUBO));
 
-    CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                 stagingBuffer, stagingBufferMemory);
-
-    void* data;
-    vkMapMemory(m_Device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, &ubo, bufferSize);
-    vkUnmapMemory(m_Device, stagingBufferMemory);
-
-    m_MainDeletionQueue.push_function([=, device = m_Device]() {
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-    });
-
-    // 3. Allocation d'un Descriptor Set temporaire pour la Preview
-    VkDescriptorSet previewSet;
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = m_DescriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &m_DescriptorSetLayout;
-
-    if (vkAllocateDescriptorSets(m_Device, &allocInfo, &previewSet) != VK_SUCCESS) return;
-
-    // 4. Configuration des ressources (Textures + Fallbacks)
-    VkDescriptorBufferInfo bufferInfo{ stagingBuffer, 0, sizeof(MaterialUBO) };
-
+    // 4. Mise à jour des textures dans le Descriptor Set existant
     std::array<VkDescriptorImageInfo, 10> imageInfos{};
     VulkanTexture* textures[] = {
         albedo, normal, metallic, roughness, ao,
@@ -3620,11 +3660,9 @@ void VulkanRenderer::RenderMaterialPreview(
     for (int t = 0; t < 9; t++) {
         imageInfos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        // On choisit intelligemment la texture de remplacement selon le canal !
         VulkanTexture* fallback = m_DefaultWhiteTexture;
-        if (t == 1) fallback = m_DefaultNormalTexture; // Normal Map -> Bleu neutre
-        if (t == 2) fallback = m_DefaultBlackTexture;  // Metallic -> Noir (Non-métal)
-        // L'Albedo (0), Roughness (3) et AO (4) restent Blancs par défaut.
+        if (t == 1) fallback = m_DefaultNormalTexture;
+        if (t == 2) fallback = m_DefaultBlackTexture;
 
         imageInfos[t].imageView = textures[t] ? textures[t]->View : fallback->View;
         imageInfos[t].sampler = textures[t] ? textures[t]->Sampler : fallback->Sampler;
@@ -3633,41 +3671,36 @@ void VulkanRenderer::RenderMaterialPreview(
     imageInfos[9].imageView = m_ShadowImageView;
     imageInfos[9].sampler = m_ShadowSampler;
 
-    // Fallback pour le canal DDGI (Binding 12)
     VkDescriptorImageInfo ddgiFallback{};
     ddgiFallback.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     ddgiFallback.imageView = m_DefaultWhiteTexture->View;
     ddgiFallback.sampler = m_DefaultWhiteTexture->Sampler;
 
-    // 5. Écritures des descripteurs (12 écritures : UBO + 10 textures + DDGI)
-    std::array<VkWriteDescriptorSet, 12> descriptorWrites{};
+    // On met à jour les textures du descriptor set de la frame en cours
+    VkDescriptorSet currentSet = m_PreviewMaterial.DescriptorSets[m_CurrentFrame];
 
-    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[0].dstSet = previewSet;
-    descriptorWrites[0].dstBinding = 0;
-    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrites[0].descriptorCount = 1;
-    descriptorWrites[0].pBufferInfo = &bufferInfo;
-
+    std::array<VkWriteDescriptorSet, 10> texWrites{};
     for (int t = 0; t < 10; t++) {
-        descriptorWrites[t + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[t + 1].dstSet = previewSet;
-        descriptorWrites[t + 1].dstBinding = t + 1;
-        descriptorWrites[t + 1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptorWrites[t + 1].descriptorCount = 1;
-        descriptorWrites[t + 1].pImageInfo = &imageInfos[t];
+        texWrites[t].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        texWrites[t].dstSet = currentSet;
+        texWrites[t].dstBinding = t + 1;
+        texWrites[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        texWrites[t].descriptorCount = 1;
+        texWrites[t].pImageInfo = &imageInfos[t];
     }
+    vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(texWrites.size()), texWrites.data(), 0, nullptr);
 
-    descriptorWrites[11].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[11].dstSet = previewSet;
-    descriptorWrites[11].dstBinding = 12; // Le canal DDGI
-    descriptorWrites[11].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[11].descriptorCount = 1;
-    descriptorWrites[11].pImageInfo = &ddgiFallback;
+    // DDGI fallback (binding 12)
+    VkWriteDescriptorSet ddgiWrite{};
+    ddgiWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    ddgiWrite.dstSet = currentSet;
+    ddgiWrite.dstBinding = 12;
+    ddgiWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ddgiWrite.descriptorCount = 1;
+    ddgiWrite.pImageInfo = &ddgiFallback;
+    vkUpdateDescriptorSets(m_Device, 1, &ddgiWrite, 0, nullptr);
 
-    vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
-
-    // 6. Rendu Effectif
+    // 5. Rendu Effectif
     VkRenderPassBeginInfo rpInfo{};
     rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rpInfo.renderPass = target->GetRenderPass();
@@ -3690,11 +3723,11 @@ void VulkanRenderer::RenderMaterialPreview(
     VkRect2D scissor{ {0,0}, rpInfo.renderArea.extent };
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    glm::mat4 mvp = proj * view * model;
-    vkCmdPushConstants(cmd, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvp);
-    vkCmdPushConstants(cmd, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), sizeof(glm::mat4), &model);
+    glm::mat4 viewProj = proj * view;
+    vkCmdPushConstants(cmd, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &model);
+    vkCmdPushConstants(cmd, m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), sizeof(glm::mat4), &viewProj);
 
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &previewSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &currentSet, 0, nullptr);
 
     mesh->Draw();
 

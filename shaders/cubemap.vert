@@ -9,6 +9,5 @@ layout(push_constant) uniform PushConstants {
 
 void main() {
     fragWorldPos = inPosition;
-    // On projette le cube autour de la caméra
     gl_Position = push.proj * push.view * vec4(inPosition, 1.0);
 }

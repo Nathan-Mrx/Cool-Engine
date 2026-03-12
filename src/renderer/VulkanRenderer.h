@@ -282,6 +282,10 @@ private:
     VulkanTexture* m_IrradianceCubemap = nullptr;
     VulkanTexture* m_PrefilterCubemap = nullptr;
 
+    // --- PREVIEW MATERIAL (CACHE) ---
+    VulkanMaterial m_PreviewMaterial;
+    bool m_PreviewMaterialInitialized = false;
+
     VkImage m_ShadowImage = VK_NULL_HANDLE;
     VkDeviceMemory m_ShadowImageMemory = VK_NULL_HANDLE;
     VkImageView m_ShadowImageView = VK_NULL_HANDLE;             // Vue globale (Array) pour le Shader PBR

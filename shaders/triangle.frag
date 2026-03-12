@@ -225,7 +225,7 @@ void main() {
     // --- LE SAUVEUR : LE CIEL PROCÉDURAL ---
     // Si l'Irradiance C++ est noire, on génère un ciel bleu/gris artificiel
     vec3 staticIrradiance = texture(irradianceMap, N).rgb;
-    if (length(staticIrradiance) < 0.01) {
+    if (any(isnan(staticIrradiance)) || length(staticIrradiance) < 0.001) {
         staticIrradiance = mix(vec3(0.05, 0.05, 0.05), vec3(0.2, 0.5, 0.8), N.y * 0.5 + 0.5);
     }
 
@@ -240,8 +240,8 @@ void main() {
     const float MAX_REFLECTION_LOD = 4.0;
     vec3 envColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb;
 
-    // Si la texture de reflet C++ est noire, on génère un beau ciel brillant
-    if (length(envColor) < 0.01) {
+    // Si la texture de reflet C++ est noire ou NaN, on génère un beau ciel brillant
+    if (any(isnan(envColor)) || length(envColor) < 0.001) {
         envColor = mix(vec3(0.05, 0.05, 0.05), vec3(0.5, 0.7, 1.0), R.y * 0.5 + 0.5);
     }
 
@@ -255,10 +255,15 @@ void main() {
     // COULEUR FINALE (Directe + Indirecte)
     vec3 color = Lo + ambient;
 
+    float exposure = 0.5; // Change cette valeur pour équilibrer ta scène (0.1 à 1.0)
+    color = color * exposure;
+
     // TONEMAPPING ACES
     float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
     color = clamp((color*(a*color+b))/(color*(c*color+d)+e), 0.0, 1.0);
     color = pow(color, vec3(1.0/2.2));
 
     outColor = vec4(color, ubo.baseColor.a);
+
+
 }

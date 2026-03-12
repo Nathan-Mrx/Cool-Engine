@@ -108,6 +108,10 @@ MaterialEditorPanel::MaterialEditorPanel() {
 }
 
 MaterialEditorPanel::~MaterialEditorPanel() {
+    // Wait for the GPU to finish any in-flight frames before destroying our framebuffers and meshes
+    if (Renderer::GetAPI() == RendererAPI::API::Vulkan) {
+        vkDeviceWaitIdle(VulkanRenderer::Get()->GetDevice());
+    }
     ed::DestroyEditor(m_Context);
 }
 

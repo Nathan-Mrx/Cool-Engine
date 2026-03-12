@@ -136,6 +136,32 @@ void EditorLayer::CloseProjectInternal() {
 void EditorLayer::OnUpdate(float deltaTime) {
     if (!Project::GetActive()) return;
 
+    if (!m_TabsToClose.empty()) {
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+            vkDeviceWaitIdle(VulkanRenderer::Get()->GetDevice());
+        }
+        
+        // Sort descending so removals don't shift subsequent indices
+        std::sort(m_TabsToClose.rbegin(), m_TabsToClose.rend());
+        for (int index : m_TabsToClose) {
+            if (index < m_Tabs.size()) {
+                m_Tabs.erase(m_Tabs.begin() + index);
+            }
+        }
+        m_TabsToClose.clear();
+        
+        if (m_ActiveTabIndex >= m_Tabs.size()) m_ActiveTabIndex = m_Tabs.empty() ? 0 : m_Tabs.size() - 1;
+        
+        // Restore scene state
+        if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene) {
+            m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
+            m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+        } else {
+            m_ActiveScene = nullptr;
+            m_SceneHierarchyPanel.SetContext(nullptr);
+        }
+    }
+
     ResizeViewportIfNeeded();
 
     // 1. LOGIQUE D'UPDATE (Indépendant de l'API Graphique)
@@ -410,7 +436,6 @@ void EditorLayer::DrawTabs() {
             // --- 5. FERMETURE ---
             if (!isOpen) {
                 CloseTab(i);
-                i--;
             }
         }
 
@@ -424,16 +449,10 @@ void EditorLayer::DrawTabs() {
 
 void EditorLayer::CloseTab(int index) {
     if (index < 0 || index >= m_Tabs.size()) return;
-    m_Tabs.erase(m_Tabs.begin() + index);
-
-    if (m_ActiveTabIndex >= m_Tabs.size()) m_ActiveTabIndex = m_Tabs.size() - 1;
-
-    // Restaure la scène si le nouvel onglet actif est une scène
-    if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene) {
-        m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
-        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-    } else {
-        m_ActiveScene = nullptr; // Désactive la scène en arrière plan
+    
+    // Add to deferral queue instead of destroying immediately
+    if (std::find(m_TabsToClose.begin(), m_TabsToClose.end(), index) == m_TabsToClose.end()) {
+        m_TabsToClose.push_back(index);
     }
 }
 
