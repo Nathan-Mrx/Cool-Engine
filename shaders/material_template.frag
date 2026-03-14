@@ -29,6 +29,8 @@ layout(binding = 0) uniform MaterialUBO {
     vec4 cascadeSplits;
     vec4 ddgiStartPosition;
     ivec4 ddgiProbeCount;
+    vec4 lightDirection;  // xyz = direction TO light, w = unused
+    vec4 lightColor;      // xyz = color * intensity, w = ambient intensity
 } ubo;
 
 layout(binding = 1) uniform sampler2D albedoMap;
@@ -154,7 +156,7 @@ void main() {
     vec3 Lo = vec3(0.0);
 
     // --- DIRECTIONAL SUN LIGHT ---
-    vec3 L = normalize(vec3(-0.5, -1.0, -0.5)); // Hardcoded Sun Direction (TODO: Uniform)
+    vec3 L = normalize(ubo.lightDirection.xyz);
     vec3 H = normalize(V + L);
     float NdotL = max(dot(N, L), 0.0);
     vec3 radiance = vec3(1.0, 0.98, 0.9) * 2.0; // Hardcoded Sun Color (TODO: Uniform)

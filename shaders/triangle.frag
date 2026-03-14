@@ -18,6 +18,8 @@ layout(binding = 0) uniform MaterialUBO {
     vec4 cascadeSplits;
     vec4 ddgiStartPosition;
     ivec4 ddgiProbeCount;
+    vec4 lightDirection;  // xyz = direction TO light, w = unused
+    vec4 lightColor;      // xyz = color * intensity, w = ambient intensity
 } ubo;
 
 layout(binding = 1) uniform sampler2D albedoMap;
@@ -156,13 +158,12 @@ void main() {
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
 
-    // 3. SOLEIL & OMBRES DIRECTES
-    vec3 lightDir = normalize(vec3(0.5, 0.8, 1.0));
-    vec3 L = lightDir;
+    // 3. SOLEIL & OMBRES DIRECTES (Direction et couleur drivees par la Directional Light)
+    vec3 L = normalize(ubo.lightDirection.xyz);
     vec3 H = normalize(V + L);
 
     float shadow = ShadowCalculation(fragWorldPos, N, L);
-    vec3 radiance = vec3(4.0) * (1.0 - shadow);
+    vec3 radiance = ubo.lightColor.xyz * (1.0 - shadow);
     float NdotL = max(dot(N, L), 0.0);
 
     vec3 Lo = vec3(0.0);

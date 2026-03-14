@@ -86,9 +86,9 @@ void VulkanRenderer::Init() {
 
     std::cout << "[VkInit::Skybox] Creation du cube unitaire pour le skybox...\n";
     m_SkyboxCube = PrimitiveFactory::CreateCube();
-    std::cout << "[VkInit::Skybox] Cube cree. Chargement de la texture HDR (assets/textures/sky.hdr)...\n";
-    m_SkyboxTexture = static_cast<VulkanTexture*>(TextureLoader::LoadHDR("assets/textures/sky.hdr"));
-    std::cout << "[VkInit::Skybox] Texture HDR chargee : " << (m_SkyboxTexture ? "OK" : "ECHEC (nullptr)") << "\n";
+    // Pas de texture HDR par defaut — le skybox utilise le Sky Atmosphere procedural.
+    m_SkyboxTexture = nullptr;
+    std::cout << "[VkInit::Skybox] Cube cree (mode procedurale, pas de HDR par defaut).\n";
 
     std::cout << "[VkInit::IBL] Generation de l'Environment Cubemap...\n";
     GenerateEnvironmentCubemap();
@@ -235,6 +235,11 @@ void VulkanRenderer::Shutdown() {
     vkDestroyPipeline(m_Device, m_SkyboxPipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, m_SkyboxPipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_Device, m_SkyboxDescriptorSetLayout, nullptr);
+
+    for (size_t i = 0; i < m_SkyboxUniformBuffers.size(); i++) {
+        vkDestroyBuffer(m_Device, m_SkyboxUniformBuffers[i], nullptr);
+        vkFreeMemory(m_Device, m_SkyboxUniformBuffersMemory[i], nullptr);
+    }
 
     vkDestroyPipeline(m_Device, m_GraphicsPipeline, nullptr);
     vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
@@ -1024,15 +1029,103 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
     // 1. La Skybox
     vkCmdBindPipeline(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_SkyboxPipeline);
 
-    struct SkyboxPush {
-        glm::mat4 view;
-        glm::mat4 proj;
-    } skyPush{};
-    skyPush.view = m_SceneViewMatrix;
-    skyPush.proj = m_SceneProjectionMatrix;
+    SkyboxUBO skyUbo{};
+    skyUbo.view = m_SceneViewMatrix;
+    skyUbo.proj = m_SceneProjectionMatrix;
+    // Fallbacks (Z-UP)
+    skyUbo.sunDirection = glm::vec4(0.0f, 0.0f, 1.0f, 20.0f); 
+    skyUbo.planetRadius = 6360000.0f;
+    skyUbo.atmosphereRadius = 6420000.0f;
+    skyUbo.rayleighScattering = glm::vec4(5.5e-6f, 13.0e-6f, 22.4e-6f, 0.758f);
+    skyUbo.mieScattering = 21.0e-6f;
+    skyUbo.rayleighScaleHeight = 8000.0f;
+    skyUbo.mieScaleHeight = 1200.0f;
 
-    vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_SkyboxPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SkyboxPush), &skyPush);
-    vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_SkyboxPipelineLayout, 0, 1, &m_SkyboxDescriptorSet, 0, nullptr);
+    // Variables partagees avec le PBR
+    glm::vec3 sceneLightDir = glm::vec3(0.0f, 0.0f, 1.0f);
+    glm::vec3 sceneLightColor = glm::vec3(1.0f);
+    float sceneLightDiffuse = 0.8f;
+    float sceneLightAmbient = 0.2f;
+
+    auto lightView = scene->m_Registry.view<DirectionalLightComponent, TransformComponent>();
+    for (auto entity : lightView) {
+        auto [light, transform] = lightView.get<DirectionalLightComponent, TransformComponent>(entity);
+        // En Z-up, le forward par defaut (0,0,1) = vers le haut = soleil au zenith
+        sceneLightDir = transform.GetForwardVector(); // Direction TO the sun
+        sceneLightColor = light.Color;
+        sceneLightDiffuse = light.DiffuseIntensity;
+        sceneLightAmbient = light.AmbientIntensity;
+        skyUbo.sunDirection = glm::vec4(sceneLightDir, 20.0f);
+        break; 
+    }
+
+    auto skyboxView = scene->m_Registry.view<SkyboxComponent>();
+    for (auto entity : skyboxView) {
+        auto& skybox = skyboxView.get<SkyboxComponent>(entity);
+        skyUbo.sunDirection.w = skybox.SunIntensity;
+        skyUbo.planetRadius = skybox.PlanetRadius;
+        skyUbo.atmosphereRadius = skybox.AtmosphereRadius;
+        skyUbo.rayleighScattering = glm::vec4(skybox.RayleighScattering, skybox.MiePreferredDirection);
+        skyUbo.mieScattering = skybox.MieScattering;
+        skyUbo.rayleighScaleHeight = skybox.RayleighScaleHeight;
+        skyUbo.mieScaleHeight = skybox.MieScaleHeight;
+
+        // NOUVEAU: Rechargement dynamique de la texture HDR si le chemin a change
+        if (!skybox.HDRPath.empty()) {
+            skyUbo.useHDR = 1.0f;
+            skyUbo.hdrIntensity = skybox.Intensity;
+            skyUbo.hdrRotation = glm::radians(skybox.Rotation);
+            if (skybox.HDRPath != m_CurrentSkyboxHDRPath) {
+                m_CurrentSkyboxHDRPath = skybox.HDRPath;
+                VulkanTexture* newTex = static_cast<VulkanTexture*>(TextureLoader::LoadHDR(skybox.HDRPath.c_str()));
+                if (newTex) {
+                    m_SkyboxTexture = newTex;
+                    // Mettre a jour les descriptor sets avec la nouvelle texture
+                    for (size_t i = 0; i < m_SkyboxDescriptorSets.size(); i++) {
+                        VkDescriptorImageInfo imgInfo{};
+                        imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                        imgInfo.imageView = m_SkyboxTexture->View;
+                        imgInfo.sampler = m_SkyboxTexture->Sampler;
+
+                        VkWriteDescriptorSet write{};
+                        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                        write.dstSet = m_SkyboxDescriptorSets[i];
+                        write.dstBinding = 0;
+                        write.dstArrayElement = 0;
+                        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                        write.descriptorCount = 1;
+                        write.pImageInfo = &imgInfo;
+                        vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
+                    }
+                    std::cout << "[VkSkybox] Texture HDR chargee dynamiquement: " << skybox.HDRPath << "\n";
+                }
+            }
+        } else if (!m_CurrentSkyboxHDRPath.empty()) {
+            // L'utilisateur a efface le HDR -> retour a la texture blanche par defaut
+            m_CurrentSkyboxHDRPath = "";
+            for (size_t i = 0; i < m_SkyboxDescriptorSets.size(); i++) {
+                VkDescriptorImageInfo imgInfo{};
+                imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imgInfo.imageView = m_DefaultWhiteTexture->View;
+                imgInfo.sampler = m_DefaultWhiteTexture->Sampler;
+
+                VkWriteDescriptorSet write{};
+                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet = m_SkyboxDescriptorSets[i];
+                write.dstBinding = 0;
+                write.dstArrayElement = 0;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.descriptorCount = 1;
+                write.pImageInfo = &imgInfo;
+                vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
+            }
+        }
+
+        break; 
+    }
+
+    memcpy(m_SkyboxUniformBuffersMapped[m_CurrentFrame], &skyUbo, sizeof(SkyboxUBO));
+    vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_SkyboxPipelineLayout, 0, 1, &m_SkyboxDescriptorSets[m_CurrentFrame], 0, nullptr);
     m_SkyboxCube->Draw();
 
     // 2. Les Entités PBR
@@ -1135,6 +1228,10 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
                 ubo.ddgiStartPosition = glm::vec4(0.0f);
                 ubo.ddgiProbeCount = glm::ivec4(0);
             }
+
+            // Remplir la direction et couleur du soleil (synchronisées avec le ciel)
+            ubo.lightDirection = glm::vec4(sceneLightDir, 0.0f);
+            ubo.lightColor = glm::vec4(sceneLightColor * sceneLightDiffuse * 4.0f, sceneLightAmbient);
 
             memcpy(mat.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(ubo));
 
@@ -2018,61 +2115,89 @@ VulkanTexture* VulkanRenderer::CreateSolidColorTexture(uint8_t r, uint8_t g, uin
 
 void VulkanRenderer::CreateSkyboxPipeline() {
     std::cout << "[VkSkybox::Pipeline] Etape 1 : Creation du Descriptor Set Layout...\n";
-    // 1. Le Plan (Layout) : Uniquement notre texture HDR !
-    VkDescriptorSetLayoutBinding samplerBinding{};
-    samplerBinding.binding = 0;
-    samplerBinding.descriptorCount = 1;
-    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // 1. Le Plan (Layout) : Texture HDR (0) et Paramètres Sky Atmosphere (1)
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorCount = 1;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorCount = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &samplerBinding;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
     vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_SkyboxDescriptorSetLayout);
-    std::cout << "[VkSkybox::Pipeline] Descriptor Set Layout cree.\n";
+    std::cout << "[VkSkybox::Pipeline] Descriptor Set Layout cree avec UBO.\n";
 
-    std::cout << "[VkSkybox::Pipeline] Etape 2 : Allocation du Descriptor Set et branchement texture HDR...\n";
-    // 2. Allocation de la mémoire et branchement de la texture HDR
+    // 2. Création des Uniform Buffers (Un par Frame in Flight)
+    VkDeviceSize bufferSize = sizeof(SkyboxUBO);
+    m_SkyboxUniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    m_SkyboxUniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_SkyboxUniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, m_SkyboxUniformBuffers[i], m_SkyboxUniformBuffersMemory[i]);
+        vkMapMemory(m_Device, m_SkyboxUniformBuffersMemory[i], 0, bufferSize, 0, &m_SkyboxUniformBuffersMapped[i]);
+    }
+
+    std::cout << "[VkSkybox::Pipeline] Etape 2 : Allocation des " << MAX_FRAMES_IN_FLIGHT << " Descriptor Sets...\n";
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_SkyboxDescriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = m_DescriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &m_SkyboxDescriptorSetLayout;
-    vkAllocateDescriptorSets(m_Device, &allocInfo, &m_SkyboxDescriptorSet);
-    std::cout << "[VkSkybox::Pipeline]   -> Descriptor Set alloue depuis le pool.\n";
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    allocInfo.pSetLayouts = layouts.data();
 
-    VkDescriptorImageInfo imageInfo{};
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = m_SkyboxTexture ? m_SkyboxTexture->View : m_DefaultWhiteTexture->View;
-    imageInfo.sampler = m_SkyboxTexture ? m_SkyboxTexture->Sampler : m_DefaultWhiteTexture->Sampler;
-    std::cout << "[VkSkybox::Pipeline]   -> Texture utilisee : " << (m_SkyboxTexture ? "Cubemap HDR" : "Texture blanche par defaut") << "\n";
+    m_SkyboxDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_Device, &allocInfo, m_SkyboxDescriptorSets.data()) != VK_SUCCESS) {
+        throw std::runtime_error("Erreur fatale: Impossible d'allouer les descriptor sets de la skybox !");
+    }
 
-    VkWriteDescriptorSet descriptorWrite{};
-    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite.dstSet = m_SkyboxDescriptorSet;
-    descriptorWrite.dstBinding = 0;
-    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrite.descriptorCount = 1;
-    descriptorWrite.pImageInfo = &imageInfo;
-    vkUpdateDescriptorSets(m_Device, 1, &descriptorWrite, 0, nullptr);
-    std::cout << "[VkSkybox::Pipeline]   -> Descriptor Set mis a jour avec la texture.\n";
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = m_SkyboxTexture ? m_SkyboxTexture->View : m_DefaultWhiteTexture->View;
+        imageInfo.sampler = m_SkyboxTexture ? m_SkyboxTexture->Sampler : m_DefaultWhiteTexture->Sampler;
 
-    std::cout << "[VkSkybox::Pipeline] Etape 3 : Creation du Pipeline Layout (Push Constants: 2 matrices)...\n";
-    // 3. Configuration du Pipeline Layout (Pour les 2 matrices)
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(glm::mat4) * 2;
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = m_SkyboxUniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(SkyboxUBO);
 
+        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[0].dstSet = m_SkyboxDescriptorSets[i];
+        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstArrayElement = 0;
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pImageInfo = &imageInfo;
+
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].dstSet = m_SkyboxDescriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pBufferInfo = &bufferInfo;
+
+        vkUpdateDescriptorSets(m_Device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+    }
+
+    std::cout << "[VkSkybox::Pipeline] Etape 3 : Creation du Pipeline Layout (Sans Push Constants)...\n";
+    // 3. Configuration du Pipeline Layout (Sans push constants, on a l'UBO)
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &m_SkyboxDescriptorSetLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+    
     vkCreatePipelineLayout(m_Device, &pipelineLayoutInfo, nullptr, &m_SkyboxPipelineLayout);
-    std::cout << "[VkSkybox::Pipeline]   -> Pipeline Layout cree (taille push constants: " << sizeof(glm::mat4) * 2 << " octets).\n";
+    std::cout << "[VkSkybox::Pipeline]   -> Pipeline Layout cree.\n";
 
     std::cout << "[VkSkybox::Pipeline] Etape 4 : Chargement des shaders skybox...\n";
     // 4. Les Shaders
@@ -2537,8 +2662,9 @@ void VulkanRenderer::GenerateEnvironmentCubemap() {
 
     VkDescriptorImageInfo descImageInfo{};
     descImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    descImageInfo.imageView = m_SkyboxTexture->View;
-    descImageInfo.sampler = m_SkyboxTexture->Sampler;
+    VulkanTexture* srcTex = m_SkyboxTexture ? m_SkyboxTexture : m_DefaultWhiteTexture;
+    descImageInfo.imageView = srcTex->View;
+    descImageInfo.sampler = srcTex->Sampler;
     VkWriteDescriptorSet descriptorWrite{};
     descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrite.dstSet = descriptorSet;
@@ -3760,6 +3886,10 @@ void VulkanRenderer::RenderMaterialPreview(
     // On neutralise le DDGI pour la prévisualisation
     ubo.ddgiStartPosition = glm::vec4(0.0f);
     ubo.ddgiProbeCount = glm::ivec4(0);
+
+    // Lumière de prévisualisation (direction fixe pour la preview)
+    ubo.lightDirection = glm::vec4(glm::normalize(glm::vec3(0.5f, 0.8f, 1.0f)), 0.0f);
+    ubo.lightColor = glm::vec4(4.0f, 4.0f, 4.0f, 0.2f);
 
     memcpy(m_PreviewMaterial.UniformBuffersMapped[m_CurrentFrame], &ubo, sizeof(MaterialUBO));
 

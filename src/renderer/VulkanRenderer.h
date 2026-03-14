@@ -40,6 +40,28 @@ struct MaterialUBO {
     glm::vec4 cascadeSplits;
     glm::vec4 ddgiStartPosition; // xyz = Position, w = Spacing
     glm::ivec4 ddgiProbeCount;   // xyz = Count, w = padding
+    glm::vec4 lightDirection;    // xyz = normalized direction TO the light, w = unused
+    glm::vec4 lightColor;        // xyz = color * intensity, w = ambient intensity
+};
+
+// --- LA STRUCTURE DU SKY ATMOSPHERE ---
+struct alignas(16) SkyboxUBO {
+    glm::mat4 view;
+    glm::mat4 proj;
+    glm::vec4 sunDirection; // w = SunIntensity
+
+    // Atmospheric parameters
+    float planetRadius;
+    float atmosphereRadius;
+    float rayleighScaleHeight;
+    float mieScaleHeight;
+
+    glm::vec4 rayleighScattering; // xyz = color, w = MiePreferredDirection (g)
+    float mieScattering;
+
+    float useHDR; // 1.0 = sample HDR texture, 0.0 = procedural sky
+    float hdrIntensity; // Exposure multiplier for HDR
+    float hdrRotation;  // Rotation in radians for HDR
 };
 
 struct VulkanMaterial {
@@ -279,10 +301,15 @@ private:
     VkDescriptorSetLayout m_SkyboxDescriptorSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout m_SkyboxPipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_SkyboxPipeline = VK_NULL_HANDLE;
-    VkDescriptorSet m_SkyboxDescriptorSet = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_SkyboxDescriptorSets;
+
+    std::vector<VkBuffer> m_SkyboxUniformBuffers;
+    std::vector<VkDeviceMemory> m_SkyboxUniformBuffersMemory;
+    std::vector<void*> m_SkyboxUniformBuffersMapped;
 
     std::shared_ptr<Mesh> m_SkyboxCube;
     VulkanTexture* m_SkyboxTexture = nullptr;
+    std::string m_CurrentSkyboxHDRPath;
 
     VulkanTexture* m_BrdfLutTexture = nullptr;
 

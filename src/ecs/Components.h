@@ -374,6 +374,16 @@ struct SkyboxComponent {
     // NOUVEAU : Réglages d'exposition et de rotation
     CE_PROPERTY() float Intensity = 0.5f;
     CE_PROPERTY() float Rotation = 0.0f; // En degrés
+
+    // NOUVEAU : Paramètres pour le Sky Atmosphere (Scattering)
+    CE_PROPERTY() float PlanetRadius = 6360000.0f; // Terre = 6360km
+    CE_PROPERTY() float AtmosphereRadius = 6420000.0f; // Atmosphère = 6420km
+    CE_PROPERTY() glm::vec3 RayleighScattering = glm::vec3(5.5e-6f, 13.0e-6f, 22.4e-6f);
+    CE_PROPERTY() float MieScattering = 21.0e-6f;
+    CE_PROPERTY() float RayleighScaleHeight = 8000.0f;
+    CE_PROPERTY() float MieScaleHeight = 1200.0f;
+    CE_PROPERTY() float MiePreferredDirection = 0.758f;
+    CE_PROPERTY() float SunIntensity = 20.0f;
 };
 
 #include "Components.generated.h"

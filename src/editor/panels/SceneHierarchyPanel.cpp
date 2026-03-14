@@ -250,14 +250,14 @@ template<>
 void DrawComponentUI<SkyboxComponent>(Entity entity, const std::shared_ptr<Scene>& context) {
     if (entity.HasComponent<SkyboxComponent>()) {
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
-        if (ImGui::TreeNodeEx((void*)typeid(SkyboxComponent).hash_code(), flags, "Skybox")) {
+        if (ImGui::TreeNodeEx((void*)typeid(SkyboxComponent).hash_code(), flags, "Sky Atmosphere")) {
             auto& skybox = entity.GetComponent<SkyboxComponent>();
 
             // 1. Le chemin du fichier (Avec Drag & Drop)
             if (!skybox.HDRPath.empty()) {
                 ImGui::TextWrapped("HDR: %s", std::filesystem::path(skybox.HDRPath).filename().string().c_str());
             } else {
-                ImGui::TextColored(ImVec4(1, 0, 0, 1), "No HDR Assigned");
+                ImGui::TextDisabled("No HDR Assigned (Using procedural sky)");
             }
 
             ImGui::Button("Drop .hdr Here", ImVec2(-1, 30));
@@ -276,11 +276,47 @@ void DrawComponentUI<SkyboxComponent>(Entity entity, const std::shared_ptr<Scene
                 ImGui::EndDragDropTarget();
             }
 
+            if (ImGui::Button("Clear HDR", ImVec2(-1, 24))) {
+                SkyboxComponent before = skybox;
+                skybox.HDRPath = "";
+                UndoManager::BeginTransaction("Clear Skybox HDR");
+                UndoManager::PushAction(std::make_unique<EntityComponentCommand<SkyboxComponent>>(context, entity.GetUUID(), before, skybox));
+                UndoManager::EndTransaction();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
             ImGui::Spacing();
 
             // 2. Les réglages
+            ImGui::TextDisabled("Base Settings");
             DrawUndoableProperty("Intensity", entity, context, skybox, skybox.Intensity, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.05f, 0.0f, 10.0f); });
             DrawUndoableProperty("Rotation", entity, context, skybox, skybox.Rotation, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 1.0f, 0.0f, 360.0f); });
+            DrawUndoableProperty("Sun Intensity", entity, context, skybox, skybox.SunIntensity, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 1.0f, 0.0f, 500.0f); });
+
+            ImGui::Spacing();
+            ImGui::TextDisabled("Atmosphere Geometry (Meters)");
+            DrawUndoableProperty("Planet Radius", entity, context, skybox, skybox.PlanetRadius, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 1000.0f, 100000.0f, 10000000.0f); });
+            DrawUndoableProperty("Atmosphere Radius", entity, context, skybox, skybox.AtmosphereRadius, [&skybox](const char* l, float& v) { ImGui::DragFloat(l, &v, 1000.0f, skybox.PlanetRadius + 100.0f, 10000000.0f); });
+
+            ImGui::Spacing();
+            ImGui::TextDisabled("Rayleigh Scattering (Blue Sky)");
+            DrawUndoableProperty("Rayleigh Coeffs", entity, context, skybox, skybox.RayleighScattering, [](const char* l, glm::vec3& v) { 
+                glm::vec3 c = v * 1e6f;
+                if (ImGui::ColorEdit3(l, glm::value_ptr(c), ImGuiColorEditFlags_Float)) {
+                    v = c * 1e-6f;
+                }
+            });
+            DrawUndoableProperty("Rayleigh Height", entity, context, skybox, skybox.RayleighScaleHeight, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 10.0f, 100.0f, 20000.0f); });
+
+            ImGui::Spacing();
+            ImGui::TextDisabled("Mie Scattering (Sun Halo)");
+            DrawUndoableProperty("Mie Coeff", entity, context, skybox, skybox.MieScattering, [](const char* l, float& v) { 
+                float m = v * 1e6f;
+                if (ImGui::DragFloat(l, &m, 0.1f, 0.0f, 100.0f)) v = m * 1e-6f;
+            });
+            DrawUndoableProperty("Mie Height", entity, context, skybox, skybox.MieScaleHeight, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 10.0f, 100.0f, 5000.0f); });
+            DrawUndoableProperty("Mie Anisotropy", entity, context, skybox, skybox.MiePreferredDirection, [](const char* l, float& v) { ImGui::DragFloat(l, &v, 0.01f, 0.0f, 0.999f); });
 
             ImGui::TreePop();
         }
