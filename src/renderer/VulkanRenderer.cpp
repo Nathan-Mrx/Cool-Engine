@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <fstream>
+#include <algorithm>
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -1098,6 +1099,7 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
                         vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
                     }
                     std::cout << "[VkSkybox] Texture HDR chargee dynamiquement: " << skybox.HDRPath << "\n";
+                    m_PendingIBLRegeneration = true;
                 }
             }
         } else if (!m_CurrentSkyboxHDRPath.empty()) {
@@ -1119,6 +1121,8 @@ void VulkanRenderer::RenderScene(Scene* scene, int renderMode) {
                 write.pImageInfo = &imgInfo;
                 vkUpdateDescriptorSets(m_Device, 1, &write, 0, nullptr);
             }
+            m_SkyboxTexture = nullptr;
+            m_PendingIBLRegeneration = true;
         }
 
         break; 
@@ -2530,6 +2534,34 @@ void VulkanRenderer::GenerateBRDFLUT() {
     vkDestroyRenderPass(m_Device, renderPass, nullptr);
 
     std::cout << "[VkIBL::BRDF] === BRDF LUT generee avec succes ! ==="  << "\n";
+}
+
+void VulkanRenderer::RegenerateIBL() {
+    vkDeviceWaitIdle(m_Device);
+
+    // Retirer les anciennes cubemaps de la liste de tracking (pour éviter le double-free au shutdown)
+    auto removeFromTracked = [this](VulkanTexture* tex) {
+        m_TrackedTextures.erase(
+            std::remove(m_TrackedTextures.begin(), m_TrackedTextures.end(), tex),
+            m_TrackedTextures.end()
+        );
+    };
+
+    if (m_EnvironmentCubemap) { removeFromTracked(m_EnvironmentCubemap); DestroyTexture(m_EnvironmentCubemap); m_EnvironmentCubemap = nullptr; }
+    if (m_IrradianceCubemap)  { removeFromTracked(m_IrradianceCubemap);  DestroyTexture(m_IrradianceCubemap);  m_IrradianceCubemap = nullptr; }
+    if (m_PrefilterCubemap)   { removeFromTracked(m_PrefilterCubemap);   DestroyTexture(m_PrefilterCubemap);   m_PrefilterCubemap = nullptr; }
+
+    GenerateEnvironmentCubemap();
+    GenerateIrradianceCubemap();
+    GeneratePrefilterCubemap();
+
+    // Invalider tous les matériaux pour qu'ils se recréent avec les nouvelles cubemaps
+    std::vector<entt::entity> keys;
+    keys.reserve(m_EntityMaterials.size());
+    for (auto& [id, _] : m_EntityMaterials) keys.push_back(id);
+    for (auto id : keys) InvalidateEntityMaterial(id);
+
+    std::cout << "[VkIBL] IBL regenere avec succes.\n";
 }
 
 void VulkanRenderer::GenerateEnvironmentCubemap() {
@@ -4311,6 +4343,12 @@ void VulkanRenderer::BeginFrame() {
     // --- NOUVEAU : ON VIDE LA POUBELLE EN TOUTE SÉCURITÉ ---
     // Le GPU a fini avec cette frame, on peut détruire les anciens ScratchBuffers et UniformBuffers
     m_MainDeletionQueue.flush();
+
+    // --- DEFERRED IBL REGENERATION (Hors de tout Render Pass !) ---
+    if (m_PendingIBLRegeneration) {
+        m_PendingIBLRegeneration = false;
+        RegenerateIBL();
+    }
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;

@@ -214,6 +214,7 @@ private:
     VulkanTexture* CreateSolidColorTexture(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
     void CreateSkyboxPipeline();
+    void RegenerateIBL();
 
     void GenerateBRDFLUT();
 
@@ -310,6 +311,7 @@ private:
     std::shared_ptr<Mesh> m_SkyboxCube;
     VulkanTexture* m_SkyboxTexture = nullptr;
     std::string m_CurrentSkyboxHDRPath;
+    bool m_PendingIBLRegeneration = false;
 
     VulkanTexture* m_BrdfLutTexture = nullptr;
 
