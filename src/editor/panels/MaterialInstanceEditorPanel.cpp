@@ -9,6 +9,8 @@
 #include "renderer/Renderer.h"
 #include "renderer/PrimitiveFactory.h"
 #include "renderer/TextureLoader.h"
+#include "renderer/VulkanRenderer.h"
+#include "renderer/VulkanFramebuffer.h"
 
 #include "editor/EditorCommands.h"
 #include "editor/UndoManager.h"
@@ -61,8 +63,10 @@ void MaterialInstanceEditorPanel::Load(const std::filesystem::path& path) {
     if (!m_PreviewFramebuffer) {
         FramebufferSpecification spec;
         spec.Width = 800; spec.Height = 600;
-        m_PreviewFramebuffer = std::make_shared<Framebuffer>(spec);
+        m_PreviewFramebuffer = Framebuffer::Create(spec);
+
         m_PreviewMesh = PrimitiveFactory::CreateSphere();
+
     }
 
     std::ifstream file(path);
@@ -101,6 +105,17 @@ void MaterialInstanceEditorPanel::OpenAsset(const std::filesystem::path& path) {
 
 void MaterialInstanceEditorPanel::LoadParentParameters() {
     m_Parameters.clear(); m_StaticTextures.clear();
+
+    m_DefaultAlbedoTex = nullptr;
+    m_DefaultNormalTex = nullptr;
+    m_DefaultMetallicTex = nullptr;
+    m_DefaultRoughnessTex = nullptr;
+    m_DefaultAOTex = nullptr;
+    m_DefaultColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    m_DefaultMetallic = 0.0f;
+    m_DefaultRoughness = 0.5f;
+    m_DefaultAO = 1.0f;
+
     if (m_ParentMaterialPath.empty()) return;
 
     std::ifstream file(Project::GetProjectDirectory() / m_ParentMaterialPath);
@@ -136,8 +151,37 @@ void MaterialInstanceEditorPanel::LoadParentParameters() {
                 }
             }
         }
+
+        // --- FIX 1 FPS: Cache Default PBR Textures / Values ---
+        if (m_ParentGraphJson.contains("PBR_ColorVal")) {
+            auto arr = m_ParentGraphJson["PBR_ColorVal"];
+            m_DefaultColor = glm::vec4((float)arr[0], (float)arr[1], (float)arr[2], (float)arr[3]);
+        }
+        if (m_ParentGraphJson.contains("PBR_MetallicVal")) m_DefaultMetallic = m_ParentGraphJson["PBR_MetallicVal"].get<float>();
+        if (m_ParentGraphJson.contains("PBR_RoughnessVal")) m_DefaultRoughness = m_ParentGraphJson["PBR_RoughnessVal"].get<float>();
+        if (m_ParentGraphJson.contains("PBR_AOVal")) m_DefaultAO = m_ParentGraphJson["PBR_AOVal"].get<float>();
+
+        auto tryLoadTex = [&](const std::string& key) -> void* {
+            if (m_ParentGraphJson.contains(key)) {
+                std::string p = m_ParentGraphJson[key].get<std::string>();
+                if (!p.empty()) {
+                    std::filesystem::path tp(p);
+                    std::string fullPath = tp.is_absolute() ? tp.string() : (Project::GetProjectDirectory() / tp).string();
+                    return TextureLoader::LoadTexture(fullPath.c_str());
+                }
+            }
+            return nullptr;
+        };
+
+        m_DefaultAlbedoTex = tryLoadTex("PBR_Albedo");
+        m_DefaultNormalTex = tryLoadTex("PBR_Normal");
+        m_DefaultMetallicTex = tryLoadTex("PBR_Metallic");
+        m_DefaultRoughnessTex = tryLoadTex("PBR_Roughness");
+        m_DefaultAOTex = tryLoadTex("PBR_AO");
+
         file.close();
     }
+
     EvaluateParameterVisibility();
 }
 
@@ -221,6 +265,8 @@ void MaterialInstanceEditorPanel::EvaluateParameterVisibility() {
 }
 
 void MaterialInstanceEditorPanel::CompilePreviewShader() {
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return;
+
     if (m_ParentMaterialPath.empty()) return;
     std::ifstream file(Project::GetProjectDirectory() / m_ParentMaterialPath);
     if (!file.is_open()) return;
@@ -262,9 +308,123 @@ void MaterialInstanceEditorPanel::OnImGuiRender(bool& isOpen) {
     ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.65f);
     DrawPreviewColumn();
     ImGui::NextColumn();
-    DrawDetailsColumn();
+    DrawParameters();
     ImGui::Columns(1);
     ImGui::End();
+}
+
+void MaterialInstanceEditorPanel::RenderPreview3D() {
+    m_PreviewFramebuffer->Bind();
+
+    // --- SÉCURITÉ VULKAN : On enferme TOUT OpenGL ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        glViewport(0, 0, (int)m_ViewportSize.x, (int)m_ViewportSize.y);
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        if (m_PreviewShader && m_PreviewMesh) {
+            m_PreviewShader->Use();
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), m_ViewportSize.x / m_ViewportSize.y, 10.0f, 10000.0f);
+            glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
+            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+            m_PreviewShader->SetMat4("uProjection", proj);
+            m_PreviewShader->SetMat4("uView", view);
+
+            m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+            glm::mat4 model = glm::scale(glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f)), glm::vec3(0.8f));
+
+            m_PreviewShader->SetMat4("uModel", model);
+
+            m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
+            m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
+            m_PreviewShader->SetVec3("uViewPos", camPos);
+            m_PreviewShader->SetFloat("uTime", (float)glfwGetTime());
+
+            glActiveTexture(GL_TEXTURE14);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
+            m_PreviewShader->SetInt("uIrradianceMap", 14);
+
+            glActiveTexture(GL_TEXTURE12);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
+            m_PreviewShader->SetInt("uPrefilterMap", 12);
+
+            glActiveTexture(GL_TEXTURE13);
+            glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
+            m_PreviewShader->SetInt("uBRDFLUT", 13);
+
+            int texSlot = 0;
+            for (auto& [key, param] : m_Parameters) {
+                if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);
+                else if (param.Type == "Color") m_PreviewShader->SetVec4("u_" + key, param.ColorVal);
+                else if (param.Type == "Texture2D" && param.TextureID != 0) {
+                    glActiveTexture(GL_TEXTURE0 + texSlot);
+                    glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)param.TextureID);
+                    m_PreviewShader->SetInt("u_" + key, texSlot++);
+                }
+            }
+            for (auto& st : m_StaticTextures) {
+                if (st.TextureID != 0) {
+                    glActiveTexture(GL_TEXTURE0 + texSlot);
+                    glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)st.TextureID);
+                    m_PreviewShader->SetInt(st.UniformName, texSlot++);
+                }
+            }
+            m_PreviewMesh->Draw();
+        }
+    } else {
+        // --- MODE VULKAN (Isolé et Sécurisé) ---
+        if (m_PreviewMesh && m_PreviewFramebuffer) {
+            float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
+            float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
+            float aspect = (height > 0.0f) ? (width / height) : 1.0f;
+
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
+            proj[1][1] *= -1.0f;
+
+            glm::vec3 camPos = glm::vec3(m_CameraDistance, 0.0f, 0.0f);
+            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+            m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+            glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+            model = glm::scale(model, glm::vec3(0.8f));
+
+            VulkanRenderer* vkRenderer = VulkanRenderer::Get();
+            VulkanTexture* t_albedo = m_DefaultAlbedoTex ? (VulkanTexture*)m_DefaultAlbedoTex : vkRenderer->GetDefaultWhiteTexture();
+            VulkanTexture* t_normal = m_DefaultNormalTex ? (VulkanTexture*)m_DefaultNormalTex : vkRenderer->GetDefaultNormalTexture();
+            VulkanTexture* t_metallic = m_DefaultMetallicTex ? (VulkanTexture*)m_DefaultMetallicTex : vkRenderer->GetDefaultBlackTexture();
+            VulkanTexture* t_roughness = m_DefaultRoughnessTex ? (VulkanTexture*)m_DefaultRoughnessTex : vkRenderer->GetDefaultWhiteTexture();
+            VulkanTexture* t_ao = m_DefaultAOTex ? (VulkanTexture*)m_DefaultAOTex : vkRenderer->GetDefaultWhiteTexture();
+
+            glm::vec4 c_color = m_DefaultColor;
+            float v_met = m_DefaultMetallic;
+            float v_rough = m_DefaultRoughness;
+            float v_ao = m_DefaultAO;
+
+            // 2. Appliquer les Overrides de m_Parameters
+            if (m_Parameters.count("Albedo") && m_Parameters["Albedo"].TextureID) t_albedo = (VulkanTexture*)m_Parameters["Albedo"].TextureID;
+            if (m_Parameters.count("Normal") && m_Parameters["Normal"].TextureID) t_normal = (VulkanTexture*)m_Parameters["Normal"].TextureID;
+            if (m_Parameters.count("Metallic") && m_Parameters["Metallic"].TextureID) t_metallic = (VulkanTexture*)m_Parameters["Metallic"].TextureID;
+            if (m_Parameters.count("Roughness") && m_Parameters["Roughness"].TextureID) t_roughness = (VulkanTexture*)m_Parameters["Roughness"].TextureID;
+            if (m_Parameters.count("AO") && m_Parameters["AO"].TextureID) t_ao = (VulkanTexture*)m_Parameters["AO"].TextureID;
+
+            if (m_Parameters.count("BaseColor") && m_Parameters["BaseColor"].IsOverridden) c_color = m_Parameters["BaseColor"].ColorVal;
+            if (m_Parameters.count("Metallic") && m_Parameters["Metallic"].IsOverridden) v_met = m_Parameters["Metallic"].FloatVal;
+            if (m_Parameters.count("Roughness") && m_Parameters["Roughness"].IsOverridden) v_rough = m_Parameters["Roughness"].FloatVal;
+            if (m_Parameters.count("AO") && m_Parameters["AO"].IsOverridden) v_ao = m_Parameters["AO"].FloatVal;
+
+            vkRenderer->RenderMaterialPreview(
+                m_PreviewMesh.get(),
+                (VulkanFramebuffer*)m_PreviewFramebuffer.get(),
+                model, view, proj, camPos,
+                t_albedo, t_normal, t_metallic, t_roughness, t_ao,
+                c_color, v_met, v_rough, v_ao
+            );
+        }
+    }
+
+    m_PreviewFramebuffer->Unbind();
 }
 
 void MaterialInstanceEditorPanel::DrawPreviewColumn() {
@@ -276,91 +436,21 @@ void MaterialInstanceEditorPanel::DrawPreviewColumn() {
     ImGui::Separator();
 
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-    if (m_PreviewFramebuffer && viewportSize.x > 0 && viewportSize.y > 0) {
-        if (viewportSize.x != m_PreviewFramebuffer->GetSpecification().Width || viewportSize.y != m_PreviewFramebuffer->GetSpecification().Height) {
-            m_PreviewFramebuffer->Resize((uint32_t)viewportSize.x, (uint32_t)viewportSize.y);
-        }
-        RenderPreview3D(viewportSize);
-        ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), viewportSize, ImVec2(0, 1), ImVec2(1, 0));
-    }
-}
+    if (viewportSize.x > 0 && viewportSize.y > 0) {
+        // On mémorise la taille
+        m_ViewportSize = glm::vec2(viewportSize.x, viewportSize.y);
 
-void MaterialInstanceEditorPanel::RenderPreview3D(ImVec2 viewportSize) {
-    m_PreviewFramebuffer->Bind();
-    glViewport(0, 0, (int)viewportSize.x, (int)viewportSize.y);
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    if (m_PreviewShader && m_PreviewMesh) {
-        m_PreviewShader->Use();
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), viewportSize.x / viewportSize.y, 10.0f, 10000.0f);
-        glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
-        glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-
-        m_PreviewShader->SetMat4("uProjection", proj);
-        m_PreviewShader->SetMat4("uView", view);
-
-        m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
-        glm::mat4 model = glm::scale(glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f)), glm::vec3(0.8f));
-
-        m_PreviewShader->SetMat4("uModel", model);
-
-        // --- LE FIX DE LA LUMIÈRE EST ICI (Code propre sans doublon) ---
-        m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
-        m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
-        m_PreviewShader->SetVec3("uViewPos", camPos);
-        m_PreviewShader->SetFloat("uTime", (float)glfwGetTime());
-
-        // =========================================================
-        // --- NOUVEAU : INJECTION DE L'IRRADIANCE MAP (IBL) ---
-        // =========================================================
-        glActiveTexture(GL_TEXTURE14);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
-        m_PreviewShader->SetInt("uIrradianceMap", 14);
-
-        glActiveTexture(GL_TEXTURE12);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
-        m_PreviewShader->SetInt("uPrefilterMap", 12);
-
-        glActiveTexture(GL_TEXTURE13);
-        glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
-        m_PreviewShader->SetInt("uBRDFLUT", 13);
-
-        int texSlot = 0;
-        for (auto& [key, param] : m_Parameters) {
-            if (param.Type == "Float") m_PreviewShader->SetFloat("u_" + key, param.FloatVal);
-            else if (param.Type == "Color") m_PreviewShader->SetVec4("u_" + key, param.ColorVal);
-            else if (param.Type == "Texture2D" && param.TextureID != 0) {
-                glActiveTexture(GL_TEXTURE0 + texSlot);
-                glBindTexture(GL_TEXTURE_2D, param.TextureID);
-                m_PreviewShader->SetInt("u_" + key, texSlot++);
+        if (m_PreviewFramebuffer) {
+            if (m_PreviewFramebuffer) {
+                void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+                if (texID != nullptr) {
+                    ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+                    ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+                    ImGui::Image((ImTextureID)texID, viewportSize, uv0, uv1);
+                }
             }
         }
-        for (auto& st : m_StaticTextures) {
-            if (st.TextureID != 0) {
-                glActiveTexture(GL_TEXTURE0 + texSlot);
-                glBindTexture(GL_TEXTURE_2D, st.TextureID);
-                m_PreviewShader->SetInt(st.UniformName, texSlot++);
-            }
-        }
-        m_PreviewMesh->Draw();
     }
-    m_PreviewFramebuffer->Unbind();
-}
-
-void MaterialInstanceEditorPanel::DrawDetailsColumn() {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-    ImGui::BeginChild("DetailsPanel");
-
-    ImGui::TextDisabled("GENERAL");
-    ImGui::Separator();
-
-    HandleDragAndDropParent();
-    DrawParameters();
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
 }
 
 void MaterialInstanceEditorPanel::HandleDragAndDropParent() {
@@ -511,5 +601,17 @@ void MaterialInstanceEditorPanel::Save() {
         file << data.dump(4);
         file.close();
         if (OnMaterialInstanceSavedCallback) OnMaterialInstanceSavedCallback(m_CurrentPath);
+    }
+}
+
+void MaterialInstanceEditorPanel::OnUpdate(float deltaTime) {
+    if (m_ViewportSize.x > 0 && m_ViewportSize.y > 0) {
+        uint32_t width = (uint32_t)m_ViewportSize.x;
+        uint32_t height = (uint32_t)m_ViewportSize.y;
+
+        if (width != m_PreviewFramebuffer->GetSpecification().Width || height != m_PreviewFramebuffer->GetSpecification().Height) {
+            m_PreviewFramebuffer->Resize(width, height);
+        }
+        RenderPreview3D();
     }
 }

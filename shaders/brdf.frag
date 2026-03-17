@@ -1,8 +1,10 @@
-#version 460 core
-out vec2 FragColor;
-in vec2 TexCoords;
+#version 450
+layout(location = 0) in vec2 inUV;
+layout(location = 0) out vec2 outColor;
+
 const float PI = 3.14159265359;
 
+// Génération de nombres pseudo-aléatoires pour le calcul
 float RadicalInverse_VdC(uint bits) {
     bits = (bits << 16u) | (bits >> 16u);
     bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
@@ -11,43 +13,65 @@ float RadicalInverse_VdC(uint bits) {
     bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
     return float(bits) * 2.3283064365386963e-10;
 }
-vec2 Hammersley(uint i, uint N) { return vec2(float(i)/float(N), RadicalInverse_VdC(i)); }
+
+vec2 Hammersley(uint i, uint N) {
+    return vec2(float(i)/float(N), RadicalInverse_VdC(i));
+}
+
 vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness) {
     float a = roughness*roughness;
     float phi = 2.0 * PI * Xi.x;
     float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a*a - 1.0) * Xi.y));
     float sinTheta = sqrt(1.0 - cosTheta*cosTheta);
-    vec3 H = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-    vec3 up = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    vec3 tangent = normalize(cross(up, N));
+    vec3 H;
+    H.x = cos(phi) * sinTheta;
+    H.y = sin(phi) * sinTheta;
+    H.z = cosTheta;
+    vec3 up        = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent   = normalize(cross(up, N));
     vec3 bitangent = cross(N, tangent);
     return normalize(tangent * H.x + bitangent * H.y + N * H.z);
 }
+
 float GeometrySchlickGGX(float NdotV, float roughness) {
-    float k = (roughness * roughness) / 2.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) * GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
+    float a = roughness;
+    float k = (a * a) / 2.0; // Attention: k est différent pour l'IBL !
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+    return nom / denom;
 }
 
-void main() {
-    float NdotV = max(TexCoords.x, 0.001);
-    float roughness = TexCoords.y;
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
+}
+
+// La fonction magique qui calcule la correction sur 1024 rayons !
+vec2 IntegrateBRDF(float NdotV, float roughness) {
     vec3 V = vec3(sqrt(1.0 - NdotV*NdotV), 0.0, NdotV);
+    float A = 0.0;
+    float B = 0.0;
     vec3 N = vec3(0.0, 0.0, 1.0);
-    float A = 0.0; float B = 0.0;
     const uint SAMPLE_COUNT = 1024u;
     for(uint i = 0u; i < SAMPLE_COUNT; ++i) {
         vec2 Xi = Hammersley(i, SAMPLE_COUNT);
         vec3 H  = ImportanceSampleGGX(Xi, N, roughness);
         vec3 L  = normalize(2.0 * dot(V, H) * H - V);
-        if(L.z > 0.0) {
+        float NdotL = max(L.z, 0.0);
+        float NdotH = max(H.z, 0.0);
+        float VdotH = max(dot(V, H), 0.0);
+        if(NdotL > 0.0) {
             float G = GeometrySmith(N, V, L, roughness);
-            float G_Vis = (G * max(dot(V, H), 0.0)) / (max(H.z, 0.001) * NdotV);
-            float Fc = pow(1.0 - max(dot(V, H), 0.0), 5.0);
-            A += (1.0 - Fc) * G_Vis; B += Fc * G_Vis;
+            float G_Vis = (G * VdotH) / (NdotH * NdotV);
+            float Fc = pow(1.0 - VdotH, 5.0);
+            A += (1.0 - Fc) * G_Vis;
+            B += Fc * G_Vis;
         }
     }
-    FragColor = vec2(A / float(SAMPLE_COUNT), B / float(SAMPLE_COUNT));
+    return vec2(A / float(SAMPLE_COUNT), B / float(SAMPLE_COUNT));
+}
+
+void main() {
+    outColor = IntegrateBRDF(inUV.x, inUV.y);
 }

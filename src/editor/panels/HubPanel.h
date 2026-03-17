@@ -6,7 +6,7 @@
 class HubPanel {
 public:
     void OnImGuiRender();
-    uint32_t GetThumbnailTexture(const std::filesystem::path& path);
+    void* GetThumbnailTexture(const std::filesystem::path& path);
 
 private:
     // --- SOUS-FONCTIONS DE RENDU (Refactoring) ---
@@ -17,7 +17,7 @@ private:
     void DrawNewProjectModal(bool& triggerNewProject);
 
 private:
-    // Cache pour stocker les IDs de textures déjà chargées
-    std::map<std::filesystem::path, uint32_t> m_ThumbnailCache;
-    uint32_t m_DefaultProjectIcon = 0;
+    // Cache pour stocker les IDs de textures déjà chargées (Maintenant en void*)
+    std::map<std::filesystem::path, void*> m_ThumbnailCache;
+    void* m_DefaultProjectIcon = nullptr;
 };

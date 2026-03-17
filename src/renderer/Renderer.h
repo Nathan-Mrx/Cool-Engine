@@ -1,79 +1,54 @@
 #pragma once
+#include "RendererAPI.h"
+#include <memory>
+#include <string>
 #include <glm/glm.hpp>
-#include "../renderer/Shader.h"
-#include "../scene/Scene.h"
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
 
-#include "DDGIVolume.h"
-#include "editor/EditorLayer.h"
+class Scene;
 
 class Renderer {
 public:
     static void Init();
     static void Shutdown();
-    static void BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& camPos);
-    static void EndScene();
 
-    static void RenderScene(Scene* scene, int renderMode = 0);
-    static void DrawGrid(bool show);
+    // --- REDIRECTIONS (Le pont entre le jeu et le GPU) ---
+    static void Clear(Scene* scene = nullptr) { s_Instance->Clear(scene); }
 
-    static void DrawDebugBox(const glm::mat4& transform, const glm::vec3& color);
-    static void DrawDebugArrow(const glm::vec3& start, const glm::vec3& forward, const glm::vec3& right, const glm::vec3& up, const glm::vec3& color, const glm::mat4& view, const glm::mat4& projection, float length);
+    static void BeginScene(const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
+        s_Instance->BeginScene(view, projection, cameraPos);
+    }
 
-    static void Clear();
+    static void RenderScene(Scene* scene, int renderMode) {
+        s_Instance->RenderScene(scene, renderMode);
+    }
 
-    static void BeginOutlineMask(const glm::mat4& transform);
-    static void BeginOutlineDraw(const glm::mat4& outlineTransform, const glm::vec3& color);
-    static void EndOutline();
+    static void DrawGrid(bool enable) {
+        s_Instance->DrawGrid(enable);
+    }
 
-    static void SetShadowResolution(uint32_t resolution);
+    static void EndScene() {
+        s_Instance->EndScene();
+    }
 
-    static uint32_t GetIrradianceMapID();
+    static void SetShadowResolution(uint32_t resolution) {
+        s_Instance->SetShadowResolution(resolution);
+    }
 
+    // ... tes getters IBL ...
+    static uint32_t GetIrradianceMapID() { return s_Instance->GetIrradianceMapID(); }
+    static uint32_t GetPrefilterMapID() { return s_Instance->GetPrefilterMapID(); }
+    static uint32_t GetBRDFLUTID() { return s_Instance->GetBRDFLUTID(); }
 
-    static uint32_t GetBRDFLUTID() { return s_Data->BRDFLUTTexture; }
-    static uint32_t GetPrefilterMapID() { return s_Data->PrefilterMap; }
+    inline static RendererAPI::API GetAPI() { return RendererAPI::GetAPI(); }
+
+    // --- NOUVEAU : REDIRECTIONS IMGUI ---
+    static void InitImGui(GLFWwindow* window) { s_Instance->InitImGui(window); }
+    static void BeginImGuiFrame() { s_Instance->BeginImGuiFrame(); }
+    static void EndImGuiFrame() { s_Instance->EndImGuiFrame(); }
+    static void ShutdownImGui() { s_Instance->ShutdownImGui(); }
+
+    static void SubmitPushConstant(const glm::mat4& matrix) { s_Instance->SubmitPushConstant(matrix); }
 
 private:
-    struct RendererData {
-        std::unique_ptr<Shader> MainShader;
-        std::unique_ptr<Shader> GridShader;
-        std::unique_ptr<Shader> LineShader;
-        std::unique_ptr<Shader> OutlineShader;
-
-        // --- NOUVEAU : Le matériel pour les ombres ---
-        std::unique_ptr<Shader> ShadowShader;
-        std::unique_ptr<Framebuffer> ShadowFramebuffer;
-
-        uint32_t GridVAO, GridVBO;
-        uint32_t DebugBoxVAO, DebugBoxVBO;
-
-        glm::mat4 CurrentView;
-        glm::mat4 CurrentProjection;
-
-        // --- SKYBOX ---
-        std::unique_ptr<Shader> SkyboxShader;
-        uint32_t SkyboxVAO, SkyboxVBO;
-        uint32_t EnvironmentMapID = 0;
-        std::string CurrentSkyboxPath = "";
-
-        // --- NOUVEAU : IBL BAKING ---
-        std::unique_ptr<Shader> EquirectToCubeShader;
-        std::unique_ptr<Shader> IrradianceShader;
-        uint32_t EnvCubemap;
-        uint32_t IrradianceMap;
-
-        std::unique_ptr<Shader> PrefilterShader;
-        std::unique_ptr<Shader> BRDFShader;
-        uint32_t PrefilterMap = 0;
-        uint32_t BRDFLUTTexture = 0;
-
-        std::unique_ptr<DDGIVolume> GlobalDDGIVolume; // Ajoute ceci !
-        std::unique_ptr<Shader> DDGIUpdateShader; // Le cerveau de notre GI
-    };
-    static RendererData* s_Data;
-
-    static void UpdateSkybox(const std::string& hdrPath);
-
+    static std::unique_ptr<RendererAPI> s_Instance;
 };

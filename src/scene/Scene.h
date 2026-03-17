@@ -4,6 +4,7 @@
 #include <glm/fwd.hpp>
 
 #include "core/UUID.h"
+#include "renderer/DDGIVolume.h"
 
 class Entity;
 
@@ -19,6 +20,8 @@ public:
     Entity GetEntityByUUID(UUID uuid);
 
     entt::registry m_Registry; // Accès direct pour le Renderer
+
+    DDGIVolume* GetDDGIVolume() const { return m_DDGIVolume.get(); }
 
     void OnPhysicsStart();
     void OnPhysicsStop();
@@ -36,4 +39,6 @@ public:
 
 private:
     friend class Entity;
+
+    std::unique_ptr<DDGIVolume> m_DDGIVolume;
 };

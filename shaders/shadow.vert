@@ -1,9 +1,12 @@
-#version 460 core
-layout (location = 0) in vec3 aPos;
+#version 450
 
-uniform mat4 uLightSpaceMatrix;
-uniform mat4 uModel;
+layout(location = 0) in vec3 inPosition;
+
+// La matrice combinée (Projection * Vue) de notre "Caméra Soleil"
+layout(push_constant) uniform PushConstants {
+    mat4 mvp;
+} push;
 
 void main() {
-    gl_Position = uLightSpaceMatrix * uModel * vec4(aPos, 1.0);
+    gl_Position = push.mvp * vec4(inPosition, 1.0);
 }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(GameEngine)
+project(CoolEngine)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -15,6 +15,7 @@ find_package(assimp CONFIG REQUIRED)
 find_package(ImGuizmo CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(unofficial-imgui-node-editor CONFIG REQUIRED)
+find_package(Vulkan REQUIRED)
 
 # Lister tous les fichiers sources du moteur
 set(SOURCES
@@ -22,7 +23,7 @@ set(SOURCES
         src/core/Application.cpp
         src/renderer/Shader.cpp
         src/ecs/Components.h
-        src/renderer/Framebuffer.cpp
+        src/renderer/OpenGLFramebuffer.cpp
         src/core/Input.cpp
         src/project/Project.cpp
         src/renderer/Mesh.cpp
@@ -35,8 +36,8 @@ set(SOURCES
         src/scene/Scene.h
         src/scene/Entity.cpp
         src/scene/Entity.h
-        src/renderer/Renderer.cpp
-        src/renderer/Renderer.h
+        src/renderer/OpenGLRenderer.cpp
+        src/renderer/OpenGLRenderer.h
         src/editor/EditorLayer.cpp
         src/editor/EditorLayer.h
         src/editor/panels/SceneHierarchyPanel.cpp
@@ -82,6 +83,18 @@ set(SOURCES
         src/editor/UITheme.h
         src/renderer/DDGIVolume.cpp
         src/renderer/DDGIVolume.h
+        src/renderer/RendererAPI.cpp
+        src/renderer/Renderer.cpp
+        src/renderer/Renderer.h
+        src/renderer/VulkanRenderer.cpp
+        src/renderer/VulkanRenderer.h
+        src/renderer/Framebuffer.cpp
+        src/renderer/VulkanFramebuffer.cpp
+        src/renderer/VulkanFramebuffer.h
+        src/editor/materials/MaterialCompiler.cpp
+        src/editor/materials/MaterialCompiler.h
+        src/renderer/ShaderCompiler.cpp
+        src/renderer/ShaderCompiler.h
 )
 
 # --- COOL HEADER TOOL (Génération de code pré-build) ---
@@ -125,13 +138,13 @@ add_custom_command(
 )
 
 # Créer l'exécutable avec les sources
-add_executable(GameEngine ${SOURCES} ${ASSET_REGISTRY_OUT})
+add_executable(CoolEngine ${SOURCES} ${ASSET_REGISTRY_OUT})
 
 # Permettre d'inclure les headers depuis le dossier src/ facilement
-target_include_directories(GameEngine PRIVATE src)
+target_include_directories(CoolEngine PRIVATE src)
 
 # Lier les bibliothèques
-target_link_libraries(GameEngine PRIVATE
+target_link_libraries(CoolEngine PRIVATE
         glfw
         glad::glad
         glm::glm
@@ -142,39 +155,57 @@ target_link_libraries(GameEngine PRIVATE
         assimp::assimp
         imguizmo::imguizmo
         unofficial::imgui-node-editor::imgui-node-editor
-        Jolt::Jolt)
+        Jolt::Jolt
+        Vulkan::Vulkan)
 
 # Copier automatiquement le dossier shaders à côté de l'exécutable après la compilation
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/shaders
-        $<TARGET_FILE_DIR:GameEngine>/shaders
+        $<TARGET_FILE_DIR:CoolEngine>/shaders
         COMMENT "Copie des shaders vers le dossier de build..."
 )
 
 # On copie l'icône à côté de l'exécutable
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
         ${CMAKE_SOURCE_DIR}/splash.png
-        $<TARGET_FILE_DIR:GameEngine>/splash.png
+        $<TARGET_FILE_DIR:CoolEngine>/splash.png
         COMMENT "Copie de l'icône vers le dossier de build..."
 )
 
 # Copier automatiquement le dossier d'icônes à côté de l'exécutable après la compilation
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/icons
-        $<TARGET_FILE_DIR:GameEngine>/icons
+        $<TARGET_FILE_DIR:CoolEngine>/icons
         COMMENT "Copie des icones vers le dossier de build..."
 )
 
 # Copier le dossier des assets à côté de l'exécutable après la compilation
-add_custom_command(TARGET GameEngine POST_BUILD
+add_custom_command(TARGET CoolEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:GameEngine>/assets
+        $<TARGET_FILE_DIR:CoolEngine>/assets
         COMMENT "Copie des assets vers le dossier de build..."
 )
+
+# =====================================================================
+# --- AUTO-COMPILATION DES SHADERS (PRE-BUILD) ---
+# =====================================================================
+
+# 1. On trouve Python sur le système
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+# 2. On crée une cible qui lance le script Python
+add_custom_target(CompileShaders
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/CompileShaders.py ${CMAKE_SOURCE_DIR}/shaders
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Verification et compilation des shaders Vulkan..."
+)
+
+# 3. On oblige CoolEngine à attendre que les shaders soient prêts avant de compiler le C++ !
+add_dependencies(CoolEngine CompileShaders)
 
 # Jolt nécessite quelques définitions de préprocesseur pour fonctionner correctement
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -185,8 +216,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 # --- MODULES DYNAMIQUES ---
 # 1. On force l'exécutable à exporter ses symboles pour le .so
-set_target_properties(GameEngine PROPERTIES ENABLE_EXPORTS TRUE)
-target_link_options(GameEngine PRIVATE "-rdynamic")
+set_target_properties(CoolEngine PROPERTIES ENABLE_EXPORTS TRUE)
+target_link_options(CoolEngine PRIVATE "-rdynamic")
 
 # 2. On lie la librairie standard Linux pour dlopen/dlclose
-target_link_libraries(GameEngine PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(CoolEngine PRIVATE ${CMAKE_DL_LIBS})

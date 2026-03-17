@@ -1,25 +1,22 @@
-#version 460 core
-out vec4 FragColor;
-in vec3 vLocalPos;
+#version 450
+layout(location = 0) in vec3 fragWorldPos;
+layout(location = 0) out vec4 outColor;
 
-uniform samplerCube uEnvironmentMap;
+layout(binding = 0) uniform samplerCube environmentMap;
+
 const float PI = 3.14159265359;
 
 void main() {
-    vec3 N = normalize(vLocalPos);
+    vec3 N = normalize(fragWorldPos);
     vec3 irradiance = vec3(0.0);
 
-    vec3 up = vec3(0.0, 1.0, 0.0);
-    // Sécurité pour ne pas faire un "cross" entre deux vecteurs identiques
-    if (abs(N.y) > 0.999) {
-        up = vec3(0.0, 0.0, 1.0);
-    }
-
+    // --- LE FIX EST ICI ---
+    // Si N pointe presque parfaitement vers le haut (Z), on change l'axe de référence vers X !
+    vec3 up    = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
     vec3 right = normalize(cross(up, N));
-    up = normalize(cross(N, right));
+    up         = normalize(cross(N, right));
 
-    // Un pas un peu plus grand (0.05) = environ 3800 échantillons au lieu de 15000.
-    // C'est largement suffisant pour une irradiance parfaite et très rapide à générer !
+    // On réduit légèrement la précision (0.025 prenait 15 000 échantillons, 0.05 est parfait et plus rapide)
     float sampleDelta = 0.05;
     float nrSamples = 0.0;
 
@@ -28,24 +25,11 @@ void main() {
             vec3 tangentSample = vec3(sin(theta) * cos(phi),  sin(theta) * sin(phi), cos(theta));
             vec3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
 
-            vec3 sampledColor = texture(uEnvironmentMap, sampleVec).rgb;
-
-            // --- LE FIX EST LÀ : On écrase le soleil pour l'Irradiance ! ---
-            sampledColor = min(sampledColor, vec3(10.0));
-
-            // --- SÉCURITÉ MAXIMUM ---
-            if (!isnan(sampledColor.r) && !isinf(sampledColor.r) &&
-            !isnan(sampledColor.g) && !isnan(sampledColor.b)) {
-
-                irradiance += sampledColor * cos(theta) * sin(theta);
-                nrSamples += 1.0;
-            }
+            irradiance += texture(environmentMap, sampleVec).rgb * cos(theta) * sin(theta);
+            nrSamples++;
         }
     }
+    irradiance = PI * irradiance * (1.0 / float(nrSamples));
 
-    if (nrSamples > 0.0) {
-        irradiance = PI * irradiance * (1.0 / nrSamples);
-    }
-
-    FragColor = vec4(irradiance, 1.0);
+    outColor = vec4(irradiance, 1.0);
 }

@@ -9,7 +9,7 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
-#include "../../renderer/Framebuffer.h"
+#include "../../renderer/OpenGLFramebuffer.h"
 #include "../../renderer/Mesh.h"
 #include "../../renderer/Shader.h"
 #include "../materials/MaterialGraph.h"
@@ -37,6 +37,8 @@ public:
     void Load(const std::filesystem::path& path);
 
     std::function<void(const std::filesystem::path&)> OnMaterialSavedCallback;
+
+    void OnUpdate(float deltaTime);
 
 private:
     void BuildDefaultNodes();
@@ -100,6 +102,8 @@ private:
     std::shared_ptr<Framebuffer> m_PreviewFramebuffer;
     std::shared_ptr<Mesh> m_PreviewMesh;
     std::shared_ptr<Shader> m_PreviewShader;
+    
+    VkPipeline m_CustomVulkanPipeline = VK_NULL_HANDLE;
 
     void CompilePreviewShader();
 
@@ -127,4 +131,6 @@ private:
     void DrawLinks();
     void HandleInteraction();
     void DrawContextMenus();
+
+    glm::vec2 m_ViewportSize = {512.0f, 512.0f};
 };

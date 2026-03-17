@@ -8,7 +8,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "renderer/Shader.h"
-#include "renderer/Framebuffer.h"
+#include "renderer/OpenGLFramebuffer.h"
 #include "renderer/Mesh.h"
 
 struct MIParameter {
@@ -20,7 +20,7 @@ struct MIParameter {
     bool BoolVal = false;
     glm::vec4 ColorVal = {1.0f, 1.0f, 1.0f, 1.0f};
     std::string TexturePath = "";
-    uint32_t TextureID = 0;
+    void* TextureID = nullptr;
 
     bool IsOverridden = false;
     bool IsVisible = false;
@@ -28,7 +28,7 @@ struct MIParameter {
 
 struct MIStaticTexture {
     std::string UniformName;
-    uint32_t TextureID = 0;
+    void* TextureID = nullptr;
 };
 
 class MaterialInstanceEditorPanel : public IAssetEditor {
@@ -61,6 +61,8 @@ public:
         Save(); // Auto-save lors de l'Undo !
     }
 
+    void OnUpdate(float deltaTime);
+
 private:
     void LoadParentParameters();
     void CompilePreviewShader();
@@ -70,7 +72,7 @@ private:
 
     // --- SOUS-FONCTIONS DE RENDU (Refactoring) ---
     void DrawPreviewColumn();
-    void RenderPreview3D(ImVec2 viewportSize);
+    void RenderPreview3D();
     void DrawDetailsColumn();
     void HandleDragAndDropParent();
     void DrawParameters();
@@ -83,6 +85,18 @@ private:
     std::unordered_map<std::string, MIParameter> m_Parameters;
     std::vector<MIStaticTexture> m_StaticTextures;
 
+    // --- Cached Parent Defaults ---
+    void* m_DefaultAlbedoTex = nullptr;
+    void* m_DefaultNormalTex = nullptr;
+    void* m_DefaultMetallicTex = nullptr;
+    void* m_DefaultRoughnessTex = nullptr;
+    void* m_DefaultAOTex = nullptr;
+
+    glm::vec4 m_DefaultColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    float m_DefaultMetallic = 0.0f;
+    float m_DefaultRoughness = 0.5f;
+    float m_DefaultAO = 1.0f;
+
     // --- Preview 3D ---
     std::shared_ptr<Framebuffer> m_PreviewFramebuffer;
     std::shared_ptr<Mesh> m_PreviewMesh;
@@ -92,4 +106,6 @@ private:
     float m_RotationSpeed = 30.0f;
     float m_CameraDistance = 250.0f;
     float m_PreviewRotation = 0.0f;
+
+    glm::vec2 m_ViewportSize = {800.0f, 600.0f};
 };

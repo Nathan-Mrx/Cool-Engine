@@ -28,16 +28,8 @@
 void EditorLayer::OnAttach() {
     LoadEditorPreferences();
 
-    int width, height, channels;
-    stbi_set_flip_vertically_on_load(false);
-    if (unsigned char* data = stbi_load("splash.png", &width, &height, &channels, 4)) {
-        glGenTextures(1, &m_SplashTextureID);
-        glBindTexture(GL_TEXTURE_2D, m_SplashTextureID);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-        stbi_image_free(data);
-    }
+    // --- On utilise notre chargeur universel ---
+    m_SplashTextureID = TextureLoader::LoadTexture("splash.png");
 
     AssetRegistry::RegisterAllAssets();
 
@@ -55,7 +47,7 @@ void EditorLayer::OnAttach() {
     FramebufferSpecification fbSpec{};
     fbSpec.Width = 1280;
     fbSpec.Height = 720;
-    m_ViewportFramebuffer = std::make_unique<Framebuffer>(fbSpec);
+    m_ViewportFramebuffer = Framebuffer::Create(fbSpec);
 }
 
 void EditorLayer::OnDetach() {
@@ -144,15 +136,35 @@ void EditorLayer::CloseProjectInternal() {
 void EditorLayer::OnUpdate(float deltaTime) {
     if (!Project::GetActive()) return;
 
+    if (!m_TabsToClose.empty()) {
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+            vkDeviceWaitIdle(VulkanRenderer::Get()->GetDevice());
+        }
+        
+        // Sort descending so removals don't shift subsequent indices
+        std::sort(m_TabsToClose.rbegin(), m_TabsToClose.rend());
+        for (int index : m_TabsToClose) {
+            if (index < m_Tabs.size()) {
+                m_Tabs.erase(m_Tabs.begin() + index);
+            }
+        }
+        m_TabsToClose.clear();
+        
+        if (m_ActiveTabIndex >= m_Tabs.size()) m_ActiveTabIndex = m_Tabs.empty() ? 0 : m_Tabs.size() - 1;
+        
+        // Restore scene state
+        if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene) {
+            m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
+            m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+        } else {
+            m_ActiveScene = nullptr;
+            m_SceneHierarchyPanel.SetContext(nullptr);
+        }
+    }
+
     ResizeViewportIfNeeded();
 
-    // Rendu hors-écran dans le Framebuffer
-    m_ViewportFramebuffer->Bind();
-
-    // --- LE VRAI APPEL DE TON RENDERER ---
-    Renderer::Clear();
-
-    // 1. LOGIQUE D'UPDATE
+    // 1. LOGIQUE D'UPDATE (Indépendant de l'API Graphique)
     switch (m_SceneState) {
         case SceneState::Edit:
             UpdateEditor(deltaTime);
@@ -161,29 +173,71 @@ void EditorLayer::OnUpdate(float deltaTime) {
             UpdateRuntime(deltaTime);
             break;
         case SceneState::Pause:
-            // En pause, on met quand même à jour la caméra pour pouvoir bouger
-            UpdateEditor(deltaTime);
+            UpdateEditor(deltaTime); // On permet le mouvement de caméra en pause
             break;
     }
 
-    // 2. PREPARATION DES MATRICES
-    // Calcul de la vue et projection depuis l'EditorCamera
-    glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
-    float aspect = m_ViewportSize.x / m_ViewportSize.y;
-    if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
-    glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
-
-    // 3. RENDU
-    // --- TES VRAIES FONCTIONS DE RENDERER.H ---
-    Renderer::BeginScene(view, projection, m_EditorCamera.Position);
-
-    Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
-
-    if (m_ShowGrid) {
-        Renderer::DrawGrid(true);
+    // =========================================================
+    // --- 2. MISE A JOUR DES PANNEAUX 3D HORS-ECRAN ---
+    // =========================================================
+    // On boucle sur tous les onglets. S'ils ont un éditeur custom, on le met à jour !
+    for (auto& tab : m_Tabs) {
+        if (tab.CustomEditor) {
+            tab.CustomEditor->OnUpdate(deltaTime);
+        }
     }
 
-    Renderer::EndScene();
+    // =========================================================
+    // --- 3. RENDU DE LA VUE SCENE PRINCIPALE ---
+    // =========================================================
+    m_ViewportFramebuffer->Bind();
+
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        Renderer::Clear();
+
+        glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+        float aspect = m_ViewportSize.x / m_ViewportSize.y;
+        if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+
+        Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+        Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+
+        if (m_ShowGrid) {
+            Renderer::DrawGrid(true);
+        }
+
+        Renderer::EndScene();
+    } else {
+        // --- VULKAN RENDERING ---
+
+        // 1. RENDU DES OMBRES
+        // Cela va ouvrir le carnet de commandes (s'il ne l'est pas), ouvrir le RenderPass d'ombres,
+        // dessiner, puis FERMER le RenderPass d'ombres.
+        VulkanRenderer::Get()->PrepareShadows(m_ActiveScene.get());
+
+        // 2. DÉMARRAGE DE LA FRAME ET CALCULS GLOBAUX
+        // Maintenant qu'aucun RenderPass n'est actif, le TLAS peut se construire !
+        // Puis, la fonction va ouvrir le RenderPass principal pour la suite.
+        Renderer::Clear(m_ActiveScene.get());
+
+        // 3. RENDU DE LA SCÈNE PRINCIPALE
+        // Calcul de la caméra de l'éditeur
+        glm::mat4 view = glm::lookAt(m_EditorCamera.Position, m_EditorCamera.Position + m_EditorCamera.Front, m_EditorCamera.WorldUp);
+        float aspect = m_ViewportSize.x / m_ViewportSize.y;
+        if (std::isnan(aspect) || aspect == 0.0f) aspect = 1.0f;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 10000.0f);
+
+        // Enregistre les commandes de dessin
+        Renderer::BeginScene(view, projection, m_EditorCamera.Position);
+        Renderer::RenderScene(m_ActiveScene.get(), m_RenderMode);
+
+        // (On désactive la grille pour l'instant car elle utilise des shaders OpenGL)
+        // if (m_ShowGrid) Renderer::DrawGrid(true);
+
+        // Ferme le RenderPass de la scène (mais NE SOUMET PAS LA QUEUE)
+        Renderer::EndScene();
+    }
 
     m_ViewportFramebuffer->Unbind();
 }
@@ -305,6 +359,9 @@ void EditorLayer::OnImGuiRender() {
 }
 
 void EditorLayer::DrawTabs() {
+    ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+    ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Documents", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
 
@@ -352,14 +409,13 @@ void EditorLayer::DrawTabs() {
             // On calcule la position de l'icône pour qu'elle soit centrée verticalement à gauche
             ImVec2 iconPos = ImVec2(itemMin.x + ImGui::GetStyle().FramePadding.x, itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f);
 
-            if (isKnownAsset && info.IconID != 0) {
-                // On ajoute les UVs inversés : ImVec2(0, 1) et ImVec2(1, 0) pour remettre l'image à l'endroit !
+            if (isKnownAsset && info.IconID != nullptr) {
                 ImGui::GetWindowDrawList()->AddImage(
-                    (ImTextureID)static_cast<uintptr_t>(info.IconID),
+                    (ImTextureID)TextureLoader::GetImGuiTextureID(info.IconID),
                     iconPos,
                     ImVec2(iconPos.x + iconSize, iconPos.y + iconSize),
-                    ImVec2(0, 1), // uv_min
-                    ImVec2(1, 0)  // uv_max
+                    uv0, // uv_min
+                    uv1  // uv_max
                 );
             }
 
@@ -380,7 +436,6 @@ void EditorLayer::DrawTabs() {
             // --- 5. FERMETURE ---
             if (!isOpen) {
                 CloseTab(i);
-                i--;
             }
         }
 
@@ -394,20 +449,17 @@ void EditorLayer::DrawTabs() {
 
 void EditorLayer::CloseTab(int index) {
     if (index < 0 || index >= m_Tabs.size()) return;
-    m_Tabs.erase(m_Tabs.begin() + index);
-
-    if (m_ActiveTabIndex >= m_Tabs.size()) m_ActiveTabIndex = m_Tabs.size() - 1;
-
-    // Restaure la scène si le nouvel onglet actif est une scène
-    if (!m_Tabs.empty() && m_Tabs[m_ActiveTabIndex].Type == TabType::Scene) {
-        m_ActiveScene = m_Tabs[m_ActiveTabIndex].SceneContext;
-        m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-    } else {
-        m_ActiveScene = nullptr; // Désactive la scène en arrière plan
+    
+    // Add to deferral queue instead of destroying immediately
+    if (std::find(m_TabsToClose.begin(), m_TabsToClose.end(), index) == m_TabsToClose.end()) {
+        m_TabsToClose.push_back(index);
     }
 }
 
 void EditorLayer::CaptureViewportThumbnail(const std::string& projectPath) {
+    // --- SÉCURITÉ : Pas encore de lecture de pixels en Vulkan ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) return;
+
     if (!m_ViewportFramebuffer) return;
 
     auto& fb = m_ViewportFramebuffer;
@@ -636,7 +688,15 @@ void EditorLayer::OpenMaterial(const std::filesystem::path& path) {
     newMatPanel->OnMaterialSavedCallback = [this](const std::filesystem::path& savedPath) {
         if (!m_ActiveScene) return;
         for (const auto view = m_ActiveScene->m_Registry.view<MaterialComponent>(); const auto entityID : view) {
-            if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) mat.SetAndCompile(savedPath.string());
+            if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) {
+                // 1. On met à jour les données côté ECS (Ton code existant)
+                mat.SetAndCompile(savedPath.string());
+
+                // 2. NOUVEAU : On ordonne à Vulkan de détruire l'ancien "colis" en VRAM !
+                if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+                    VulkanRenderer::Get()->InvalidateEntityMaterial(entityID);
+                }
+            }
         }
     };
 
@@ -685,6 +745,7 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
     newMIPanel->Load(path);
 
     // --- LE HOT RELOAD POUR LES INSTANCES ---
+    // --- LE HOT RELOAD POUR LES INSTANCES ---
     newMIPanel->OnMaterialInstanceSavedCallback = [this](const std::filesystem::path& savedPath) {
         if (!m_ActiveScene) return;
 
@@ -693,9 +754,14 @@ void EditorLayer::OpenMaterialInstance(const std::filesystem::path& path) {
         for (auto entityID : view) {
             // Si l'entité utilise l'instance qu'on vient de sauvegarder...
             if (auto& mat = view.get<MaterialComponent>(entityID); mat.AssetPath == savedPath.string()) {
-                // On force le rechargement depuis le disque !
+                // 1. On force le rechargement depuis le disque !
                 mat.SetAndCompile(savedPath.string());
                 std::cout << "[Editor] Hot-Reloaded Material Instance for Entity ID: " << static_cast<uint32_t>(entityID) << std::endl;
+
+                // 2. NOUVEAU : Invalidation Vulkan
+                if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+                    VulkanRenderer::Get()->InvalidateEntityMaterial(entityID);
+                }
             }
         }
     };
@@ -759,7 +825,7 @@ void EditorLayer::DrawSplashScreen() {
             const float ratio = std::min(windowSize.x / imgWidth, (windowSize.y - 250) / imgHeight);
             const ImVec2 size(imgWidth * ratio, imgHeight * ratio);
             ImGui::SetCursorPos(ImVec2((windowSize.x - size.x) * 0.5f, 20.0f));
-            ImGui::Image((ImTextureID)static_cast<uintptr_t>(m_SplashTextureID), size);
+            ImGui::Image((ImTextureID)m_SplashTextureID, size);
         }
 
         // 2. La console de compilation (En bas)
@@ -847,8 +913,12 @@ void EditorLayer::DrawViewportWindow() {
     ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
     m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
-    const uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
-    ImGui::Image((ImTextureID)static_cast<uintptr_t>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+    void* textureID = m_ViewportFramebuffer->GetColorAttachmentRendererID();
+    if (textureID != nullptr) {
+        ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+        ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+        ImGui::Image((ImTextureID)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, uv0, uv1);
+    }
 
     // --- L'INCRUSTATION DE LA BARRE D'OUTILS (OVERLAY) ---
     ImGui::SetCursorPos(ImVec2(m_ViewportSize.x / 2.0f - 50.0f, 15.0f));

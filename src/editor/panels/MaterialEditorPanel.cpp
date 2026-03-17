@@ -16,6 +16,10 @@
 #include "editor/materials/MaterialNodeRegistry.h"
 #include "project/Project.h"
 #include "renderer/Renderer.h"
+#include "renderer/VulkanRenderer.h"
+
+#include "editor/materials/MaterialCompiler.h"
+#include "renderer/ShaderCompiler.h"
 
 static void DrawPinIcon(PinType type, bool connected) {
     ImVec2 size(24, 14); // Plus large pour la marge
@@ -96,7 +100,8 @@ MaterialEditorPanel::MaterialEditorPanel() {
     FramebufferSpecification fbSpec;
     fbSpec.Width = 512;
     fbSpec.Height = 512;
-    m_PreviewFramebuffer = std::make_shared<Framebuffer>(fbSpec);
+    m_PreviewFramebuffer = Framebuffer::Create(fbSpec);
+
     m_PreviewMesh = PrimitiveFactory::CreateSphere();
 
     CompilePreviewShader();
@@ -106,6 +111,10 @@ MaterialEditorPanel::MaterialEditorPanel() {
 }
 
 MaterialEditorPanel::~MaterialEditorPanel() {
+    // Wait for the GPU to finish any in-flight frames before destroying our framebuffers and meshes
+    if (Renderer::GetAPI() == RendererAPI::API::Vulkan) {
+        vkDeviceWaitIdle(VulkanRenderer::Get()->GetDevice());
+    }
     ed::DestroyEditor(m_Context);
 }
 
@@ -144,7 +153,6 @@ void MaterialEditorPanel::OnImGuiRender(bool& isOpen) {
     // Mise à jour du temps global pour les shaders
     m_TotalTime += ImGui::GetIO().DeltaTime;
 
-    RenderPreview3D();
     DrawPreviewWindow();
     DrawNodeEditorWindow(isOpen);
 }
@@ -156,80 +164,211 @@ void MaterialEditorPanel::RenderPreview3D() {
     if (!m_PreviewFramebuffer) return;
 
     m_PreviewFramebuffer->Bind();
-    glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    if (m_PreviewShader && m_PreviewMesh) {
-        m_PreviewShader->Use();
+    // --- SÉCURITÉ VULKAN : On enferme TOUT OpenGL ---
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        glViewport(0, 0, m_PreviewFramebuffer->GetSpecification().Width, m_PreviewFramebuffer->GetSpecification().Height);
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
-        float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
-        float aspect = (height > 0.0f) ? (width / height) : 1.0f;
+        if (m_PreviewShader && m_PreviewMesh) {
+            m_PreviewShader->Use();
 
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
-        glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
-        glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
+            float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
+            float aspect = (height > 0.0f) ? (width / height) : 1.0f;
 
-        m_PreviewShader->SetMat4("uProjection", proj);
-        m_PreviewShader->SetMat4("uView", view);
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
+            glm::vec3 camPos = glm::vec3(0.0f, 0.0f, m_CameraDistance);
+            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
-        m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::rotate(model, glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
-        model = glm::scale(model, glm::vec3(0.8f));
-        m_PreviewShader->SetMat4("uModel", model);
+            m_PreviewShader->SetMat4("uProjection", proj);
+            m_PreviewShader->SetMat4("uView", view);
 
-        // --- FIX : On utilise uLightDir pour matcher le monde réel ! ---
-        m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
-        m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
-        m_PreviewShader->SetVec3("uViewPos", camPos);
-        m_PreviewShader->SetFloat("uTime", m_TotalTime);
+            m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::rotate(model, glm::radians(m_PreviewRotation), glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::scale(model, glm::vec3(0.8f));
+            m_PreviewShader->SetMat4("uModel", model);
 
-        // =========================================================
-        // --- NOUVEAU : INJECTION DE L'IRRADIANCE MAP (IBL) ---
-        // =========================================================
-        glActiveTexture(GL_TEXTURE14);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
-        m_PreviewShader->SetInt("uIrradianceMap", 14);
+            m_PreviewShader->SetVec3("uLightDir", glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f)));
+            m_PreviewShader->SetVec3("uLightColor", glm::vec3(3.0f, 3.0f, 3.0f));
+            m_PreviewShader->SetVec3("uViewPos", camPos);
+            m_PreviewShader->SetFloat("uTime", m_TotalTime);
 
-        glActiveTexture(GL_TEXTURE12);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
-        m_PreviewShader->SetInt("uPrefilterMap", 12);
+            glActiveTexture(GL_TEXTURE14);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetIrradianceMapID());
+            m_PreviewShader->SetInt("uIrradianceMap", 14);
 
-        glActiveTexture(GL_TEXTURE13);
-        glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
-        m_PreviewShader->SetInt("uBRDFLUT", 13);
+            glActiveTexture(GL_TEXTURE12);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, Renderer::GetPrefilterMapID());
+            m_PreviewShader->SetInt("uPrefilterMap", 12);
 
-        // Injection des valeurs interactives
-        int slot = 0;
-        for (auto& node : m_Nodes) {
-            if (node.Name == "Texture2D" && node.TextureID != 0) {
-                glActiveTexture(GL_TEXTURE0 + slot);
-                glBindTexture(GL_TEXTURE_2D, node.TextureID);
-                if (node.IsParameter) m_PreviewShader->SetInt("u_" + node.ParameterName, slot);
-                else m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
-                slot++;
+            glActiveTexture(GL_TEXTURE13);
+            glBindTexture(GL_TEXTURE_2D, Renderer::GetBRDFLUTID());
+            m_PreviewShader->SetInt("uBRDFLUT", 13);
+
+            int slot = 0;
+            for (auto& node : m_Nodes) {
+                if (node.Name == "Texture2D" && node.TextureID != 0) {
+                    glActiveTexture(GL_TEXTURE0 + slot);
+                    glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)node.TextureID);
+                    if (node.IsParameter) m_PreviewShader->SetInt("u_" + node.ParameterName, slot);
+                    else m_PreviewShader->SetInt("u_Tex_" + std::to_string((int)node.ID.Get()), slot);
+                    slot++;
+                }
+
+                if (node.IsParameter) {
+                    if (node.Name == "Float") m_PreviewShader->SetFloat("u_" + node.ParameterName, node.FloatValue);
+                    if (node.Name == "Color") m_PreviewShader->SetVec4("u_" + node.ParameterName, node.ColorValue);
+                }
             }
 
-            if (node.IsParameter) {
-                if (node.Name == "Float") m_PreviewShader->SetFloat("u_" + node.ParameterName, node.FloatValue);
-                if (node.Name == "Color") m_PreviewShader->SetVec4("u_" + node.ParameterName, node.ColorValue);
+            glBindVertexArray(m_PreviewMesh->GetVAO());
+            glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+
+            for (int i = 0; i < 8; i++) {
+                glActiveTexture(GL_TEXTURE0 + i);
+                glBindTexture(GL_TEXTURE_2D, 0);
             }
+            glActiveTexture(GL_TEXTURE0);
+            glUseProgram(0);
         }
+    } else {
+        // --- MODE VULKAN (Isolé et Sécurisé) ---
+        if (m_PreviewMesh && m_PreviewFramebuffer) {
+            float width = (float)m_PreviewFramebuffer->GetSpecification().Width;
+            float height = (float)m_PreviewFramebuffer->GetSpecification().Height;
+            float aspect = (height > 0.0f) ? (width / height) : 1.0f;
 
-        glBindVertexArray(m_PreviewMesh->GetVAO());
-        glDrawElements(GL_TRIANGLES, m_PreviewMesh->GetIndicesCount(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
+            glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 10.0f, 10000.0f);
+            proj[1][1] *= -1.0f;
 
-        for (int i = 0; i < 8; i++) {
-            glActiveTexture(GL_TEXTURE0 + i);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            glm::vec3 camPos = glm::vec3(m_CameraDistance, 0.0f, 0.0f);
+            glm::mat4 view = glm::lookAt(camPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+            m_PreviewRotation += m_RotationSpeed * ImGui::GetIO().DeltaTime;
+            glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(m_PreviewRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+
+            // Traceur Live
+            VulkanTexture* t_albedo = nullptr; VulkanTexture* t_normal = nullptr;
+            VulkanTexture* t_metallic = nullptr; VulkanTexture* t_roughness = nullptr; VulkanTexture* t_ao = nullptr;
+            glm::vec4 c_color = glm::vec4(1.0f); float v_met = 0.0f, v_rough = 0.5f, v_ao = 1.0f;
+
+            MaterialNode* baseNode = nullptr;
+            for (auto& n : m_Nodes) { if (n.Name == "Base Material") { baseNode = &n; break; } }
+
+            if (baseNode && baseNode->Inputs.size() >= 6) {
+
+                std::function<VulkanTexture*(ed::PinId)> traceTexRec = [&](ed::PinId pinId) -> VulkanTexture* {
+                    for (auto& link : m_Links) {
+                        if (link.EndPinID == pinId) {
+                            MaterialPin* p = FindPin(link.StartPinID);
+                            if (p) {
+                                MaterialNode* src = FindNode(p->NodeID);
+                                if (!src) continue;
+
+                                if (src->Name == "Texture2D") {
+                                    if (src->TextureID == nullptr && !src->TexturePath.empty()) {
+                                        src->TextureID = TextureLoader::LoadTexture(src->TexturePath.c_str());
+                                    }
+                                    return (VulkanTexture*)src->TextureID;
+                                }
+
+                                if (src->Name == "StaticSwitchParameter" || src->Name == "Static Switch Parameter") {
+                                    if (src->Inputs.size() >= 2) {
+                                        int activeIdx = src->BoolValue ? 0 : 1;
+                                        return traceTexRec(src->Inputs[activeIdx].ID);
+                                    }
+                                }
+
+                                for (auto& inPin : src->Inputs) {
+                                    VulkanTexture* res = traceTexRec(inPin.ID);
+                                    if (res) return res;
+                                }
+                            }
+                        }
+                    }
+                    return nullptr;
+                };
+
+                std::function<glm::vec4(ed::PinId, glm::vec4)> traceColorRec = [&](ed::PinId pinId, glm::vec4 def) -> glm::vec4 {
+                    for (auto& link : m_Links) {
+                        if (link.EndPinID == pinId) {
+                            MaterialPin* p = FindPin(link.StartPinID);
+                            if (p) {
+                                MaterialNode* src = FindNode(p->NodeID);
+                                if (!src) continue;
+
+                                if (src->Name == "Color") return glm::vec4(src->ColorValue.r, src->ColorValue.g, src->ColorValue.b, src->ColorValue.a);
+
+                                if (src->Name == "StaticSwitchParameter" || src->Name == "Static Switch Parameter") {
+                                    if (src->Inputs.size() >= 2) {
+                                        int activeIdx = src->BoolValue ? 0 : 1;
+                                        return traceColorRec(src->Inputs[activeIdx].ID, def);
+                                    }
+                                }
+
+                                for (auto& inPin : src->Inputs) {
+                                    glm::vec4 res = traceColorRec(inPin.ID, glm::vec4(-1.0f));
+                                    if (res.x != -1.0f) return res;
+                                }
+                            }
+                        }
+                    }
+                    return def;
+                };
+
+                std::function<float(ed::PinId, float)> traceFloatRec = [&](ed::PinId pinId, float def) -> float {
+                    for (auto& link : m_Links) {
+                        if (link.EndPinID == pinId) {
+                            MaterialPin* p = FindPin(link.StartPinID);
+                            if (p) {
+                                MaterialNode* src = FindNode(p->NodeID);
+                                if (!src) continue;
+
+                                if (src->Name == "Float") return src->FloatValue;
+
+                                if (src->Name == "StaticSwitchParameter" || src->Name == "Static Switch Parameter") {
+                                    if (src->Inputs.size() >= 2) {
+                                        int activeIdx = src->BoolValue ? 0 : 1;
+                                        return traceFloatRec(src->Inputs[activeIdx].ID, def);
+                                    }
+                                }
+
+                                for (auto& inPin : src->Inputs) {
+                                    float res = traceFloatRec(inPin.ID, -9999.0f);
+                                    if (res != -9999.0f) return res;
+                                }
+                            }
+                        }
+                    }
+                    return def;
+                };
+
+                t_albedo = traceTexRec(baseNode->Inputs[0].ID);
+                t_normal = traceTexRec(baseNode->Inputs[1].ID);
+                t_metallic = traceTexRec(baseNode->Inputs[2].ID);
+                t_roughness = traceTexRec(baseNode->Inputs[3].ID);
+                t_ao = traceTexRec(baseNode->Inputs[5].ID);
+
+                c_color = traceColorRec(baseNode->Inputs[0].ID, glm::vec4(1.0f));
+                v_met = traceFloatRec(baseNode->Inputs[2].ID, 0.0f);
+                v_rough = traceFloatRec(baseNode->Inputs[3].ID, 0.5f);
+                v_ao = traceFloatRec(baseNode->Inputs[5].ID, 1.0f);
+            }
+
+            VulkanRenderer::Get()->RenderMaterialPreview(
+                m_PreviewMesh.get(), (VulkanFramebuffer*)m_PreviewFramebuffer.get(),
+                model, view, proj, camPos,
+                t_albedo, t_normal, t_metallic, t_roughness, t_ao,
+                c_color, v_met, v_rough, v_ao, m_CustomVulkanPipeline
+            );
         }
-        glActiveTexture(GL_TEXTURE0);
-        glUseProgram(0);
     }
+
     m_PreviewFramebuffer->Unbind();
 }
 
@@ -247,12 +386,25 @@ void MaterialEditorPanel::DrawPreviewWindow() {
     ImGui::Separator();
 
     ImVec2 previewAvail = ImGui::GetContentRegionAvail();
-    if (m_PreviewFramebuffer) {
-        if (previewAvail.x > 0 && previewAvail.y > 0 &&
-           (previewAvail.x != m_PreviewFramebuffer->GetSpecification().Width || previewAvail.y != m_PreviewFramebuffer->GetSpecification().Height)) {
-            m_PreviewFramebuffer->Resize((uint32_t)previewAvail.x, (uint32_t)previewAvail.y);
+    if (previewAvail.x > 0 && previewAvail.y > 0) {
+        // On mémorise la taille demandée par ImGui pour la Frame SUIVANTE
+        m_ViewportSize = glm::vec2(previewAvail.x, previewAvail.y);
+
+        if (m_PreviewFramebuffer) {
+            void* texID = m_PreviewFramebuffer->GetColorAttachmentRendererID();
+            if (texID != nullptr) {
+                ImVec2 uv0 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(0, 1) : ImVec2(0, 0);
+                ImVec2 uv1 = RendererAPI::GetAPI() == RendererAPI::API::OpenGL ? ImVec2(1, 0) : ImVec2(1, 1);
+                ImGui::Image((ImTextureID)texID, previewAvail, uv0, uv1);
+            } else {
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImGui::GetCursorScreenPos(),
+                    ImVec2(ImGui::GetCursorScreenPos().x + previewAvail.x, ImGui::GetCursorScreenPos().y + previewAvail.y),
+                    IM_COL32(40, 40, 40, 255)
+                );
+                ImGui::Dummy(previewAvail);
+            }
         }
-        ImGui::Image((ImTextureID)(uintptr_t)m_PreviewFramebuffer->GetColorAttachmentRendererID(), previewAvail, ImVec2(0, 1), ImVec2(1, 0));
     }
     ImGui::End();
 }
@@ -526,7 +678,15 @@ void MaterialEditorPanel::DrawStandardNode(MaterialNode& node) {
         if (node.TexturePath.empty()) ImGui::Button("Drop Texture", ImVec2(120, 30));
         else {
             if (node.TextureID == 0) node.TextureID = TextureLoader::LoadTexture(node.TexturePath.c_str());
-            if (node.TextureID != 0) ImGui::Image((ImTextureID)(uintptr_t)node.TextureID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
+
+            if (node.TextureID != 0) {
+                void* imguiTexID = node.TextureID;
+                // FIX VULKAN : ImGui a besoin de son DescriptorSet spécial, pas du pointeur de la structure !
+                if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan) {
+                    imguiTexID = ((VulkanTexture*)node.TextureID)->ImGuiDescriptor;
+                }
+                ImGui::Image((ImTextureID)imguiTexID, ImVec2(120, 120), ImVec2(0, 1), ImVec2(1, 0));
+            }
         }
 
         if (ImGui::BeginDragDropTarget()) {
@@ -803,9 +963,117 @@ void MaterialEditorPanel::Save(const std::filesystem::path& path) {
     nlohmann::json data;
     data["Type"] = "MaterialGraph";
     data["NextID"] = m_NextId;
-
-    // On compile et sauvegarde le GLSL dans le fichier pour que le moteur 3D n'ait pas à le faire
     data["GeneratedGLSL"] = CompileMaterial();
+
+    // =========================================================================
+    // RÉSOLUTION INTELLIGENTE DU PBR (Style Unreal Engine)
+    // =========================================================================
+    MaterialNode* baseNode = nullptr;
+    for (auto& n : m_Nodes) { if (n.Name == "Base Material") { baseNode = &n; break; } }
+
+    if (baseNode) {
+        // 1. Traceur de Texture Récursif
+        std::function<std::string(ed::PinId)> getConnectedTexture = [&](ed::PinId pinId) -> std::string {
+            for (auto& link : m_Links) {
+                if (link.EndPinID == pinId) {
+                    MaterialPin* outPin = FindPin(link.StartPinID);
+                    if (outPin) {
+                        MaterialNode* srcNode = FindNode(outPin->NodeID);
+                        if (!srcNode) continue;
+
+                        if (srcNode->Name == "Texture2D") return srcNode->TexturePath;
+
+                        // Si c'est un Switch, on bifurque selon son état ! (0 = True, 1 = False)
+                        if (srcNode->Name == "StaticSwitchParameter" || srcNode->Name == "Static Switch Parameter") {
+                            if (srcNode->Inputs.size() >= 2) {
+                                int activeIdx = srcNode->BoolValue ? 0 : 1;
+                                return getConnectedTexture(srcNode->Inputs[activeIdx].ID);
+                            }
+                        }
+
+                        // Si c'est un autre noeud intermédiaire (ex: Multiply), on fouille ses entrées
+                        for (auto& inPin : srcNode->Inputs) {
+                            std::string res = getConnectedTexture(inPin.ID);
+                            if (!res.empty()) return res;
+                        }
+                    }
+                }
+            }
+            return "";
+        };
+
+        // 2. Traceur de Float Récursif
+        std::function<float(ed::PinId, float)> getConnectedFloat = [&](ed::PinId pinId, float def) -> float {
+            for (auto& link : m_Links) {
+                if (link.EndPinID == pinId) {
+                    MaterialPin* outPin = FindPin(link.StartPinID);
+                    if (outPin) {
+                        MaterialNode* srcNode = FindNode(outPin->NodeID);
+                        if (!srcNode) continue;
+
+                        if (srcNode->Name == "Float") return srcNode->FloatValue;
+
+                        if (srcNode->Name == "StaticSwitchParameter" || srcNode->Name == "Static Switch Parameter") {
+                            if (srcNode->Inputs.size() >= 2) {
+                                int activeIdx = srcNode->BoolValue ? 0 : 1;
+                                return getConnectedFloat(srcNode->Inputs[activeIdx].ID, def);
+                            }
+                        }
+
+                        for (auto& inPin : srcNode->Inputs) {
+                            float res = getConnectedFloat(inPin.ID, -9999.0f);
+                            if (res != -9999.0f) return res;
+                        }
+                    }
+                }
+            }
+            return def;
+        };
+
+        // 3. Traceur de Couleur Récursif
+        std::function<nlohmann::json(ed::PinId)> getConnectedColor = [&](ed::PinId pinId) -> nlohmann::json {
+            for (auto& link : m_Links) {
+                if (link.EndPinID == pinId) {
+                    MaterialPin* outPin = FindPin(link.StartPinID);
+                    if (outPin) {
+                        MaterialNode* srcNode = FindNode(outPin->NodeID);
+                        if (!srcNode) continue;
+
+                        if (srcNode->Name == "Color") return {srcNode->ColorValue.r, srcNode->ColorValue.g, srcNode->ColorValue.b, srcNode->ColorValue.a};
+
+                        if (srcNode->Name == "StaticSwitchParameter" || srcNode->Name == "Static Switch Parameter") {
+                            if (srcNode->Inputs.size() >= 2) {
+                                int activeIdx = srcNode->BoolValue ? 0 : 1;
+                                return getConnectedColor(srcNode->Inputs[activeIdx].ID);
+                            }
+                        }
+
+                        for (auto& inPin : srcNode->Inputs) {
+                            nlohmann::json res = getConnectedColor(inPin.ID);
+                            if (!res.empty()) return res;
+                        }
+                    }
+                }
+            }
+            return nlohmann::json();
+        };
+
+        // On sauvegarde tout en se basant sur les ID des Pins du Base Material
+        if (baseNode->Inputs.size() >= 6) {
+            data["PBR_Albedo"] = getConnectedTexture(baseNode->Inputs[0].ID);
+            data["PBR_Normal"] = getConnectedTexture(baseNode->Inputs[1].ID);
+            data["PBR_Metallic"] = getConnectedTexture(baseNode->Inputs[2].ID);
+            data["PBR_Roughness"] = getConnectedTexture(baseNode->Inputs[3].ID);
+            data["PBR_AO"] = getConnectedTexture(baseNode->Inputs[5].ID); // Specular est en index 4
+
+            nlohmann::json cVal = getConnectedColor(baseNode->Inputs[0].ID);
+            data["PBR_ColorVal"] = cVal.empty() ? nlohmann::json::array({1.0f, 1.0f, 1.0f, 1.0f}) : cVal;
+
+            data["PBR_MetallicVal"] = getConnectedFloat(baseNode->Inputs[2].ID, 0.0f);
+            data["PBR_RoughnessVal"] = getConnectedFloat(baseNode->Inputs[3].ID, 0.5f);
+            data["PBR_AOVal"] = getConnectedFloat(baseNode->Inputs[5].ID, 1.0f);
+        }
+    }
 
     // --- SAUVEGARDE DES NOEUDS ---
     auto& nodesOut = data["Nodes"];
@@ -1009,426 +1277,8 @@ MaterialNode* MaterialEditorPanel::FindNode(ed::NodeId id) {
 
 // --- LE CHEF D'ORCHESTRE ---
 std::string MaterialEditorPanel::CompileMaterial() {
-    MaterialNode* rootNode = nullptr;
-    for (auto& node : m_Nodes) {
-        if (node.Name == "Base Material") { rootNode = &node; break; }
-    }
-    if (!rootNode) return "";
-
-    std::stringstream shaderCode;
-    shaderCode << "#version 460 core\n\n";
-
-    // --- VARIABLES DE SORTIE ---
-    shaderCode << "layout(location = 0) out vec4 FragColor;\n";
-    shaderCode << "layout(location = 1) out int EntityID;\n\n";
-
-    // --- VARIABLES D'ENTRÉE ---
-    shaderCode << "in vec3 vFragPos;\n";
-    shaderCode << "in vec3 vNormal;\n";
-    shaderCode << "in vec2 vTexCoords;\n";
-    shaderCode << "in vec3 vTangent;\n";
-    shaderCode << "in float vViewDepth;\n\n";
-
-    // --- UNIFORMS STANDARDS ---
-    shaderCode << "uniform int uEntityID;\n";
-    shaderCode << "uniform int uRenderMode;\n\n";
-
-    // --- UNIFORMS CSM (NOUVEAU) ---
-    shaderCode << "uniform sampler2DArray uShadowMap;\n";
-    shaderCode << "uniform mat4 uLightSpaceMatrices[3];\n";
-    shaderCode << "uniform float uCascadeDistances[3];\n\n";
-
-    // --- UNIFORMS IBL ---
-    shaderCode << "uniform sampler2D uDDGIIrradiance;\n";
-    shaderCode << "uniform int uDDGIProbeCount[3];\n"; // Transféré via SetInt3
-
-    shaderCode << "uniform float uDDGIStartX, uDDGIStartY, uDDGIStartZ;\n";
-    shaderCode << "uniform float uDDGISpaceX, uDDGISpaceY, uDDGISpaceZ;\n";
-
-    shaderCode << "uniform float u_SkyboxIntensity = 0.5;\n";
-    shaderCode << "uniform float u_SkyboxRotation = 0.0;\n\n";
-
-    shaderCode << "uniform samplerCube uPrefilterMap;\n";
-    shaderCode << "uniform sampler2D uBRDFLUT;\n";
-
-    // --- PARAMÈTRES (INSTANCES) ET TEXTURES ---
-    for (auto& node : m_Nodes) {
-        if (node.IsParameter) {
-            if (node.Name == "Float") {
-                // On injecte la valeur par défaut ! (ex: uniform float u_Tiling = 1.0;)
-                shaderCode << "uniform float u_" << node.ParameterName << " = " << node.FloatValue << ";\n";
-            }
-            else if (node.Name == "Color") {
-                // Pareil pour les couleurs
-                shaderCode << "uniform vec4 u_" << node.ParameterName << " = vec4("
-                           << node.ColorValue.r << ", " << node.ColorValue.g << ", "
-                           << node.ColorValue.b << ", " << node.ColorValue.a << ");\n";
-            }
-            else if (node.Name == "Texture2D") {
-                shaderCode << "uniform sampler2D u_" << node.ParameterName << ";\n";
-            }
-        } else if (node.Name == "Texture2D" && !node.TexturePath.empty()) {
-            shaderCode << "uniform sampler2D u_Tex_" << node.ID.Get() << ";\n";
-        }
-    }
-
-    // --- UNIFORMS PBR ---
-    shaderCode << "uniform vec3 uViewPos;\n";
-    shaderCode << "uniform vec3 uLightDir;\n"; // <-- Remplacé uLightPos par uLightDir !
-    shaderCode << "uniform vec3 uLightColor;\n\n";
-
-    // --- FONCTIONS MATHÉMATIQUES PBR & OMBRES ---
-    // (J'utilise un raw string R"()" pour ne pas avoir à échapper chaque ligne, c'est bien plus propre)
-    shaderCode << R"(
-const float PI = 3.14159265359;
-
-vec3 ACESFilm(vec3 x) {
-    float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
-    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+    return MaterialCompiler::CompileToGLSL(m_Nodes, m_Links);
 }
-
-// --- MATHÉMATIQUES DDGI ---
-vec2 OctEncode(vec3 v) {
-    float l = abs(v.x) + abs(v.y) + abs(v.z);
-    vec2 oct = v.xy / l;
-    if (v.z < 0.0) {
-        vec2 signOct = vec2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
-        oct = (1.0 - abs(oct.yx)) * signOct;
-    }
-    return oct * 0.5 + 0.5;
-}
-
-vec3 SampleDDGIIrradiance(vec3 worldPos, vec3 normal) {
-    vec3 startPos = vec3(uDDGIStartX, uDDGIStartY, uDDGIStartZ);
-    vec3 spacing = vec3(uDDGISpaceX, uDDGISpaceY, uDDGISpaceZ);
-    ivec3 probeCount = ivec3(uDDGIProbeCount[0], uDDGIProbeCount[1], uDDGIProbeCount[2]);
-
-    // 1. Position exacte dans la grille
-    vec3 gridPos = (worldPos - startPos) / spacing;
-    ivec3 baseProbeCoords = ivec3(floor(gridPos));
-    vec3 alpha = fract(gridPos);
-
-    vec3 sumIrradiance = vec3(0.0);
-    float sumWeight = 0.0;
-    int probesPerRow = probeCount.x * probeCount.y;
-    vec2 texSize = vec2(float(probesPerRow * 8), float(probeCount.z * 8));
-
-    // 2. Interpolation des 8 sondes autour de l'objet
-    for (int i = 0; i < 8; ++i) {
-        ivec3 offset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-        ivec3 probeCoords = clamp(baseProbeCoords + offset, ivec3(0), probeCount - ivec3(1));
-
-        int probeIndex = probeCoords.x + probeCoords.y * probeCount.x + probeCoords.z * probesPerRow;
-        int gridX = probeIndex % probesPerRow;
-        int gridY = probeIndex / probesPerRow;
-
-        vec2 octUV = OctEncode(normal);
-        vec2 pixelPos = vec2(gridX * 8.0, gridY * 8.0) + (octUV * 8.0);
-
-        vec3 probeIrradiance = texture(uDDGIIrradiance, pixelPos / texSize).rgb;
-
-        vec3 trilinear = mix(1.0 - alpha, alpha, vec3(offset));
-        float weight = trilinear.x * trilinear.y * trilinear.z;
-
-        sumIrradiance += probeIrradiance * weight;
-        sumWeight += weight;
-    }
-    return sumIrradiance / max(sumWeight, 0.0001);
-}
-
-float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness*roughness; float a2 = a*a; float NdotH = max(dot(N, H), 0.0);
-    float denom = (NdotH*NdotH * (a2 - 1.0) + 1.0);
-    return a2 / (PI * denom * denom);
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float r = (roughness + 1.0); float k = (r*r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) * GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
-}
-
-vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-// --- LE FIX DE LA SURBRILLANCE (HALO LUMINEUX) ---
-vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-vec3 getNormalFromMap(vec3 normalMapColor, vec3 fragPos, vec3 normal, vec2 uv) {
-    vec3 tangentNormal = normalize(normalMapColor * 2.0 - 1.0);
-    vec3 N = normalize(normal);
-    vec3 T;
-
-    // Utiliser la tangente par vertex si disponible
-    if (length(vTangent) > 0.001) {
-        T = normalize(vTangent);
-    } else {
-        // Fallback screen-space pour les meshes sans tangentes
-        vec3 Q1 = dFdx(fragPos);
-        vec3 Q2 = dFdy(fragPos);
-        vec2 st1 = dFdx(uv);
-        vec2 st2 = dFdy(uv);
-        float det = (st1.x * st2.y - st2.x * st1.y);
-        if (abs(det) > 0.0001) {
-            T = normalize((Q1 * st2.y - Q2 * st1.y) / det);
-        } else {
-            T = cross(abs(N.z) > 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0), N);
-        }
-    }
-
-    // Orthogonalisation de Gram-Schmidt
-    T = normalize(T - dot(T, N) * N);
-    vec3 B = cross(N, T);
-    mat3 TBN = mat3(T, B, N);
-    return normalize(TBN * tangentNormal);
-}
-
-// ========================================================
-// --- SYSTEME D'OMBRE PCSS (Nouveau) ---
-// ========================================================
-const float GOLDEN_ANGLE = 2.39996323;
-
-vec2 VogelDiskSample(int i, int numSamples, float noiseAngle) {
-    float r = sqrt(float(i) + 0.5) / sqrt(float(numSamples));
-    float theta = float(i) * GOLDEN_ANGLE + noiseAngle;
-    return vec2(r * cos(theta), r * sin(theta));
-}
-
-float InterleavedGradientNoise(vec2 position_screen) {
-    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(position_screen, magic.xy)));
-}
-
-vec2 ShadowCalculation(vec3 fragPosWorld, vec3 normal, vec3 lightDir) {
-    int layer = -1;
-    for (int i = 0; i < 3; ++i) {
-        if (vViewDepth < uCascadeDistances[i]) { layer = i; break; }
-    }
-    if (layer == -1) layer = 2;
-
-    float normalBiasOffset = 2.0;
-    if (layer == 1) normalBiasOffset = 6.0;
-    if (layer == 2) normalBiasOffset = 20.0;
-
-    vec3 biasedFragPos = fragPosWorld + normal * normalBiasOffset;
-    vec4 fragPosLightSpace = uLightSpaceMatrices[layer] * vec4(biasedFragPos, 1.0);
-
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords = projCoords * 0.5 + 0.5;
-
-    if(projCoords.z > 1.0) return vec2(0.0, layer);
-
-    float currentDepth = projCoords.z;
-    float bias = max(0.0005 * (1.0 - dot(normal, lightDir)), 0.00005);
-
-    float noise = InterleavedGradientNoise(gl_FragCoord.xy);
-    float angle = noise * 6.28318530718;
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
-
-    // PCSS - ÉTAPE 1 : Blocker Search
-    int blockers = 0;
-    float avgBlockerDepth = 0.0;
-    float searchRadius = 4.0;
-    if (layer == 1) searchRadius = 2.0;
-    if (layer == 2) searchRadius = 1.0;
-
-    int blockerSamples = 16;
-    for(int i = 0; i < blockerSamples; i++) {
-        vec2 offset = VogelDiskSample(i, blockerSamples, angle) * searchRadius * texelSize;
-        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
-        if (pcfDepth < currentDepth - bias) {
-            blockers++;
-            avgBlockerDepth += pcfDepth;
-        }
-    }
-
-    if (blockers == 0) return vec2(0.0, layer);
-    avgBlockerDepth /= float(blockers);
-
-    // PCSS - ÉTAPE 2 : Penumbra Estimation
-    float distanceToBlocker = currentDepth - avgBlockerDepth;
-    float sunSize = 150.0;
-    float penumbraRadius = distanceToBlocker * sunSize;
-
-    float maxBlur = 6.0;
-    if (layer == 1) maxBlur = 4.0;
-    if (layer == 2) maxBlur = 2.0;
-    float filterRadiusUV = clamp(penumbraRadius, 1.0, maxBlur);
-
-    // PCSS - ÉTAPE 3 : Variable PCF
-    float shadow = 0.0;
-    int pcfSamples = 32;
-    for(int i = 0; i < pcfSamples; i++) {
-        vec2 offset = VogelDiskSample(i, pcfSamples, angle) * filterRadiusUV * texelSize;
-        float pcfDepth = texture(uShadowMap, vec3(projCoords.xy + offset, float(layer))).r;
-        shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
-    }
-    shadow /= float(pcfSamples);
-
-    return vec2(shadow, layer);
-}
-)";
-
-    // ========================================================
-    // --- EVALUATION DU GRAPHE ---
-    // ========================================================
-    std::unordered_set<int> visitedNodes;
-    std::stringstream bodyBuilder;
-
-    // LE FIX ABSOLU DES PINS DÉBRANCHÉS
-    auto getRootPin = [&](int index, const std::string& fallback) {
-        if (index >= rootNode->Inputs.size()) return fallback;
-        bool hasLink = false;
-        for (auto& l : m_Links) {
-            if (l.EndPinID == rootNode->Inputs[index].ID) { hasLink = true; break; }
-        }
-        if (hasLink) return EvaluatePinGLSL(rootNode->Inputs[index].ID, visitedNodes, bodyBuilder);
-        return fallback;
-    };
-
-    std::string v_baseColor = getRootPin(0, "vec3(1.0)");
-
-    // Si la normale est débranchée, on force un bleu flat parfait (0.5, 0.5, 1.0) !
-    std::string v_normal    = getRootPin(1, "vec3(0.5, 0.5, 1.0)");
-
-    std::string v_metallic  = getRootPin(2, "0.0");
-    std::string v_roughness = getRootPin(3, "0.5");
-    std::string v_specular  = getRootPin(4, "0.5");
-    std::string v_ao        = getRootPin(5, "1.0");
-
-    // --- LE FIX DE COMPILATION : On remet le détecteur disparu ! ---
-    bool normalConnected = false;
-    if (rootNode->Inputs.size() > 1) {
-        for (auto& link : m_Links) {
-            if (link.EndPinID == rootNode->Inputs[1].ID) { normalConnected = true; break; }
-        }
-    }
-
-    // ========================================================
-    // --- MAIN ---
-    // ========================================================
-    shaderCode << "void main() {\n";
-
-    shaderCode << bodyBuilder.str();
-
-    shaderCode << "    vec3 albedo = pow(vec3(" << v_baseColor << "), vec3(2.2));\n";
-    shaderCode << "    float metallic = float(" << v_metallic << ");\n";
-    shaderCode << "    float roughness = clamp(float(" << v_roughness << "), 0.05, 1.0);\n";
-    shaderCode << "    float specularValue = clamp(float(" << v_specular << "), 0.0, 1.0);\n";
-    shaderCode << "    float ao = float(" << v_ao << ");\n\n";
-
-    if (normalConnected) {
-        shaderCode << "    vec3 N = getNormalFromMap(vec3(" << v_normal << "), vFragPos, vNormal, vTexCoords);\n";
-    } else {
-        shaderCode << "    vec3 N = normalize(vNormal);\n";
-    }
-    shaderCode << "    if (uRenderMode == 1 || uRenderMode == 2) {\n";
-    shaderCode << "        FragColor = vec4(albedo, 1.0);\n";
-    shaderCode << "        EntityID = uEntityID;\n";
-    shaderCode << "        return;\n";
-    shaderCode << "    }\n";
-
-    // --- LE BOUCLIER ANTI-DIVISION PAR ZÉRO ---
-    shaderCode << "    roughness = clamp(roughness, 0.05, 1.0);\n";
-    shaderCode << "    ao = clamp(ao, 0.05, 1.0);\n\n";
-
-    // J'ai supprimé l'AA Spéculaire qui détruisait tes Normal Maps !
-
-    // --- LE CÂBLAGE FINAL OMBRE + PBR ---
-    shaderCode << R"(
-    roughness = clamp(roughness, 0.05, 1.0);
-    ao = clamp(ao, 0.01, 1.0);
-
-    vec3 V = normalize(uViewPos - vFragPos);
-    vec3 L = normalize(-uLightDir);
-    vec3 H = normalize(V + L + vec3(0.000001));
-
-    vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo, metallic);
-    vec3 radiance = uLightColor;
-
-    float NDF = DistributionGGX(N, H, roughness);
-    float G   = GeometrySmith(N, V, L, roughness);
-    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
-
-    vec3 numerator    = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-    vec3 specular = numerator / denominator;
-
-    specular = clamp(specular, vec3(0.0), vec3(10.0));
-
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
-
-    float NdotL = max(dot(N, L), 0.0);
-    vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
-
-    #ifndef IS_PREVIEW_VIEWPORT
-        vec2 shadowData = ShadowCalculation(vFragPos, N, L);
-        float shadow = shadowData.x;
-    #else
-        float shadow = 0.0;
-    #endif
-
-    // ========================================================
-    // --- APPLICATION RÉALISTE DU CIEL (IBL COMPLET) ---
-    // ========================================================
-    float skyC = cos(u_SkyboxRotation); float skyS = sin(u_SkyboxRotation);
-
-    // --- LE FIX DES MESHES BLANCS (Séparation Fond / Lumière) ---
-    // On bride artificiellement la lumière du ciel HDR pour qu'elle agisse
-    // comme une ombre douce de jeu vidéo, sans éclipser le Soleil !
-    float iblExposure = 0.02;
-
-    // 1. DIFFUSE DDGI
-    vec3 irradiance = SampleDDGIIrradiance(vFragPos, N) * iblExposure;
-
-    // 2. SPECULAR IBL (Les reflets dynamiques !)
-    vec3 R = reflect(-V, N);
-    vec3 rotR = vec3(R.x * skyC - R.y * skyS, R.x * skyS + R.y * skyC, R.z);
-
-    const float MAX_REFLECTION_LOD = 4.0;
-    vec3 iblReflect = vec3(rotR.x, rotR.z, -rotR.y);
-    vec3 prefilteredColor = textureLod(uPrefilterMap, iblReflect, roughness * MAX_REFLECTION_LOD).rgb * u_SkyboxIntensity * iblExposure;
-
-    vec2 envBRDF = texture(uBRDFLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
-
-    vec3 F_ambient = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
-    vec3 kD_ambient = 1.0 - F_ambient;
-    kD_ambient *= 1.0 - metallic;
-
-    vec3 diffuseIBL = irradiance * albedo;
-    vec3 specularIBL = prefilteredColor * (F_ambient * envBRDF.x + envBRDF.y);
-
-    vec3 ambient = (kD_ambient * diffuseIBL + specularIBL) * ao;
-
-    // ========================================================
-    vec3 color = ambient + (1.0 - shadow) * Lo;
-
-    // --- LE BOUCLIER ANTI-INVISIBILITÉ LINUX ---
-    if (isnan(color.x) || isnan(color.y) || isnan(color.z) || isinf(color.x)) {
-        color = vec3(0.0);
-    }
-
-    // Tonemapping ACES
-    color = ACESFilm(color);
-    color = pow(color, vec3(1.0/2.2));
-
-    FragColor = vec4(color, 1.0);
-    EntityID = uEntityID;
-}
-)";
-
-    return shaderCode.str();
-}
-
 
 // --- L'ALGORITHME MAGIQUE (Récursif) ---
 std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unordered_set<int>& visited, std::stringstream& bodyBuilder) {
@@ -1449,7 +1299,7 @@ std::string MaterialEditorPanel::EvaluatePinGLSL(ed::PinId inputPinId, std::unor
         if (expectedType == PinType::Float) { ss << myInputPin->FloatValue; return ss.str(); }
         if (expectedType == PinType::Vec2)  { ss << "vec2(" << myInputPin->Vec2Value.x << ", " << myInputPin->Vec2Value.y << ")"; return ss.str(); }
         if (expectedType == PinType::Vec3)  { ss << "vec3(" << myInputPin->Vec3Value.r << ", " << myInputPin->Vec3Value.g << ", " << myInputPin->Vec3Value.b << ")"; return ss.str(); }
-        if (expectedType == PinType::Vec4)  return "vec4(0.0)";
+        if (expectedType == PinType::Vec4)  { return "vec4(0.0)"; }
         return "0.0";
     }
 
@@ -1522,33 +1372,33 @@ void MaterialEditorPanel::CompilePreviewShader() {
     std::string fragCode = CompileMaterial();
     if (fragCode.empty()) return;
 
-    // --- INJECTION DES SWITCHES ET DE LA MACRO PREVIEW ---
-    std::string defines = "\n#define IS_PREVIEW_VIEWPORT\n"; // <-- NOUVEAU
-
-    for (auto& node : m_Nodes) {
-        if (node.Name == "StaticSwitchParameter" && node.BoolValue) {
-            defines += "#define " + node.ParameterName + "\n";
-        }
-    }
-
-    size_t pos = fragCode.find("#version");
-    if (pos != std::string::npos) pos = fragCode.find('\n', pos) + 1;
-    else pos = 0;
-
-    fragCode.insert(pos, defines);
-
-    std::filesystem::path cacheDir = Project::GetCacheDirectory();
+    std::filesystem::path cacheDir = Project::GetCacheDirectory() / "materials";
     if (!std::filesystem::exists(cacheDir)) {
         std::filesystem::create_directories(cacheDir);
     }
 
-    std::filesystem::path tempPath = cacheDir / "preview_material.frag";
+    // Le cache global a besoin de clés uniques : Utilisons le chemin du fichier courant pour le nom (ou un hash)
+    std::string matName = m_CurrentPath.empty() ? "preview_material" : m_CurrentPath.stem().string();
+    std::filesystem::path glslPath = cacheDir / (matName + ".frag");
+    std::filesystem::path spvPath = cacheDir / (matName + ".spv");
 
-    std::ofstream out(tempPath);
+    std::ofstream out(glslPath);
     out << fragCode;
     out.close();
 
-    m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", tempPath.string().c_str());
+    // SÉPARATION DES DEUX RENDERERS
+    if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+        m_PreviewShader = std::make_shared<Shader>("shaders/default.vert", glslPath.string().c_str());
+    } else {
+        // --- MODE VULKAN : Compilation SPIR-V & Pipeline ---
+        std::string outLog;
+        if (ShaderCompiler::CompileGLSLToSPIRV(glslPath.string(), spvPath.string(), outLog)) {
+            // Success ! Compile et met en cache la Pipeline
+            m_CustomVulkanPipeline = VulkanRenderer::Get()->CreateCustomPipeline(spvPath.string());
+        } else {
+            std::cerr << "[MaterialEditor] Vulkan Shader Compilation Failed:\n" << outLog << std::endl;
+        }
+    }
 }
 
 void MaterialEditorPanel::UpdateWildcardPins() {
@@ -1620,5 +1470,18 @@ void MaterialEditorPanel::SaveAs() {
         Save(m_CurrentPath);
 
         NFD::FreePath(outPath);
+    }
+}
+
+void MaterialEditorPanel::OnUpdate(float deltaTime) {
+    // C'est ici, en toute sécurité HORS d'ImGui, qu'on redimensionne et qu'on dessine la 3D !
+    if (m_ViewportSize.x > 0 && m_ViewportSize.y > 0) {
+        uint32_t width = (uint32_t)m_ViewportSize.x;
+        uint32_t height = (uint32_t)m_ViewportSize.y;
+
+        if (width != m_PreviewFramebuffer->GetSpecification().Width || height != m_PreviewFramebuffer->GetSpecification().Height) {
+            m_PreviewFramebuffer->Resize(width, height);
+        }
+        RenderPreview3D();
     }
 }

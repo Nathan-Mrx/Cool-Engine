@@ -14,9 +14,18 @@
     "imgui-node-editor",
     "joltphysics",
     {
+      "name": "vulkan-loader",
+      "features": [
+        "wayland",
+        "xcb",
+        "xlib"
+      ]
+    },
+    {
       "name": "imgui",
       "features": [
         "glfw-binding",
+        "vulkan-binding",
         "opengl3-binding",
         "docking-experimental"
       ]

@@ -213,11 +213,11 @@ struct MaterialComponent {
 
     // --- VARIABLES D'EXÉCUTION DU SHADER (Non sérialisées ici) ---
     std::shared_ptr<Shader> ShaderInstance = nullptr;
-    std::map<int, unsigned int> Textures;
+    std::map<int, void*> Textures;
     std::map<std::string, float> FloatOverrides;
     std::map<std::string, glm::vec4> ColorOverrides;
     std::map<std::string, bool> SwitchOverrides;
-    std::map<std::string, unsigned int> TextureOverrides;
+    std::map<std::string, void*> TextureOverrides;
 
     MaterialComponent() = default;
     MaterialComponent(const MaterialComponent&) = default;
@@ -297,18 +297,69 @@ private:
             outFrag << glsl;
             outFrag.close();
 
-            ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
+            // --- SÉCURITÉ VULKAN : On ne crée pas le programme shader OpenGL ---
+            if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL) {
+                ShaderInstance = std::make_shared<Shader>("shaders/default.vert", fragPath.string().c_str());
+            }
         }
+
+        // --- CHARGEMENT PBR (Les vrais liens automatiques du Material Editor !) ---
+        auto loadPBRTexture = [&](const std::string& jsonKey, const std::string& targetName) {
+            if (data.contains(jsonKey)) {
+                std::string p = data[jsonKey].get<std::string>();
+                if (!p.empty()) {
+                    std::filesystem::path tp(p);
+                    std::string fullPath = tp.is_absolute() ? tp.string() : (Project::GetProjectDirectory() / tp).string();
+                    TextureOverrides[targetName] = TextureLoader::LoadTexture(fullPath.c_str());
+                }
+            }
+        };
+
+        loadPBRTexture("PBR_Albedo", "u_Albedo");
+        loadPBRTexture("PBR_Normal", "u_Normal");
+        loadPBRTexture("PBR_Metallic", "u_Metallic");
+        loadPBRTexture("PBR_Roughness", "u_Roughness");
+        loadPBRTexture("PBR_AO", "u_AO");
+
+        if (data.contains("PBR_ColorVal")) {
+            auto arr = data["PBR_ColorVal"];
+            ColorOverrides["u_BaseColor"] = glm::vec4(arr[0], arr[1], arr[2], arr[3]);
+        }
+        if (data.contains("PBR_MetallicVal")) FloatOverrides["u_Metallic"] = data["PBR_MetallicVal"].get<float>();
+        if (data.contains("PBR_RoughnessVal")) FloatOverrides["u_Roughness"] = data["PBR_RoughnessVal"].get<float>();
+        if (data.contains("PBR_AOVal")) FloatOverrides["u_AO"] = data["PBR_AOVal"].get<float>();
 
         if (data.contains("Nodes")) {
             for (auto& node : data["Nodes"]) {
+                // 1. Chargement des Textures
                 if (node["Name"] == "Texture2D" && node.contains("TexturePath")) {
                     std::string texPath = node["TexturePath"].get<std::string>();
                     if (!texPath.empty()) {
                         int nodeID = node["ID"].get<int>();
                         std::filesystem::path tp(texPath);
                         std::string fullPath = tp.is_absolute() ? tp.string() : (Project::GetProjectDirectory() / tp).string();
-                        Textures[nodeID] = TextureLoader::LoadTexture(fullPath.c_str());
+                        void* tex = TextureLoader::LoadTexture(fullPath.c_str());
+                        Textures[nodeID] = tex;
+
+                        // FIX VULKAN : On lie le nom "u_Albedo" à la texture !
+                        if (node.contains("IsParameter") && node["IsParameter"].get<bool>()) {
+                            std::string pName = node.value("ParameterName", "");
+                            if (!pName.empty()) TextureOverrides["u_" + pName] = tex;
+                        }
+                    }
+                }
+
+                // 2. Chargement des valeurs (Float, Color) pour le PBR
+                if (node.contains("IsParameter") && node["IsParameter"].get<bool>()) {
+                    std::string pName = node.value("ParameterName", "");
+                    if (!pName.empty()) {
+                        if (node["Name"] == "Float" && node.contains("FloatValue")) {
+                            FloatOverrides["u_" + pName] = node["FloatValue"].get<float>();
+                        }
+                        else if (node["Name"] == "Color" && node.contains("ColorValue")) {
+                            auto arr = node["ColorValue"];
+                            ColorOverrides["u_" + pName] = glm::vec4(arr[0], arr[1], arr[2], arr[3]);
+                        }
                     }
                 }
             }
@@ -323,6 +374,16 @@ struct SkyboxComponent {
     // NOUVEAU : Réglages d'exposition et de rotation
     CE_PROPERTY() float Intensity = 0.5f;
     CE_PROPERTY() float Rotation = 0.0f; // En degrés
+
+    // NOUVEAU : Paramètres pour le Sky Atmosphere (Scattering)
+    CE_PROPERTY() float PlanetRadius = 6360000.0f; // Terre = 6360km
+    CE_PROPERTY() float AtmosphereRadius = 6420000.0f; // Atmosphère = 6420km
+    CE_PROPERTY() glm::vec3 RayleighScattering = glm::vec3(5.5e-6f, 13.0e-6f, 22.4e-6f);
+    CE_PROPERTY() float MieScattering = 21.0e-6f;
+    CE_PROPERTY() float RayleighScaleHeight = 8000.0f;
+    CE_PROPERTY() float MieScaleHeight = 1200.0f;
+    CE_PROPERTY() float MiePreferredDirection = 0.758f;
+    CE_PROPERTY() float SunIntensity = 20.0f;
 };
 
 #include "Components.generated.h"

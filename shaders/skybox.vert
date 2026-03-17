@@ -1,20 +1,33 @@
-#version 460 core
-layout (location = 0) in vec3 aPos;
+#version 450
 
-uniform mat4 uProjection;
-uniform mat4 uView;
+layout(location = 0) in vec3 inPosition;
 
-out vec3 vWorldPos;
+layout(location = 0) out vec3 fragWorldPos;
+
+// La structure contenant les matrices et les paramètres de l'atmosphère
+layout(set = 0, binding = 1) uniform SkyboxUBO {
+    mat4 view;
+    mat4 proj;
+    vec4 sunDirection;
+
+    float planetRadius;
+    float atmosphereRadius;
+    float rayleighScaleHeight;
+    float mieScaleHeight;
+
+    vec4 rayleighScattering;
+    float mieScattering;
+
+    vec3 padding;
+} ubo;
 
 void main() {
-    vWorldPos = aPos;
+    fragWorldPos = inPosition;
 
-    // On convertit la matrice 4x4 en 3x3 pour supprimer la translation.
-    // Ainsi, la Skybox suit la caméra et le joueur ne l'atteindra jamais !
-    mat4 rotView = mat4(mat3(uView));
-    vec4 clipPos = uProjection * rotView * vec4(vWorldPos, 1.0);
+    // On retire la translation de la caméra (pour que la skybox suive le joueur à l'infini)
+    mat4 rotView = mat4(mat3(ubo.view));
+    vec4 clipPos = ubo.proj * rotView * vec4(inPosition, 1.0);
 
-    // ASTUCE MAGIQUE : En forçant le Z à égaler le W, la profondeur de la skybox
-    // sera toujours exactement de 1.0 (le maximum). Elle sera donc toujours au fond !
+    // Z = W pour que la profondeur soit maximale (1.0)
     gl_Position = clipPos.xyww;
 }
